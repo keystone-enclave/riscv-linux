@@ -1,0 +1,4 @@
+basic_percpu_ops_test
+basic_test
+basic_rseq_op_test
+param_test
