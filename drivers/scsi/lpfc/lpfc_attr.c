@@ -2292,6 +2292,8 @@ lpfc_soft_wwn_enable_store(struct device *dev, struct device_attribute *attr,
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
 	unsigned int cnt = count;
+	uint8_t vvvl = vport->fc_sparam.cmn.valid_vendor_ver_level;
+	u32 *fawwpn_key = (uint32_t *)&vport->fc_sparam.un.vendorVersion[0];
 
 	/*
 	 * We're doing a simple sanity check for soft_wwpn setting.
@@ -2305,6 +2307,12 @@ lpfc_soft_wwn_enable_store(struct device *dev, struct device_attribute *attr,
 	 * here. The intent is to protect against the random user or
 	 * application that is just writing attributes.
 	 */
+	if (vvvl == 1 && cpu_to_be32(*fawwpn_key) == FAPWWN_KEY_VENDOR) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+				 "0051 "LPFC_DRIVER_NAME" soft wwpn can not"
+				 " be enabled: fawwpn is enabled\n");
+		return -EINVAL;
+	}
 
 	/* count may include a LF at end of string */
 	if (buf[cnt-1] == '\n')
@@ -3315,9 +3323,9 @@ LPFC_ATTR_R(nvmet_mrq_post, LPFC_DEF_MRQ_POST,
  * lpfc_enable_fc4_type: Defines what FC4 types are supported.
  * Supported Values:  1 - register just FCP
  *                    3 - register both FCP and NVME
- * Supported values are [1,3]. Default value is 3
+ * Supported values are [1,3]. Default value is 1
  */
-LPFC_ATTR_R(enable_fc4_type, LPFC_ENABLE_BOTH,
+LPFC_ATTR_R(enable_fc4_type, LPFC_ENABLE_FCP,
 	    LPFC_ENABLE_FCP, LPFC_ENABLE_BOTH,
 	    "Define fc4 type to register with fabric.");
 
@@ -3335,7 +3343,7 @@ LPFC_ATTR_R(enable_fc4_type, LPFC_ENABLE_BOTH,
  * percentage will go to NVME.
  */
 LPFC_ATTR_R(xri_split, 50, 10, 90,
-	     "Division of XRI resources between SCSI and NVME");
+	    "Division of XRI resources between SCSI and NVME");
 
 /*
 # lpfc_log_verbose: Only turn this flag on if you are willing to risk being
