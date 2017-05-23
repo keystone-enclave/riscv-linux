@@ -269,6 +269,7 @@ int rdma_translate_ip(const struct sockaddr *addr,
 			return ret;
 
 		ret = rdma_copy_addr(dev_addr, dev, NULL);
+		dev_addr->bound_dev_if = dev->ifindex;
 		if (vlan_id)
 			*vlan_id = rdma_vlan_dev_vlan_id(dev);
 		dev_put(dev);
@@ -281,6 +282,7 @@ int rdma_translate_ip(const struct sockaddr *addr,
 					  &((const struct sockaddr_in6 *)addr)->sin6_addr,
 					  dev, 1)) {
 				ret = rdma_copy_addr(dev_addr, dev, NULL);
+				dev_addr->bound_dev_if = dev->ifindex;
 				if (vlan_id)
 					*vlan_id = rdma_vlan_dev_vlan_id(dev);
 				break;
@@ -406,10 +408,10 @@ static int addr4_resolve(struct sockaddr_in *src_in,
 	fl4.saddr = src_ip;
 	fl4.flowi4_oif = addr->bound_dev_if;
 	rt = ip_route_output_key(addr->net, &fl4);
-	if (IS_ERR(rt)) {
-		ret = PTR_ERR(rt);
-		goto out;
-	}
+	ret = PTR_ERR_OR_ZERO(rt);
+	if (ret)
+		return ret;
+
 	src_in->sin_family = AF_INET;
 	src_in->sin_addr.s_addr = fl4.saddr;
 
@@ -424,8 +426,6 @@ static int addr4_resolve(struct sockaddr_in *src_in,
 
 	*prt = rt;
 	return 0;
-out:
-	return ret;
 }
 
 #if IS_ENABLED(CONFIG_IPV6)
@@ -528,8 +528,12 @@ static int addr_resolve(struct sockaddr *src_in,
 		if (resolve_neigh)
 			ret = addr_resolve_neigh(&rt->dst, dst_in, addr, seq);
 
-		ndev = rt->dst.dev;
-		dev_hold(ndev);
+		if (addr->bound_dev_if) {
+			ndev = dev_get_by_index(addr->net, addr->bound_dev_if);
+		} else {
+			ndev = rt->dst.dev;
+			dev_hold(ndev);
+		}
 
 		ip_rt_put(rt);
 	} else {
@@ -545,13 +549,27 @@ static int addr_resolve(struct sockaddr *src_in,
 		if (resolve_neigh)
 			ret = addr_resolve_neigh(dst, dst_in, addr, seq);
 
-		ndev = dst->dev;
-		dev_hold(ndev);
+		if (addr->bound_dev_if) {
+			ndev = dev_get_by_index(addr->net, addr->bound_dev_if);
+		} else {
+			ndev = dst->dev;
+			dev_hold(ndev);
+		}
 
 		dst_release(dst);
 	}
 
-	addr->bound_dev_if = ndev->ifindex;
+	if (ndev->flags & IFF_LOOPBACK) {
+		ret = rdma_translate_ip(dst_in, addr, NULL);
+		/*
+		 * Put the loopback device and get the translated
+		 * device instead.
+		 */
+		dev_put(ndev);
+		ndev = dev_get_by_index(addr->net, addr->bound_dev_if);
+	} else {
+		addr->bound_dev_if = ndev->ifindex;
+	}
 	dev_put(ndev);
 
 	return ret;
