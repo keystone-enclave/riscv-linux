@@ -89,6 +89,7 @@ static int kdf_alloc(struct kdf_sdesc **sdesc_ret, char *hashname)
 	struct crypto_shash *tfm;
 	struct kdf_sdesc *sdesc;
 	int size;
+	int err;
 
 	/* allocate synchronous hash */
 	tfm = crypto_alloc_shash(hashname, 0, 0);
@@ -97,16 +98,25 @@ static int kdf_alloc(struct kdf_sdesc **sdesc_ret, char *hashname)
 		return PTR_ERR(tfm);
 	}
 
+	err = -EINVAL;
+	if (crypto_shash_digestsize(tfm) == 0)
+		goto out_free_tfm;
+
+	err = -ENOMEM;
 	size = sizeof(struct shash_desc) + crypto_shash_descsize(tfm);
 	sdesc = kmalloc(size, GFP_KERNEL);
 	if (!sdesc)
-		return -ENOMEM;
+		goto out_free_tfm;
 	sdesc->shash.tfm = tfm;
 	sdesc->shash.flags = 0x0;
 
 	*sdesc_ret = sdesc;
 
 	return 0;
+
+out_free_tfm:
+	crypto_free_shash(tfm);
+	return err;
 }
 
 static void kdf_dealloc(struct kdf_sdesc *sdesc)
@@ -118,14 +128,6 @@ static void kdf_dealloc(struct kdf_sdesc *sdesc)
 		crypto_free_shash(sdesc->shash.tfm);
 
 	kzfree(sdesc);
-}
-
-/* convert 32 bit integer into its string representation */
-static inline void crypto_kw_cpu_to_be32(u32 val, u8 *buf)
-{
-	__be32 *a = (__be32 *)buf;
-
-	*a = cpu_to_be32(val);
 }
 
 /*
@@ -144,16 +146,14 @@ static int kdf_ctr(struct kdf_sdesc *sdesc, const u8 *src, unsigned int slen,
 	unsigned int h = crypto_shash_digestsize(desc->tfm);
 	int err = 0;
 	u8 *dst_orig = dst;
-	u32 i = 1;
-	u8 iteration[sizeof(u32)];
+	__be32 counter = cpu_to_be32(1);
 
 	while (dlen) {
 		err = crypto_shash_init(desc);
 		if (err)
 			goto err;
 
-		crypto_kw_cpu_to_be32(i, iteration);
-		err = crypto_shash_update(desc, iteration, sizeof(u32));
+		err = crypto_shash_update(desc, (u8 *)&counter, sizeof(__be32));
 		if (err)
 			goto err;
 
@@ -179,7 +179,7 @@ static int kdf_ctr(struct kdf_sdesc *sdesc, const u8 *src, unsigned int slen,
 
 			dlen -= h;
 			dst += h;
-			i++;
+			counter = cpu_to_be32(be32_to_cpu(counter) + 1);
 		}
 	}
 
@@ -307,7 +307,7 @@ long __keyctl_dh_compute(struct keyctl_dh_params __user *params,
 	 * Concatenate SP800-56A otherinfo past DH shared secret -- the
 	 * input to the KDF is (DH shared secret || otherinfo)
 	 */
-	if (kdfcopy && kdfcopy->otherinfo &&
+	if (kdfcopy &&
 	    copy_from_user(kbuf + resultlen, kdfcopy->otherinfo,
 			   kdfcopy->otherinfolen) != 0) {
 		ret = -EFAULT;
