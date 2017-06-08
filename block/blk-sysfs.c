@@ -13,6 +13,7 @@
 
 #include "blk.h"
 #include "blk-mq.h"
+#include "blk-mq-debugfs.h"
 #include "blk-wbt.h"
 
 struct queue_sysfs_entry {
@@ -886,8 +887,10 @@ int blk_register_queue(struct gendisk *disk)
 		goto unlock;
 	}
 
-	if (q->mq_ops)
+	if (q->mq_ops) {
 		__blk_mq_register_dev(dev, q);
+		blk_mq_debugfs_register(q);
+	}
 
 	kobject_uevent(&q->kobj, KOBJ_ADD);
 
