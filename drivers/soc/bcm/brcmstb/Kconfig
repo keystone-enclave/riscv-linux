@@ -4,6 +4,6 @@ config BRCMSTB_PM
 	bool "Support suspend/resume for STB platforms"
 	default y
 	depends on PM
-	depends on ARM
+	depends on ARM || BMIPS_GENERIC
 
 endif # SOC_BRCMSTB
