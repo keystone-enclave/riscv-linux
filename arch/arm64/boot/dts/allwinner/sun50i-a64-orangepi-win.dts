@@ -1,17 +1,17 @@
 /*
- * Copyright (C) 2016 Hans de Goede <hdegoede@redhat.com>
+ * Copyright (C) 2017 Jagan Teki <jteki@openedev.com>
  *
  * This file is dual-licensed: you can use it either under the terms
  * of the GPL or the X11 license, at your option. Note that this dual
  * licensing only applies to this file, and not this project as a
  * whole.
  *
- *  a) This file is free software; you can redistribute it and/or
+ *  a) This library is free software; you can redistribute it and/or
  *     modify it under the terms of the GNU General Public License as
  *     published by the Free Software Foundation; either version 2 of the
  *     License, or (at your option) any later version.
  *
- *     This file is distributed in the hope that it will be useful,
+ *     This library is distributed in the hope that it will be useful,
  *     but WITHOUT ANY WARRANTY; without even the implied warranty of
  *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *     GNU General Public License for more details.
@@ -40,40 +40,56 @@
  *     OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*
- * The Orange Pi Plus 2E is an extended version of the Orange Pi PC Plus,
- * with 2G RAM and an external gbit ethernet phy.
- */
+/dts-v1/;
 
-#include "sun8i-h3-orangepi-pc-plus.dts"
+#include "sun50i-a64.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
 
 / {
-	model = "Xunlong Orange Pi Plus 2E";
-	compatible = "xunlong,orangepi-plus2e", "allwinner,sun8i-h3";
+	model = "OrangePi Win/Win Plus";
+	compatible = "xunlong,orangepi-win", "allwinner,sun50i-a64";
 
-	reg_gmac_3v3: gmac-3v3 {
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	reg_vcc3v3: vcc3v3 {
 		compatible = "regulator-fixed";
-		regulator-name = "gmac-3v3";
+		regulator-name = "vcc3v3";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		startup-delay-us = <100000>;
-		enable-active-high;
-		gpio = <&pio 3 6 GPIO_ACTIVE_HIGH>; /* PD6 */
 	};
 };
 
-&emac {
-	pinctrl-names = "default";
-	pinctrl-0 = <&emac_rgmii_pins>;
-	phy-supply = <&reg_gmac_3v3>;
-	phy-handle = <&ext_rgmii_phy>;
-	phy-mode = "rgmii";
+&ehci1 {
 	status = "okay";
 };
 
-&mdio {
-	ext_rgmii_phy: ethernet-phy@1 {
-		compatible = "ethernet-phy-ieee802.3-c22";
-		reg = <1>;
-	};
+&mmc0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc0_pins>;
+	vmmc-supply = <&reg_vcc3v3>;
+	cd-gpios = <&pio 5 6 GPIO_ACTIVE_HIGH>;
+	cd-inverted;
+	status = "okay";
 };
+
+&ohci1 {
+	status = "okay";
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_pins_a>;
+	status = "okay";
+};
+
+&usbphy {
+	status = "okay";
+};
+
