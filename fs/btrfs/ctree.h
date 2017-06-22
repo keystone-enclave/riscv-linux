@@ -1073,7 +1073,11 @@ struct btrfs_fs_info {
 	struct percpu_counter bio_counter;
 	wait_queue_head_t replace_wait;
 
-	struct semaphore uuid_tree_rescan_sem;
+	/*
+	 * Protect updating of uuid_tree, can be used to wait for the task
+	 * completion
+	 */
+	struct mutex uuid_tree_mutex;
 
 	/* Used to reclaim the metadata space in the background. */
 	struct work_struct async_reclaim_work;

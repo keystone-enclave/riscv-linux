@@ -4273,7 +4273,7 @@ out:
 		btrfs_warn(fs_info, "btrfs_uuid_scan_kthread failed %d", ret);
 	else
 		set_bit(BTRFS_FS_UPDATE_UUID_TREE_GEN, &fs_info->flags);
-	up(&fs_info->uuid_tree_rescan_sem);
+	mutex_unlock(&fs_info->uuid_tree_mutex);
 	return 0;
 }
 
@@ -4335,7 +4335,7 @@ static int btrfs_uuid_rescan_kthread(void *data)
 	ret = btrfs_uuid_tree_iterate(fs_info, btrfs_check_uuid_tree_entry);
 	if (ret < 0) {
 		btrfs_warn(fs_info, "iterating uuid_tree failed %d", ret);
-		up(&fs_info->uuid_tree_rescan_sem);
+		mutex_unlock(&fs_info->uuid_tree_mutex);
 		return ret;
 	}
 	return btrfs_uuid_scan_kthread(data);
@@ -4372,12 +4372,12 @@ int btrfs_create_uuid_tree(struct btrfs_fs_info *fs_info)
 	if (ret)
 		return ret;
 
-	down(&fs_info->uuid_tree_rescan_sem);
+	mutex_lock(&fs_info->uuid_tree_mutex);
 	task = kthread_run(btrfs_uuid_scan_kthread, fs_info, "btrfs-uuid");
 	if (IS_ERR(task)) {
 		/* fs_info->update_uuid_tree_gen remains 0 in all error case */
 		btrfs_warn(fs_info, "failed to start uuid_scan task");
-		up(&fs_info->uuid_tree_rescan_sem);
+		mutex_unlock(&fs_info->uuid_tree_mutex);
 		return PTR_ERR(task);
 	}
 
@@ -4388,12 +4388,12 @@ int btrfs_check_uuid_tree(struct btrfs_fs_info *fs_info)
 {
 	struct task_struct *task;
 
-	down(&fs_info->uuid_tree_rescan_sem);
+	mutex_lock(&fs_info->uuid_tree_mutex);
 	task = kthread_run(btrfs_uuid_rescan_kthread, fs_info, "btrfs-uuid");
 	if (IS_ERR(task)) {
 		/* fs_info->update_uuid_tree_gen remains 0 in all error case */
 		btrfs_warn(fs_info, "failed to start uuid_rescan task");
-		up(&fs_info->uuid_tree_rescan_sem);
+		mutex_unlock(&fs_info->uuid_tree_mutex);
 		return PTR_ERR(task);
 	}
 

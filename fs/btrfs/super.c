@@ -1777,9 +1777,8 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		cancel_work_sync(&fs_info->async_reclaim_work);
 
 		/* wait for the uuid_scan task to finish */
-		down(&fs_info->uuid_tree_rescan_sem);
-		/* avoid complains from lockdep et al. */
-		up(&fs_info->uuid_tree_rescan_sem);
+		mutex_lock(&fs_info->uuid_tree_mutex);
+		mutex_unlock(&fs_info->uuid_tree_mutex);
 
 		sb->s_flags |= MS_RDONLY;
 

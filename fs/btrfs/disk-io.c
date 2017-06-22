@@ -2552,10 +2552,10 @@ int open_ctree(struct super_block *sb,
 	mutex_init(&fs_info->cleaner_mutex);
 	mutex_init(&fs_info->volume_mutex);
 	mutex_init(&fs_info->ro_block_group_mutex);
+	mutex_init(&fs_info->uuid_tree_mutex);
 	init_rwsem(&fs_info->commit_root_sem);
 	init_rwsem(&fs_info->cleanup_work_sem);
 	init_rwsem(&fs_info->subvol_sem);
-	sema_init(&fs_info->uuid_tree_rescan_sem, 1);
 
 	btrfs_init_dev_replace_locks(fs_info);
 	btrfs_init_qgroup(fs_info);
@@ -3707,9 +3707,8 @@ void close_ctree(struct btrfs_fs_info *fs_info)
 	btrfs_qgroup_wait_for_completion(fs_info, false);
 
 	/* wait for the uuid_scan task to finish */
-	down(&fs_info->uuid_tree_rescan_sem);
-	/* avoid complains from lockdep et al., set sem back to initial state */
-	up(&fs_info->uuid_tree_rescan_sem);
+	mutex_lock(&fs_info->uuid_tree_mutex);
+	mutex_unlock(&fs_info->uuid_tree_mutex);
 
 	/* pause restriper - we want to resume on mount */
 	btrfs_pause_balance(fs_info);
