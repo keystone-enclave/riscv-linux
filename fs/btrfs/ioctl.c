@@ -1308,7 +1308,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 	 * context
 	 */
 	if (!file) {
-		ra = kzalloc(sizeof(*ra), GFP_NOFS);
+		ra = kzalloc(sizeof(*ra), GFP_KERNEL);
 		if (!ra)
 			return -ENOMEM;
 		file_ra_state_init(ra, inode->i_mapping);
@@ -1316,8 +1316,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 		ra = &file->f_ra;
 	}
 
-	pages = kmalloc_array(max_cluster, sizeof(struct page *),
-			GFP_NOFS);
+	pages = kmalloc_array(max_cluster, sizeof(struct page *), GFP_KERNEL);
 	if (!pages) {
 		ret = -ENOMEM;
 		goto out_ra;
