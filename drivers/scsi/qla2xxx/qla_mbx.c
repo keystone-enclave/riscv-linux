@@ -560,6 +560,8 @@ qla2x00_load_ram(scsi_qla_host_t *vha, dma_addr_t req_dma, uint32_t risc_addr,
 }
 
 #define	EXTENDED_BB_CREDITS	BIT_0
+#define	NVME_ENABLE_FLAG	BIT_3
+
 /*
  * qla2x00_execute_fw
  *     Start adapter firmware.
@@ -600,6 +602,9 @@ qla2x00_execute_fw(scsi_qla_host_t *vha, uint32_t risc_addr)
 			    EXTENDED_BB_CREDITS);
 		} else
 			mcp->mb[4] = 0;
+
+		if (ql2xnvmeenable && IS_QLA27XX(ha))
+			mcp->mb[4] |= NVME_ENABLE_FLAG;
 
 		if (ha->flags.exlogins_enabled)
 			mcp->mb[4] |= ENABLE_EXTENDED_LOGIN;
@@ -941,6 +946,22 @@ qla2x00_get_fw_version(scsi_qla_host_t *vha)
 			ql_dbg(ql_dbg_mbx + ql_dbg_verbose, vha, 0x1191,
 			    "%s: Firmware supports Exchange Offload 0x%x\n",
 			    __func__, ha->fw_attributes_h);
+
+		/* bit 26 of fw_attributes */
+		if ((ha->fw_attributes_h & 0x400) && ql2xnvmeenable) {
+			struct init_cb_24xx *icb;
+
+			icb = (struct init_cb_24xx *)ha->init_cb;
+			/*
+			 * fw supports nvme and driver load
+			 * parameter requested nvme
+			 */
+			vha->flags.nvme_enabled = 1;
+			icb->firmware_options_2 &= cpu_to_le32(~0xf);
+			ha->zio_mode = 0;
+			ha->zio_timer = 0;
+		}
+
 	}
 
 	if (IS_QLA27XX(ha)) {
@@ -5968,14 +5989,22 @@ int __qla24xx_parse_gpdb(struct scsi_qla_host *vha, fc_port_t *fcport,
 {
 	int rval = QLA_SUCCESS;
 	uint64_t zero = 0;
+	u8 current_login_state, last_login_state;
+
+	if (fcport->fc4f_nvme) {
+		current_login_state = pd->current_login_state >> 4;
+		last_login_state = pd->last_login_state >> 4;
+	} else {
+		current_login_state = pd->current_login_state & 0xf;
+		last_login_state = pd->last_login_state & 0xf;
+	}
 
 	/* Check for logged in state. */
-	if (pd->current_login_state != PDS_PRLI_COMPLETE &&
-		pd->last_login_state != PDS_PRLI_COMPLETE) {
+	if (current_login_state != PDS_PRLI_COMPLETE &&
+	    last_login_state != PDS_PRLI_COMPLETE) {
 		ql_dbg(ql_dbg_mbx, vha, 0x119a,
 		    "Unable to verify login-state (%x/%x) for loop_id %x.\n",
-		    pd->current_login_state, pd->last_login_state,
-		    fcport->loop_id);
+		    current_login_state, last_login_state, fcport->loop_id);
 		rval = QLA_FUNCTION_FAILED;
 		goto gpd_error_out;
 	}
@@ -5998,12 +6027,17 @@ int __qla24xx_parse_gpdb(struct scsi_qla_host *vha, fc_port_t *fcport,
 	fcport->d_id.b.al_pa = pd->port_id[2];
 	fcport->d_id.b.rsvd_1 = 0;
 
-	/* If not target must be initiator or unknown type. */
-	if ((pd->prli_svc_param_word_3[0] & BIT_4) == 0)
-		fcport->port_type = FCT_INITIATOR;
-	else
-		fcport->port_type = FCT_TARGET;
-
+	if (fcport->fc4f_nvme) {
+		fcport->nvme_prli_service_param =
+		    pd->prli_nvme_svc_param_word_3;
+		fcport->port_type = FCT_NVME;
+	} else {
+		/* If not target must be initiator or unknown type. */
+		if ((pd->prli_svc_param_word_3[0] & BIT_4) == 0)
+			fcport->port_type = FCT_INITIATOR;
+		else
+			fcport->port_type = FCT_TARGET;
+	}
 	/* Passback COS information. */
 	fcport->supported_classes = (pd->flags & PDF_CLASS_2) ?
 		FC_COS_CLASS2 : FC_COS_CLASS3;
