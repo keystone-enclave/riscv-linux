@@ -7,6 +7,8 @@ next/fixes-non-critical
 		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.13/maintainers
 	ccn/fixes
 		git://git.linaro.org/people/pawel.moll/linux tags/ccn/fixes-for-4.13-v2
+	<no branch> (4fcee14d3802b60f22baf1aeab9f1cff08834c56)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.12-2
 
 next/soc
 	davinci/soc
@@ -46,6 +48,9 @@ next/soc
 		git://git.kernel.org/pub/scm/linux/kernel/git/afaerber/linux-actions tags/actions-arm-soc-for-4.13
 	actions/soc-2
 		git://git.kernel.org/pub/scm/linux/kernel/git/afaerber/linux-actions tags/actions-arm-soc+sps-for-4.13
+	patch
+		ARM: owl: Drop custom machine
+		ARM: owl: smp: Drop bogus holding pen
 
 next/dt
 	renesas/dt
