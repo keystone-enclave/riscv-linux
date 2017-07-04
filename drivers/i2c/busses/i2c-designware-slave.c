@@ -49,7 +49,7 @@ static void i2c_dw_configure_fifo_slave(struct dw_i2c_dev *dev)
  * This function is called during I2C init function, and in case of timeout at
  * run time.
  */
-int i2c_dw_init_slave(struct dw_i2c_dev *dev)
+static int i2c_dw_init_slave(struct dw_i2c_dev *dev)
 {
 	u32 sda_falling_time, scl_falling_time;
 	u32 reg, comp_param1;
@@ -168,7 +168,6 @@ int i2c_dw_init_slave(struct dw_i2c_dev *dev)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(i2c_dw_init_slave);
 
 static int i2c_dw_reg_slave(struct i2c_client *slave)
 {
@@ -277,7 +276,7 @@ static int i2c_dw_irq_handler_slave(struct dw_i2c_dev *dev)
 		return 0;
 
 	dev_dbg(dev->dev,
-		"%#x STAUTS SLAVE_ACTTVITY=%#x : RAW_INTR_STAT=%#x : INTR_STAT=%#x\n",
+		"%#x STATUS SLAVE_ACTIVITY=%#x : RAW_INTR_STAT=%#x : INTR_STAT=%#x\n",
 		enabled, slave_activity, raw_stat, stat);
 
 	if ((stat & DW_IC_INTR_RX_FULL) && (stat & DW_IC_INTR_STOP_DET))
