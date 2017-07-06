@@ -354,9 +354,10 @@ static int i2c_device_probe(struct device *dev)
 
 	/*
 	 * An I2C ID table is not mandatory, if and only if, a suitable Device
-	 * Tree match table entry is supplied for the probing device.
+	 * Tree or ACPI match table entry is supplied for the probing device.
 	 */
 	if (!driver->id_table &&
+	    !acpi_match_device(dev->driver->acpi_match_table, &client->dev) &&
 	    !i2c_of_match_device(dev->driver->of_match_table, client))
 		return -ENODEV;
 
