@@ -141,6 +141,8 @@ struct rpc_task_setup {
 #define RPC_TASK_ACTIVE		2
 #define RPC_TASK_MSG_RECV	3
 #define RPC_TASK_MSG_RECV_WAIT	4
+#define RPC_TASK_MSG_XMIT	5
+#define RPC_TASK_MSG_XMIT_WAIT	6
 
 #define RPC_IS_RUNNING(t)	test_bit(RPC_TASK_RUNNING, &(t)->tk_runstate)
 #define rpc_set_running(t)	set_bit(RPC_TASK_RUNNING, &(t)->tk_runstate)
@@ -246,6 +248,7 @@ void		rpc_free(struct rpc_task *);
 int		rpciod_up(void);
 void		rpciod_down(void);
 int		__rpc_wait_for_completion_task(struct rpc_task *task, wait_bit_action_f *);
+int		rpc_wait_for_msg_send(struct rpc_task *task);
 #if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
 struct net;
 void		rpc_show_tasks(struct net *);
