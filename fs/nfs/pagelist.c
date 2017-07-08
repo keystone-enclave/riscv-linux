@@ -625,7 +625,8 @@ int nfs_initiate_pgio(struct rpc_clnt *clnt, struct nfs_pgio_header *hdr,
 		ret = rpc_wait_for_completion_task(task);
 		if (ret == 0)
 			ret = task->tk_status;
-	}
+	} else
+		rpc_wait_for_msg_send(task);
 	rpc_put_task(task);
 out:
 	return ret;
