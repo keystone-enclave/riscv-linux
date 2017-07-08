@@ -111,6 +111,7 @@ struct tcmu_dev {
 
 	char *name;
 	struct se_hba *hba;
+	uint64_t features;
 
 #define TCMU_DEV_BIT_OPEN 0
 #define TCMU_DEV_BIT_BROKEN 1
@@ -1104,6 +1105,7 @@ static struct se_device *tcmu_alloc_device(struct se_hba *hba, const char *name)
 
 	udev->hba = hba;
 	udev->cmd_time_out = TCMU_TIME_OUT;
+	udev->features |= (TCMU_KERN_ALUA | TCMU_KERN_PGR);
 
 	init_waitqueue_head(&udev->wait_cmdr);
 	mutex_init(&udev->cmdr_lock);
@@ -1882,11 +1884,22 @@ static ssize_t tcmu_emulate_write_cache_store(struct config_item *item,
 }
 CONFIGFS_ATTR(tcmu_, emulate_write_cache);
 
+static ssize_t tcmu_features_show(struct config_item *item, char *page)
+{
+	struct se_dev_attrib *da = container_of(to_config_group(item),
+						struct se_dev_attrib, da_group);
+	struct tcmu_dev *udev = TCMU_DEV(da->da_dev);
+
+	return snprintf(page, PAGE_SIZE, "0x%llx\n", udev->features);
+}
+CONFIGFS_ATTR_RO(tcmu_, features);
+
 static struct configfs_attribute *tcmu_attrib_attrs[] = {
 	&tcmu_attr_cmd_time_out,
 	&tcmu_attr_dev_config,
 	&tcmu_attr_dev_size,
 	&tcmu_attr_emulate_write_cache,
+	&tcmu_attr_features,
 	NULL,
 };
 

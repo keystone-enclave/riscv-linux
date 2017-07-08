@@ -154,4 +154,7 @@ enum tcmu_genl_attr {
 };
 #define TCMU_ATTR_MAX (__TCMU_ATTR_MAX - 1)
 
+#define TCMU_KERN_ALUA  (1ULL << 0)
+#define TCMU_KERN_PGR   (1ULL << 1)
+
 #endif
