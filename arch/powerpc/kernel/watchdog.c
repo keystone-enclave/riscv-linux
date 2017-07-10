@@ -310,10 +310,8 @@ static int start_wd_on_cpu(unsigned int cpu)
 
 static int stop_wd_on_cpu(unsigned int cpu)
 {
-	if (!cpumask_test_cpu(cpu, &wd_cpus_enabled)) {
-		WARN_ON(1);
-		return 0;
-	}
+	if (!cpumask_test_cpu(cpu, &wd_cpus_enabled))
+		return 0; /* Can happen in CPU unplug case */
 
 	stop_watchdog_timer_on(cpu);
 
