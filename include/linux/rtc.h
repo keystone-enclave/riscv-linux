@@ -14,6 +14,7 @@
 
 #include <linux/types.h>
 #include <linux/interrupt.h>
+#include <linux/nvmem-provider.h>
 #include <uapi/linux/rtc.h>
 
 extern int rtc_month_days(unsigned int month, unsigned int year);
@@ -116,7 +117,6 @@ struct rtc_device {
 	struct module *owner;
 
 	int id;
-	char name[RTC_DEVICE_NAME_SIZE];
 
 	const struct rtc_class_ops *ops;
 	struct mutex ops_lock;
@@ -143,6 +143,14 @@ struct rtc_device {
 	/* Some hardware can't support UIE mode */
 	int uie_unsupported;
 
+	bool registered;
+
+	struct nvmem_config *nvmem_config;
+	struct nvmem_device *nvmem;
+	/* Old ABI support */
+	bool nvram_old_abi;
+	struct bin_attribute *nvram;
+
 #ifdef CONFIG_RTC_INTF_DEV_UIE_EMUL
 	struct work_struct uie_task;
 	struct timer_list uie_timer;
@@ -164,6 +172,8 @@ extern struct rtc_device *devm_rtc_device_register(struct device *dev,
 					const char *name,
 					const struct rtc_class_ops *ops,
 					struct module *owner);
+struct rtc_device *devm_rtc_allocate_device(struct device *dev);
+int __rtc_register_device(struct module *owner, struct rtc_device *rtc);
 extern void rtc_device_unregister(struct rtc_device *rtc);
 extern void devm_rtc_device_unregister(struct device *dev,
 					struct rtc_device *rtc);
@@ -218,6 +228,9 @@ static inline bool is_leap_year(unsigned int year)
 {
 	return (!(year % 4) && (year % 100)) || !(year % 400);
 }
+
+#define rtc_register_device(device) \
+	__rtc_register_device(THIS_MODULE, device)
 
 #ifdef CONFIG_RTC_HCTOSYS_DEVICE
 extern int rtc_hctosys_ret;
