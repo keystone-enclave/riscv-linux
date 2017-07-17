@@ -951,7 +951,7 @@ xfs_mountfs(
 	 * of inodes before we're done replaying log items on those
 	 * inodes.
 	 */
-	mp->m_super->s_flags |= MS_ACTIVE;
+	mp->m_super->s_flags |= SB_ACTIVE;
 
 	/*
 	 * Finish recovering the file system.  This part needed to be delayed
@@ -1028,7 +1028,7 @@ xfs_mountfs(
  out_quota:
 	xfs_qm_unmount_quotas(mp);
  out_rtunmount:
-	mp->m_super->s_flags &= ~MS_ACTIVE;
+	mp->m_super->s_flags &= ~SB_ACTIVE;
 	xfs_rtunmount_inodes(mp);
  out_rele_rip:
 	IRELE(rip);
