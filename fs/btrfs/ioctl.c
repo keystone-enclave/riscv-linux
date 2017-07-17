@@ -1286,6 +1286,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 	unsigned long cluster = max_cluster;
 	u64 new_align = ~((u64)SZ_128K - 1);
 	struct page **pages = NULL;
+	bool do_compress = range->flags & BTRFS_DEFRAG_RANGE_COMPRESS;
 
 	if (isize == 0)
 		return 0;
@@ -1293,7 +1294,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 	if (range->start >= isize)
 		return -EINVAL;
 
-	if (range->flags & BTRFS_DEFRAG_RANGE_COMPRESS) {
+	if (do_compress) {
 		if (range->compress_type > BTRFS_COMPRESS_TYPES)
 			return -EINVAL;
 		if (range->compress_type)
@@ -1304,20 +1305,19 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 		extent_thresh = SZ_256K;
 
 	/*
-	 * if we were not given a file, allocate a readahead
-	 * context
+	 * If we were not given a file, allocate a readahead context. As
+	 * readahead is just an optimization, defrag will work without it so
+	 * we don't error out.
 	 */
 	if (!file) {
-		ra = kzalloc(sizeof(*ra), GFP_NOFS);
-		if (!ra)
-			return -ENOMEM;
-		file_ra_state_init(ra, inode->i_mapping);
+		ra = kzalloc(sizeof(*ra), GFP_KERNEL);
+		if (ra)
+			file_ra_state_init(ra, inode->i_mapping);
 	} else {
 		ra = &file->f_ra;
 	}
 
-	pages = kmalloc_array(max_cluster, sizeof(struct page *),
-			GFP_NOFS);
+	pages = kmalloc_array(max_cluster, sizeof(struct page *), GFP_KERNEL);
 	if (!pages) {
 		ret = -ENOMEM;
 		goto out_ra;
@@ -1373,8 +1373,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 
 		if (!should_defrag_range(inode, (u64)i << PAGE_SHIFT,
 					 extent_thresh, &last_len, &skip,
-					 &defrag_end, range->flags &
-					 BTRFS_DEFRAG_RANGE_COMPRESS)) {
+					 &defrag_end, do_compress)){
 			unsigned long next;
 			/*
 			 * the should_defrag function tells us how much to skip
@@ -1395,14 +1394,15 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 
 		if (i + cluster > ra_index) {
 			ra_index = max(i, ra_index);
-			btrfs_force_ra(inode->i_mapping, ra, file, ra_index,
-				       cluster);
+			if (ra)
+				btrfs_force_ra(inode->i_mapping, ra, file,
+						ra_index, cluster);
 			ra_index += cluster;
 		}
 
 		inode_lock(inode);
-		if (range->flags & BTRFS_DEFRAG_RANGE_COMPRESS)
-			BTRFS_I(inode)->force_compress = compress_type;
+		if (do_compress)
+			BTRFS_I(inode)->defrag_compress = compress_type;
 		ret = cluster_pages_for_defrag(inode, pages, i, cluster);
 		if (ret < 0) {
 			inode_unlock(inode);
@@ -1449,7 +1449,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 			filemap_flush(inode->i_mapping);
 	}
 
-	if ((range->flags & BTRFS_DEFRAG_RANGE_COMPRESS)) {
+	if (do_compress) {
 		/* the filemap_flush will queue IO into the worker threads, but
 		 * we have to make sure the IO is actually started and that
 		 * ordered extents get created before we return
@@ -1471,9 +1471,9 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 	ret = defrag_count;
 
 out_ra:
-	if (range->flags & BTRFS_DEFRAG_RANGE_COMPRESS) {
+	if (do_compress) {
 		inode_lock(inode);
-		BTRFS_I(inode)->force_compress = BTRFS_COMPRESS_NONE;
+		BTRFS_I(inode)->defrag_compress = BTRFS_COMPRESS_NONE;
 		inode_unlock(inode);
 	}
 	if (!file)
