@@ -57,6 +57,23 @@ static inline void invpcid_flush_all_nonglobals(void)
 	__invpcid(0, 0, INVPCID_TYPE_ALL_NON_GLOBAL);
 }
 
+static inline u64 inc_mm_tlb_gen(struct mm_struct *mm)
+{
+	u64 new_tlb_gen;
+
+	/*
+	 * Bump the generation count.  This also serves as a full barrier
+	 * that synchronizes with switch_mm(): callers are required to order
+	 * their read of mm_cpumask after their writes to the paging
+	 * structures.
+	 */
+	smp_mb__before_atomic();
+	new_tlb_gen = atomic64_inc_return(&mm->context.tlb_gen);
+	smp_mb__after_atomic();
+
+	return new_tlb_gen;
+}
+
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
 #else
@@ -64,6 +81,11 @@ static inline void invpcid_flush_all_nonglobals(void)
 #define __flush_tlb_global() __native_flush_tlb_global()
 #define __flush_tlb_single(addr) __native_flush_tlb_single(addr)
 #endif
+
+struct tlb_context {
+	u64 ctx_id;
+	u64 tlb_gen;
+};
 
 struct tlb_state {
 	/*
@@ -73,13 +95,27 @@ struct tlb_state {
 	 * mode even if we've already switched back to swapper_pg_dir.
 	 */
 	struct mm_struct *loaded_mm;
-	int state;
 
 	/*
 	 * Access to this CR4 shadow and to H/W CR4 is protected by
 	 * disabling interrupts when modifying either one.
 	 */
 	unsigned long cr4;
+
+	/*
+	 * This is a list of all contexts that might exist in the TLB.
+	 * Since we don't yet use PCID, there is only one context.
+	 *
+	 * For each context, ctx_id indicates which mm the TLB's user
+	 * entries came from.  As an invariant, the TLB will never
+	 * contain entries that are out-of-date as when that mm reached
+	 * the tlb_gen in the list.
+	 *
+	 * To be clear, this means that it's legal for the TLB code to
+	 * flush the TLB without updating tlb_gen.  This can happen
+	 * (for now, at least) due to paravirt remote flushes.
+	 */
+	struct tlb_context ctxs[1];
 };
 DECLARE_PER_CPU_SHARED_ALIGNED(struct tlb_state, cpu_tlbstate);
 
@@ -207,6 +243,14 @@ static inline void __flush_tlb_all(void)
 		__flush_tlb_global();
 	else
 		__flush_tlb();
+
+	/*
+	 * Note: if we somehow had PCID but not PGE, then this wouldn't work --
+	 * we'd end up flushing kernel translations for the current ASID but
+	 * we might fail to flush kernel translations for other cached ASIDs.
+	 *
+	 * To avoid this issue, we force PCID off if PGE is off.
+	 */
 }
 
 static inline void __flush_tlb_one(unsigned long addr)
@@ -231,9 +275,26 @@ static inline void __flush_tlb_one(unsigned long addr)
  * and page-granular flushes are available only on i486 and up.
  */
 struct flush_tlb_info {
-	struct mm_struct *mm;
-	unsigned long start;
-	unsigned long end;
+	/*
+	 * We support several kinds of flushes.
+	 *
+	 * - Fully flush a single mm.  .mm will be set, .end will be
+	 *   TLB_FLUSH_ALL, and .new_tlb_gen will be the tlb_gen to
+	 *   which the IPI sender is trying to catch us up.
+	 *
+	 * - Partially flush a single mm.  .mm will be set, .start and
+	 *   .end will indicate the range, and .new_tlb_gen will be set
+	 *   such that the changes between generation .new_tlb_gen-1 and
+	 *   .new_tlb_gen are entirely contained in the indicated range.
+	 *
+	 * - Fully flush all mms whose tlb_gens have been updated.  .mm
+	 *   will be NULL, .end will be TLB_FLUSH_ALL, and .new_tlb_gen
+	 *   will be zero.
+	 */
+	struct mm_struct	*mm;
+	unsigned long		start;
+	unsigned long		end;
+	u64			new_tlb_gen;
 };
 
 #define local_flush_tlb() __flush_tlb()
@@ -256,12 +317,10 @@ static inline void flush_tlb_page(struct vm_area_struct *vma, unsigned long a)
 void native_flush_tlb_others(const struct cpumask *cpumask,
 			     const struct flush_tlb_info *info);
 
-#define TLBSTATE_OK	1
-#define TLBSTATE_LAZY	2
-
 static inline void arch_tlbbatch_add_mm(struct arch_tlbflush_unmap_batch *batch,
 					struct mm_struct *mm)
 {
+	inc_mm_tlb_gen(mm);
 	cpumask_or(&batch->cpumask, &batch->cpumask, mm_cpumask(mm));
 }
 
