@@ -18,7 +18,7 @@
 #include "percpu-internal.h"
 
 #define P(X, Y) \
-	seq_printf(m, "  %-24s: %8lld\n", X, (long long int)Y)
+	seq_printf(m, "  %-20s: %12lld\n", X, (long long int)Y)
 
 struct percpu_stats pcpu_stats;
 struct pcpu_alloc_info pcpu_stats_ai;
@@ -49,7 +49,7 @@ static int find_max_map_used(void)
  * the beginning of the chunk to the last allocation.
  */
 static void chunk_map_stats(struct seq_file *m, struct pcpu_chunk *chunk,
-			    void *buffer)
+			    int *buffer)
 {
 	int i, s_index, last_alloc, alloc_sign, as_len;
 	int *alloc_sizes, *p;
@@ -113,7 +113,7 @@ static int percpu_stats_show(struct seq_file *m, void *v)
 {
 	struct pcpu_chunk *chunk;
 	int slot, max_map_used;
-	void *buffer;
+	int *buffer;
 
 alloc_buffer:
 	spin_lock_irq(&pcpu_lock);
@@ -134,7 +134,7 @@ alloc_buffer:
 	}
 
 #define PL(X) \
-	seq_printf(m, "  %-24s: %8lld\n", #X, (long long int)pcpu_stats_ai.X)
+	seq_printf(m, "  %-20s: %12lld\n", #X, (long long int)pcpu_stats_ai.X)
 
 	seq_printf(m,
 			"Percpu Memory Statistics\n"
@@ -151,7 +151,7 @@ alloc_buffer:
 #undef PL
 
 #define PU(X) \
-	seq_printf(m, "  %-18s: %14llu\n", #X, (unsigned long long)pcpu_stats.X)
+	seq_printf(m, "  %-20s: %12llu\n", #X, (unsigned long long)pcpu_stats.X)
 
 	seq_printf(m,
 			"Global Stats:\n"
@@ -164,6 +164,7 @@ alloc_buffer:
 	PU(nr_max_chunks);
 	PU(min_alloc_size);
 	PU(max_alloc_size);
+	P("empty_pop_pages", pcpu_nr_empty_pop_pages);
 	seq_putc(m, '\n');
 
 #undef PU
