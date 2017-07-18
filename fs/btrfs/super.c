@@ -61,6 +61,7 @@
 #include "tests/btrfs-tests.h"
 
 #include "qgroup.h"
+#include "backref.h"
 #define CREATE_TRACE_POINTS
 #include <trace/events/btrfs.h>
 
@@ -425,7 +426,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 	 * strsep changes the string, duplicate it because parse_options
 	 * gets called twice
 	 */
-	options = kstrdup(options, GFP_NOFS);
+	options = kstrdup(options, GFP_KERNEL);
 	if (!options)
 		return -ENOMEM;
 
@@ -498,14 +499,14 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 				btrfs_test_opt(info, FORCE_COMPRESS);
 			if (token == Opt_compress ||
 			    token == Opt_compress_force ||
-			    strcmp(args[0].from, "zlib") == 0) {
+			    strncmp(args[0].from, "zlib", 4) == 0) {
 				compress_type = "zlib";
 				info->compress_type = BTRFS_COMPRESS_ZLIB;
 				btrfs_set_opt(info->mount_opt, COMPRESS);
 				btrfs_clear_opt(info->mount_opt, NODATACOW);
 				btrfs_clear_opt(info->mount_opt, NODATASUM);
 				no_compress = 0;
-			} else if (strcmp(args[0].from, "lzo") == 0) {
+			} else if (strncmp(args[0].from, "lzo", 3) == 0) {
 				compress_type = "lzo";
 				info->compress_type = BTRFS_COMPRESS_LZO;
 				btrfs_set_opt(info->mount_opt, COMPRESS);
@@ -949,7 +950,7 @@ static char *get_subvol_name_from_objectid(struct btrfs_fs_info *fs_info,
 	}
 	path->leave_spinning = 1;
 
-	name = kmalloc(PATH_MAX, GFP_NOFS);
+	name = kmalloc(PATH_MAX, GFP_KERNEL);
 	if (!name) {
 		ret = -ENOMEM;
 		goto err;
@@ -1335,10 +1336,11 @@ static char *setup_root_args(char *args)
 	char *buf, *dst, *sep;
 
 	if (!args)
-		return kstrdup("subvolid=0", GFP_NOFS);
+		return kstrdup("subvolid=0", GFP_KERNEL);
 
 	/* The worst case is that we add ",subvolid=0" to the end. */
-	buf = dst = kmalloc(strlen(args) + strlen(",subvolid=0") + 1, GFP_NOFS);
+	buf = dst = kmalloc(strlen(args) + strlen(",subvolid=0") + 1,
+			GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
@@ -1567,7 +1569,7 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	 * it for searching for existing supers, so this lets us do that and
 	 * then open_ctree will properly initialize everything later.
 	 */
-	fs_info = kzalloc(sizeof(struct btrfs_fs_info), GFP_NOFS);
+	fs_info = kzalloc(sizeof(struct btrfs_fs_info), GFP_KERNEL);
 	if (!fs_info) {
 		error = -ENOMEM;
 		goto error_sec_opts;
@@ -1575,8 +1577,8 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 
 	fs_info->fs_devices = fs_devices;
 
-	fs_info->super_copy = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_NOFS);
-	fs_info->super_for_commit = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_NOFS);
+	fs_info->super_copy = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_KERNEL);
+	fs_info->super_for_commit = kzalloc(BTRFS_SUPER_INFO_SIZE, GFP_KERNEL);
 	security_init_mnt_opts(&fs_info->security_opts);
 	if (!fs_info->super_copy || !fs_info->super_for_commit) {
 		error = -ENOMEM;
@@ -1780,8 +1782,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			goto restore;
 		}
 
-		if (fs_info->fs_devices->missing_devices >
-		     fs_info->num_tolerated_disk_barrier_failures) {
+		if (!btrfs_check_rw_degradable(fs_info)) {
 			btrfs_warn(fs_info,
 				"too many missing devices, writeable remount is not allowed");
 			ret = -EACCES;
@@ -1813,6 +1814,8 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 			btrfs_warn(fs_info, "failed to resume dev_replace");
 			goto restore;
 		}
+
+		btrfs_qgroup_rescan_resume(fs_info);
 
 		if (!fs_info->uuid_root) {
 			btrfs_info(fs_info, "creating UUID tree");
