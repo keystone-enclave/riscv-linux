@@ -75,6 +75,7 @@ struct rvt_ibport {
 	__be64 mkey;
 	u64 tid;
 	u32 port_cap_flags;
+	u16 port_cap3_flags;
 	u32 pma_sample_start;
 	u32 pma_sample_interval;
 	__be16 pma_counter_select[5];
@@ -229,8 +230,7 @@ struct rvt_driver_provided {
 	 * ERR_PTR(err).  The driver is free to return NULL or a valid
 	 * pointer.
 	 */
-	void * (*qp_priv_alloc)(struct rvt_dev_info *rdi, struct rvt_qp *qp,
-				gfp_t gfp);
+	void * (*qp_priv_alloc)(struct rvt_dev_info *rdi, struct rvt_qp *qp);
 
 	/*
 	 * Free the driver's private qp structure.
@@ -319,7 +319,7 @@ struct rvt_driver_provided {
 
 	/* Let the driver pick the next queue pair number*/
 	int (*alloc_qpn)(struct rvt_dev_info *rdi, struct rvt_qpn_table *qpt,
-			 enum ib_qp_type type, u8 port_num, gfp_t gfp);
+			 enum ib_qp_type type, u8 port_num);
 
 	/* Determine if its safe or allowed to modify the qp */
 	int (*check_modify_qp)(struct rvt_qp *qp, struct ib_qp_attr *attr,
@@ -515,7 +515,8 @@ int rvt_invalidate_rkey(struct rvt_qp *qp, u32 rkey);
 int rvt_rkey_ok(struct rvt_qp *qp, struct rvt_sge *sge,
 		u32 len, u64 vaddr, u32 rkey, int acc);
 int rvt_lkey_ok(struct rvt_lkey_table *rkt, struct rvt_pd *pd,
-		struct rvt_sge *isge, struct ib_sge *sge, int acc);
+		struct rvt_sge *isge, struct rvt_sge *last_sge,
+		struct ib_sge *sge, int acc);
 struct rvt_mcast *rvt_mcast_find(struct rvt_ibport *ibp, union ib_gid *mgid,
 				 u16 lid);
 

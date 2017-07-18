@@ -72,6 +72,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define CMA_MAX_CM_RETRIES 15
 #define CMA_CM_MRA_SETTING (IB_CM_MRA_FLAG_DELAY | 24)
 #define CMA_IBOE_PACKET_LIFETIME 18
+#define CMA_PREFERRED_ROCE_GID_TYPE (1 << IB_GID_TYPE_ROCE_UDP_ENCAP)
 
 static const char * const cma_events[] = {
 	[RDMA_CM_EVENT_ADDR_RESOLVED]	 = "address resolved",
@@ -623,22 +624,11 @@ static inline int cma_validate_port(struct ib_device *device, u8 port,
 	if ((dev_type != ARPHRD_INFINIBAND) && rdma_protocol_ib(device, port))
 		return ret;
 
-	if (dev_type == ARPHRD_ETHER && rdma_protocol_roce(device, port)) {
+	if (dev_type == ARPHRD_ETHER && rdma_protocol_roce(device, port))
 		ndev = dev_get_by_index(&init_net, bound_if_index);
-		if (ndev && ndev->flags & IFF_LOOPBACK) {
-			pr_info("detected loopback device\n");
-			dev_put(ndev);
-
-			if (!device->get_netdev)
-				return -EOPNOTSUPP;
-
-			ndev = device->get_netdev(device, port);
-			if (!ndev)
-				return -ENODEV;
-		}
-	} else {
+	else
 		gid_type = IB_GID_TYPE_IB;
-	}
+
 
 	ret = ib_find_cached_gid_by_port(device, gid, gid_type, port,
 					 ndev, NULL);
@@ -2569,21 +2559,6 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
 			goto err2;
 		}
 
-		if (ndev->flags & IFF_LOOPBACK) {
-			dev_put(ndev);
-			if (!id_priv->id.device->get_netdev) {
-				ret = -EOPNOTSUPP;
-				goto err2;
-			}
-
-			ndev = id_priv->id.device->get_netdev(id_priv->id.device,
-							      id_priv->id.port_num);
-			if (!ndev) {
-				ret = -ENODEV;
-				goto err2;
-			}
-		}
-
 		supported_gids = roce_gid_type_mask_support(id_priv->id.device,
 							    id_priv->id.port_num);
 		gid_type = cma_route_gid_type(addr->dev_addr.network,
@@ -4304,8 +4279,12 @@ static void cma_add_one(struct ib_device *device)
 	for (i = rdma_start_port(device); i <= rdma_end_port(device); i++) {
 		supported_gids = roce_gid_type_mask_support(device, i);
 		WARN_ON(!supported_gids);
-		cma_dev->default_gid_type[i - rdma_start_port(device)] =
-			find_first_bit(&supported_gids, BITS_PER_LONG);
+		if (supported_gids & CMA_PREFERRED_ROCE_GID_TYPE)
+			cma_dev->default_gid_type[i - rdma_start_port(device)] =
+				CMA_PREFERRED_ROCE_GID_TYPE;
+		else
+			cma_dev->default_gid_type[i - rdma_start_port(device)] =
+				find_first_bit(&supported_gids, BITS_PER_LONG);
 		cma_dev->default_roce_tos[i - rdma_start_port(device)] = 0;
 	}
 

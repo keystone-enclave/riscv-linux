@@ -577,7 +577,8 @@ struct ib_device_modify {
 enum ib_port_modify_flags {
 	IB_PORT_SHUTDOWN		= 1,
 	IB_PORT_INIT_TYPE		= (1<<2),
-	IB_PORT_RESET_QKEY_CNTR		= (1<<3)
+	IB_PORT_RESET_QKEY_CNTR		= (1<<3),
+	IB_PORT_OPA_MASK_CHG		= (1<<4)
 };
 
 struct ib_port_modify {
@@ -663,6 +664,8 @@ union rdma_network_hdr {
 		struct iphdr	roce4grh;
 	};
 };
+
+#define IB_QPN_MASK		0xFFFFFF
 
 enum {
 	IB_MULTICAST_QPN = 0xffffff
@@ -1056,7 +1059,7 @@ enum ib_qp_create_flags {
 	IB_QP_CREATE_MANAGED_RECV               = 1 << 4,
 	IB_QP_CREATE_NETIF_QP			= 1 << 5,
 	IB_QP_CREATE_SIGNATURE_EN		= 1 << 6,
-	IB_QP_CREATE_USE_GFP_NOIO		= 1 << 7,
+	/* FREE					= 1 << 7, */
 	IB_QP_CREATE_SCATTER_FCS		= 1 << 8,
 	IB_QP_CREATE_CVLAN_STRIPPING		= 1 << 9,
 	/* reserve bits 26-31 for low level drivers' internal use */
@@ -2946,6 +2949,22 @@ static inline int ib_post_srq_recv(struct ib_srq *srq,
  */
 struct ib_qp *ib_create_qp(struct ib_pd *pd,
 			   struct ib_qp_init_attr *qp_init_attr);
+
+/**
+ * ib_modify_qp_with_udata - Modifies the attributes for the specified QP.
+ * @qp: The QP to modify.
+ * @attr: On input, specifies the QP attributes to modify.  On output,
+ *   the current values of selected QP attributes are returned.
+ * @attr_mask: A bit-mask used to specify which attributes of the QP
+ *   are being modified.
+ * @udata: pointer to user's input output buffer information
+ *   are being modified.
+ * It returns 0 on success and returns appropriate error code on error.
+ */
+int ib_modify_qp_with_udata(struct ib_qp *qp,
+			    struct ib_qp_attr *attr,
+			    int attr_mask,
+			    struct ib_udata *udata);
 
 /**
  * ib_modify_qp - Modifies the attributes for the specified QP and then

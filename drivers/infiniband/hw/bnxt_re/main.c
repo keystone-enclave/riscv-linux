@@ -333,6 +333,7 @@ static int bnxt_re_net_stats_ctx_alloc(struct bnxt_re_dev *rdev,
 	bnxt_re_init_hwrm_hdr(rdev, (void *)&req, HWRM_STAT_CTX_ALLOC, -1, -1);
 	req.update_period_ms = cpu_to_le32(1000);
 	req.stats_dma_addr = cpu_to_le64(dma_map);
+	req.stat_ctx_flags = STAT_CTX_ALLOC_REQ_STAT_CTX_FLAGS_ROCE;
 	bnxt_re_fill_fw_msg(&fw_msg, (void *)&req, sizeof(req), (void *)&resp,
 			    sizeof(resp), DFLT_HWRM_CMD_TIMEOUT);
 	rc = en_dev->en_ops->bnxt_send_fw_msg(en_dev, BNXT_ROCE_ULP, &fw_msg);
@@ -834,6 +835,42 @@ static void bnxt_re_dev_stop(struct bnxt_re_dev *rdev)
 	mutex_unlock(&rdev->qp_lock);
 }
 
+static int bnxt_re_update_gid(struct bnxt_re_dev *rdev)
+{
+	struct bnxt_qplib_sgid_tbl *sgid_tbl = &rdev->qplib_res.sgid_tbl;
+	struct bnxt_qplib_gid gid;
+	u16 gid_idx, index;
+	int rc = 0;
+
+	if (!test_bit(BNXT_RE_FLAG_IBDEV_REGISTERED, &rdev->flags))
+		return 0;
+
+	if (!sgid_tbl) {
+		dev_err(rdev_to_dev(rdev), "QPLIB: SGID table not allocated");
+		return -EINVAL;
+	}
+
+	for (index = 0; index < sgid_tbl->active; index++) {
+		gid_idx = sgid_tbl->hw_id[index];
+
+		if (!memcmp(&sgid_tbl->tbl[index], &bnxt_qplib_gid_zero,
+			    sizeof(bnxt_qplib_gid_zero)))
+			continue;
+		/* need to modify the VLAN enable setting of non VLAN GID only
+		 * as setting is done for VLAN GID while adding GID
+		 */
+		if (sgid_tbl->vlan[index])
+			continue;
+
+		memcpy(&gid, &sgid_tbl->tbl[index], sizeof(gid));
+
+		rc = bnxt_qplib_update_sgid(sgid_tbl, &gid, gid_idx,
+					    rdev->qplib_res.netdev->dev_addr);
+	}
+
+	return rc;
+}
+
 static u32 bnxt_re_get_priority_mask(struct bnxt_re_dev *rdev)
 {
 	u32 prio_map = 0, tmp_map = 0;
@@ -853,8 +890,6 @@ static u32 bnxt_re_get_priority_mask(struct bnxt_re_dev *rdev)
 	tmp_map = dcb_ieee_getapp_mask(netdev, &app);
 	prio_map |= tmp_map;
 
-	if (!prio_map)
-		prio_map = -EFAULT;
 	return prio_map;
 }
 
@@ -880,10 +915,7 @@ static int bnxt_re_setup_qos(struct bnxt_re_dev *rdev)
 	int rc;
 
 	/* Get priority for roce */
-	rc = bnxt_re_get_priority_mask(rdev);
-	if (rc < 0)
-		return rc;
-	prio_map = (u8)rc;
+	prio_map = bnxt_re_get_priority_mask(rdev);
 
 	if (prio_map == rdev->cur_prio_map)
 		return 0;
@@ -903,6 +935,16 @@ static int bnxt_re_setup_qos(struct bnxt_re_dev *rdev)
 		dev_warn(rdev_to_dev(rdev), "no tc for cos{%x, %x}\n",
 			 rdev->cosq[0], rdev->cosq[1]);
 		return rc;
+	}
+
+	/* Actual priorities are not programmed as they are already
+	 * done by L2 driver; just enable or disable priority vlan tagging
+	 */
+	if ((prio_map == 0 && rdev->qplib_res.prio) ||
+	    (prio_map != 0 && !rdev->qplib_res.prio)) {
+		rdev->qplib_res.prio = prio_map ? true : false;
+
+		bnxt_re_update_gid(rdev);
 	}
 
 	return 0;
@@ -997,7 +1039,8 @@ static int bnxt_re_ib_reg(struct bnxt_re_dev *rdev)
 	/* Establish RCFW Communication Channel to initialize the context
 	 * memory for the function and all child VFs
 	 */
-	rc = bnxt_qplib_alloc_rcfw_channel(rdev->en_dev->pdev, &rdev->rcfw);
+	rc = bnxt_qplib_alloc_rcfw_channel(rdev->en_dev->pdev, &rdev->rcfw,
+					   BNXT_RE_MAX_QPC_COUNT);
 	if (rc)
 		goto fail;
 
