@@ -1058,10 +1058,6 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 		ufs->indexdir = ovl_workdir_create(sb, ufs, workpath.dentry,
 						   OVL_INDEXDIR_NAME, true);
-		err = PTR_ERR(ufs->indexdir);
-		if (IS_ERR(ufs->indexdir))
-			goto out_put_lower_mnt;
-
 		if (ufs->indexdir) {
 			/* Verify upper root is index dir origin */
 			err = ovl_verify_origin(ufs->indexdir, ufs->upper_mnt,
@@ -1090,6 +1086,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	else
 		sb->s_d_op = &ovl_dentry_operations;
 
+	err = -ENOMEM;
 	ufs->creator_cred = cred = prepare_creds();
 	if (!cred)
 		goto out_put_indexdir;

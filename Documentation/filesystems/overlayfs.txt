@@ -262,6 +262,22 @@ filesystem are not allowed.  If the underlying filesystem is changed,
 the behavior of the overlay is undefined, though it will not result in
 a crash or deadlock.
 
+When the underlying filesystems supports NFS export, overlay mount can be
+made more resilient to offline and online changes of the underlying lower
+layer by enabling the "inodes index" feature.
+
+On every copy_up, an NFS file handle of the lower inode, along with the
+UUID of the lower filesystem, are encoded and stored in an extended
+attribute "trusted.overlay.origin" on the upper inode.
+
+With the "inodes index" feature, a lookup of a merged directory, that
+found a lower directory at the lookup path or at the path pointed to by
+the "trusted.overlay.redirect" extended attribute, will verify that the
+found lower directory file handle and lower filesystem UUID match the
+origin file handle that was stored at copy_up time.  If a found lower
+directory does not match the stored origin, that directory will be not be
+merged with the upper directory.
+
 Testsuite
 ---------
 
