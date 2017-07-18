@@ -325,6 +325,11 @@ static struct cgroup *cgroup_parent(struct cgroup *cgrp)
 	return NULL;
 }
 
+static bool cgroup_has_tasks(struct cgroup *cgrp)
+{
+	return cgrp->nr_populated_csets;
+}
+
 /* subsystems visibly enabled on a cgroup */
 static u16 cgroup_control(struct cgroup *cgrp)
 {
@@ -587,39 +592,44 @@ static bool css_set_populated(struct css_set *cset)
 }
 
 /**
- * cgroup_update_populated - updated populated count of a cgroup
+ * cgroup_update_populated - update the populated count of a cgroup
  * @cgrp: the target cgroup
  * @populated: inc or dec populated count
  *
  * One of the css_sets associated with @cgrp is either getting its first
- * task or losing the last.  Update @cgrp->populated_cnt accordingly.  The
- * count is propagated towards root so that a given cgroup's populated_cnt
- * is zero iff the cgroup and all its descendants don't contain any tasks.
+ * task or losing the last.  Update @cgrp->nr_populated_* accordingly.  The
+ * count is propagated towards root so that a given cgroup's
+ * nr_populated_children is zero iff none of its descendants contain any
+ * tasks.
  *
- * @cgrp's interface file "cgroup.populated" is zero if
- * @cgrp->populated_cnt is zero and 1 otherwise.  When @cgrp->populated_cnt
- * changes from or to zero, userland is notified that the content of the
- * interface file has changed.  This can be used to detect when @cgrp and
- * its descendants become populated or empty.
+ * @cgrp's interface file "cgroup.populated" is zero if both
+ * @cgrp->nr_populated_csets and @cgrp->nr_populated_children are zero and
+ * 1 otherwise.  When the sum changes from or to zero, userland is notified
+ * that the content of the interface file has changed.  This can be used to
+ * detect when @cgrp and its descendants become populated or empty.
  */
 static void cgroup_update_populated(struct cgroup *cgrp, bool populated)
 {
+	struct cgroup *child = NULL;
+	int adj = populated ? 1 : -1;
+
 	lockdep_assert_held(&css_set_lock);
 
 	do {
-		bool trigger;
+		bool was_populated = cgroup_is_populated(cgrp);
 
-		if (populated)
-			trigger = !cgrp->populated_cnt++;
+		if (!child)
+			cgrp->nr_populated_csets += adj;
 		else
-			trigger = !--cgrp->populated_cnt;
+			cgrp->nr_populated_children += adj;
 
-		if (!trigger)
+		if (was_populated == cgroup_is_populated(cgrp))
 			break;
 
 		cgroup1_check_for_release(cgrp);
 		cgroup_file_notify(&cgrp->events_file);
 
+		child = cgrp;
 		cgrp = cgroup_parent(cgrp);
 	} while (cgrp);
 }
@@ -630,7 +640,7 @@ static void cgroup_update_populated(struct cgroup *cgrp, bool populated)
  * @populated: whether @cset is populated or depopulated
  *
  * @cset is either getting the first task or losing the last.  Update the
- * ->populated_cnt of all associated cgroups accordingly.
+ * populated counters of all associated cgroups accordingly.
  */
 static void css_set_update_populated(struct css_set *cset, bool populated)
 {
@@ -653,7 +663,7 @@ static void css_set_update_populated(struct css_set *cset, bool populated)
  * css_set, @from_cset can be NULL.  If @task is being disassociated
  * instead of moved, @to_cset can be NULL.
  *
- * This function automatically handles populated_cnt updates and
+ * This function automatically handles populated counter updates and
  * css_task_iter adjustments but the caller is responsible for managing
  * @from_cset and @to_cset's reference counts.
  */
@@ -2006,6 +2016,8 @@ static void cgroup_migrate_add_task(struct task_struct *task,
 	if (!cset->mg_src_cgrp)
 		return;
 
+	mgctx->tset.nr_tasks++;
+
 	list_move_tail(&task->cg_list, &cset->mg_tasks);
 	if (list_empty(&cset->mg_node))
 		list_add_tail(&cset->mg_node,
@@ -2094,21 +2106,19 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 	struct css_set *cset, *tmp_cset;
 	int ssid, failed_ssid, ret;
 
-	/* methods shouldn't be called if no task is actually migrating */
-	if (list_empty(&tset->src_csets))
-		return 0;
-
 	/* check that we can legitimately attach to the cgroup */
-	do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
-		if (ss->can_attach) {
-			tset->ssid = ssid;
-			ret = ss->can_attach(tset);
-			if (ret) {
-				failed_ssid = ssid;
-				goto out_cancel_attach;
+	if (tset->nr_tasks) {
+		do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
+			if (ss->can_attach) {
+				tset->ssid = ssid;
+				ret = ss->can_attach(tset);
+				if (ret) {
+					failed_ssid = ssid;
+					goto out_cancel_attach;
+				}
 			}
-		}
-	} while_each_subsys_mask();
+		} while_each_subsys_mask();
+	}
 
 	/*
 	 * Now that we're guaranteed success, proceed to move all tasks to
@@ -2137,25 +2147,29 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 	 */
 	tset->csets = &tset->dst_csets;
 
-	do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
-		if (ss->attach) {
-			tset->ssid = ssid;
-			ss->attach(tset);
-		}
-	} while_each_subsys_mask();
+	if (tset->nr_tasks) {
+		do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
+			if (ss->attach) {
+				tset->ssid = ssid;
+				ss->attach(tset);
+			}
+		} while_each_subsys_mask();
+	}
 
 	ret = 0;
 	goto out_release_tset;
 
 out_cancel_attach:
-	do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
-		if (ssid == failed_ssid)
-			break;
-		if (ss->cancel_attach) {
-			tset->ssid = ssid;
-			ss->cancel_attach(tset);
-		}
-	} while_each_subsys_mask();
+	if (tset->nr_tasks) {
+		do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
+			if (ssid == failed_ssid)
+				break;
+			if (ss->cancel_attach) {
+				tset->ssid = ssid;
+				ss->cancel_attach(tset);
+			}
+		} while_each_subsys_mask();
+	}
 out_release_tset:
 	spin_lock_irq(&css_set_lock);
 	list_splice_init(&tset->dst_csets, &tset->src_csets);
@@ -2966,28 +2980,9 @@ static ssize_t cgroup_subtree_control_write(struct kernfs_open_file *of,
 	 * Except for the root, subtree_control must be zero for a cgroup
 	 * with tasks so that child cgroups don't compete against tasks.
 	 */
-	if (enable && cgroup_parent(cgrp)) {
-		struct cgrp_cset_link *link;
-
-		/*
-		 * Because namespaces pin csets too, @cgrp->cset_links
-		 * might not be empty even when @cgrp is empty.  Walk and
-		 * verify each cset.
-		 */
-		spin_lock_irq(&css_set_lock);
-
-		ret = 0;
-		list_for_each_entry(link, &cgrp->cset_links, cset_link) {
-			if (css_set_populated(link->cset)) {
-				ret = -EBUSY;
-				break;
-			}
-		}
-
-		spin_unlock_irq(&css_set_lock);
-
-		if (ret)
-			goto out_unlock;
+	if (enable && cgroup_parent(cgrp) && cgroup_has_tasks(cgrp)) {
+		ret = -EBUSY;
+		goto out_unlock;
 	}
 
 	/* save and update control masks and prepare csses */
@@ -3230,7 +3225,6 @@ restart:
 
 static int cgroup_apply_cftypes(struct cftype *cfts, bool is_add)
 {
-	LIST_HEAD(pending);
 	struct cgroup_subsys *ss = cfts[0].ss;
 	struct cgroup *root = &ss->root->cgrp;
 	struct cgroup_subsys_state *css;
