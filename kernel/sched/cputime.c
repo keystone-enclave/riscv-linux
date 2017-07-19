@@ -814,7 +814,7 @@ void arch_vtime_task_switch(struct task_struct *prev)
 
 	write_seqcount_begin(&vtime->seqcount);
 	vtime->state = VTIME_SYS;
-	vtime->starttime = sched_clock_cpu(smp_processor_id());
+	vtime->starttime = sched_clock();
 	write_seqcount_end(&vtime->seqcount);
 }
 
@@ -826,7 +826,7 @@ void vtime_init_idle(struct task_struct *t, int cpu)
 	local_irq_save(flags);
 	write_seqcount_begin(&vtime->seqcount);
 	vtime->state = VTIME_SYS;
-	vtime->starttime = sched_clock_cpu(cpu);
+	vtime->starttime = sched_clock();
 	write_seqcount_end(&vtime->seqcount);
 	local_irq_restore(flags);
 }
