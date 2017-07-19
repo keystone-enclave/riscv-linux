@@ -683,7 +683,7 @@ static u64 vtime_delta(struct vtime *vtime)
 {
 	unsigned long long clock;
 
-	clock = sched_clock_cpu(smp_processor_id());
+	clock = sched_clock();
 	if (clock < vtime->starttime)
 		return 0;
 
