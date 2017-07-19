@@ -8105,7 +8105,7 @@ next_block_or_try_again:
 			goto next;
 		}
 
-		wait_for_completion(&done.done);
+		wait_for_completion_io(&done.done);
 
 		if (!done.uptodate) {
 			/* We might have another mirror, so try again */
@@ -8219,7 +8219,7 @@ try_again:
 			goto next;
 		}
 
-		wait_for_completion(&done.done);
+		wait_for_completion_io(&done.done);
 
 		if (!done.uptodate) {
 			/* We might have another mirror, so try again */
