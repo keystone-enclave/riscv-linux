@@ -709,7 +709,7 @@ static int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 
 	if (!BTRFS_I(inode)->generation) {
 		btrfs_info(fs_info,
-			   "The free space cache file (%llu) is invalid. skip it\n",
+			   "the free space cache file (%llu) is invalid, skip it",
 			   offset);
 		return 0;
 	}
@@ -3034,14 +3034,11 @@ int btrfs_find_space_cluster(struct btrfs_fs_info *fs_info,
 	int ret;
 
 	/*
-	 * Choose the minimum extent size we'll require for this
-	 * cluster.  For SSD_SPREAD, don't allow any fragmentation.
-	 * For metadata, allow allocates with smaller extents.  For
-	 * data, keep it dense.
+	 * Choose the minimum extent size we'll require for this cluster.  For
+	 * metadata, allow allocates with smaller extents.  For data, keep it
+	 * dense.
 	 */
-	if (btrfs_test_opt(fs_info, SSD_SPREAD)) {
-		cont1_bytes = min_bytes = bytes + empty_size;
-	} else if (block_group->flags & BTRFS_BLOCK_GROUP_METADATA) {
+	if (block_group->flags & BTRFS_BLOCK_GROUP_METADATA) {
 		cont1_bytes = bytes;
 		min_bytes = fs_info->sectorsize;
 	} else {
