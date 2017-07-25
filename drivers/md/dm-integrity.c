@@ -225,6 +225,8 @@ struct dm_integrity_c {
 	struct alg_spec internal_hash_alg;
 	struct alg_spec journal_crypt_alg;
 	struct alg_spec journal_mac_alg;
+
+	atomic64_t number_of_mismatches;
 };
 
 struct dm_integrity_range {
@@ -309,6 +311,8 @@ static void dm_integrity_dtr(struct dm_target *ti);
 
 static void dm_integrity_io_error(struct dm_integrity_c *ic, const char *msg, int err)
 {
+	if (err == -EILSEQ)
+		atomic64_inc(&ic->number_of_mismatches);
 	if (!cmpxchg(&ic->failed, 0, err))
 		DMERR("Error on %s: %d", msg, err);
 }
@@ -1040,7 +1044,7 @@ static int dm_integrity_rw_tag(struct dm_integrity_c *ic, unsigned char *tag, se
 			memcpy(tag, dp, to_copy);
 		} else if (op == TAG_WRITE) {
 			memcpy(dp, tag, to_copy);
-			dm_bufio_mark_buffer_dirty(b);
+			dm_bufio_mark_partial_buffer_dirty(b, *metadata_offset, *metadata_offset + to_copy);
 		} else  {
 			/* e.g.: op == TAG_CMP */
 			if (unlikely(memcmp(dp, tag, to_copy))) {
@@ -1273,6 +1277,7 @@ again:
 					DMERR("Checksum failed at sector 0x%llx",
 					      (unsigned long long)(sector - ((r + ic->tag_size - 1) / ic->tag_size)));
 					r = -EILSEQ;
+					atomic64_inc(&ic->number_of_mismatches);
 				}
 				if (likely(checksums != checksums_onstack))
 					kfree(checksums);
@@ -1587,16 +1592,18 @@ retry:
 	if (likely(ic->mode == 'J')) {
 		if (dio->write) {
 			unsigned next_entry, i, pos;
-			unsigned ws, we;
+			unsigned ws, we, range_sectors;
 
-			dio->range.n_sectors = min(dio->range.n_sectors, ic->free_sectors);
+			dio->range.n_sectors = min(dio->range.n_sectors,
+						   ic->free_sectors << ic->sb->log2_sectors_per_block);
 			if (unlikely(!dio->range.n_sectors))
 				goto sleep;
-			ic->free_sectors -= dio->range.n_sectors;
+			range_sectors = dio->range.n_sectors >> ic->sb->log2_sectors_per_block;
+			ic->free_sectors -= range_sectors;
 			journal_section = ic->free_section;
 			journal_entry = ic->free_section_entry;
 
-			next_entry = ic->free_section_entry + dio->range.n_sectors;
+			next_entry = ic->free_section_entry + range_sectors;
 			ic->free_section_entry = next_entry % ic->journal_section_entries;
 			ic->free_section += next_entry / ic->journal_section_entries;
 			ic->n_uncommitted_sections += next_entry / ic->journal_section_entries;
@@ -1727,6 +1734,8 @@ static void pad_uncommitted(struct dm_integrity_c *ic)
 		wraparound_section(ic, &ic->free_section);
 		ic->n_uncommitted_sections++;
 	}
+	WARN_ON(ic->journal_sections * ic->journal_section_entries !=
+		(ic->n_uncommitted_sections + ic->n_committed_sections) * ic->journal_section_entries + ic->free_sectors);
 }
 
 static void integrity_commit(struct work_struct *w)
@@ -1821,6 +1830,9 @@ static void do_journal_write(struct dm_integrity_c *ic, unsigned write_start,
 {
 	unsigned i, j, n;
 	struct journal_completion comp;
+	struct blk_plug plug;
+
+	blk_start_plug(&plug);
 
 	comp.ic = ic;
 	comp.in_flight = (atomic_t)ATOMIC_INIT(1);
@@ -1944,6 +1956,8 @@ skip_io:
 	}
 
 	dm_bufio_write_dirty_buffers_async(ic->bufio);
+
+	blk_finish_plug(&plug);
 
 	complete_journal_op(&comp);
 	wait_for_completion_io(&comp.comp);
@@ -2221,7 +2235,7 @@ static void dm_integrity_status(struct dm_target *ti, status_type_t type,
 
 	switch (type) {
 	case STATUSTYPE_INFO:
-		result[0] = '\0';
+		DMEMIT("%llu", (unsigned long long)atomic64_read(&ic->number_of_mismatches));
 		break;
 
 	case STATUSTYPE_TABLE: {
@@ -2794,6 +2808,7 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	bio_list_init(&ic->flush_bio_list);
 	init_waitqueue_head(&ic->copy_to_journal_wait);
 	init_completion(&ic->crypto_backoff);
+	atomic64_set(&ic->number_of_mismatches, 0);
 
 	r = dm_get_device(ti, argv[0], dm_table_get_mode(ti->table), &ic->dev);
 	if (r) {
@@ -3017,6 +3032,11 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	if (ic->sb->log2_sectors_per_block != __ffs(ic->sectors_per_block)) {
 		r = -EINVAL;
 		ti->error = "Block size doesn't match the information in superblock";
+		goto bad;
+	}
+	if (!le32_to_cpu(ic->sb->journal_sections)) {
+		r = -EINVAL;
+		ti->error = "Corrupted superblock, journal_sections is 0";
 		goto bad;
 	}
 	/* make sure that ti->max_io_len doesn't overflow */
