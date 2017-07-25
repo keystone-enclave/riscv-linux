@@ -769,8 +769,7 @@ static void ccp5_irq_bh(unsigned long data)
 
 static irqreturn_t ccp5_irq_handler(int irq, void *data)
 {
-	struct device *dev = data;
-	struct ccp_device *ccp = dev_get_drvdata(dev);
+	struct ccp_device *ccp = (struct ccp_device *)data;
 
 	ccp5_disable_queue_interrupts(ccp);
 	ccp->total_interrupts++;
@@ -881,7 +880,7 @@ static int ccp5_init(struct ccp_device *ccp)
 
 	dev_dbg(dev, "Requesting an IRQ...\n");
 	/* Request an irq */
-	ret = ccp->get_irq(ccp);
+	ret = sp_request_ccp_irq(ccp->sp, ccp5_irq_handler, ccp->name, ccp);
 	if (ret) {
 		dev_err(dev, "unable to allocate an IRQ\n");
 		goto e_pool;
@@ -987,7 +986,7 @@ e_kthread:
 			kthread_stop(ccp->cmd_q[i].kthread);
 
 e_irq:
-	ccp->free_irq(ccp);
+	sp_free_ccp_irq(ccp->sp, ccp);
 
 e_pool:
 	for (i = 0; i < ccp->cmd_q_count; i++)
@@ -1037,7 +1036,7 @@ static void ccp5_destroy(struct ccp_device *ccp)
 		if (ccp->cmd_q[i].kthread)
 			kthread_stop(ccp->cmd_q[i].kthread);
 
-	ccp->free_irq(ccp);
+	sp_free_ccp_irq(ccp->sp, ccp);
 
 	for (i = 0; i < ccp->cmd_q_count; i++) {
 		cmd_q = &ccp->cmd_q[i];
@@ -1106,14 +1105,12 @@ static const struct ccp_actions ccp5_actions = {
 	.init = ccp5_init,
 	.destroy = ccp5_destroy,
 	.get_free_slots = ccp5_get_free_slots,
-	.irqhandler = ccp5_irq_handler,
 };
 
 const struct ccp_vdata ccpv5a = {
 	.version = CCP_VERSION(5, 0),
 	.setup = ccp5_config,
 	.perform = &ccp5_actions,
-	.bar = 2,
 	.offset = 0x0,
 };
 
@@ -1122,6 +1119,5 @@ const struct ccp_vdata ccpv5b = {
 	.dma_chan_attr = DMA_PRIVATE,
 	.setup = ccp5other_config,
 	.perform = &ccp5_actions,
-	.bar = 2,
 	.offset = 0x0,
 };

@@ -24,9 +24,6 @@
  */
 #define MAX_RSP_FQ_BACKLOG_PER_CPU	256
 
-/* Length of a single buffer in the QI driver memory cache */
-#define CAAM_QI_MEMCACHE_SIZE	512
-
 #define CAAM_QI_ENQUEUE_RETRIES	10000
 
 #define CAAM_NAPI_WEIGHT	63
@@ -55,6 +52,7 @@ struct caam_qi_pcpu_priv {
 } ____cacheline_aligned;
 
 static DEFINE_PER_CPU(struct caam_qi_pcpu_priv, pcpu_qipriv);
+static DEFINE_PER_CPU(int, last_cpu);
 
 /*
  * caam_qi_priv - CAAM QI backend private params
@@ -203,8 +201,8 @@ static struct qman_fq *create_caam_req_fq(struct device *qidev,
 		goto init_req_fq_fail;
 	}
 
-	dev_info(qidev, "Allocated request FQ %u for CPU %u\n", req_fq->fqid,
-		 smp_processor_id());
+	dev_dbg(qidev, "Allocated request FQ %u for CPU %u\n", req_fq->fqid,
+		smp_processor_id());
 	return req_fq;
 
 init_req_fq_fail:
@@ -392,7 +390,6 @@ struct caam_drv_ctx *caam_drv_ctx_init(struct device *qidev,
 	dma_addr_t hwdesc;
 	struct caam_drv_ctx *drv_ctx;
 	const cpumask_t *cpus = qman_affine_cpus();
-	static DEFINE_PER_CPU(int, last_cpu);
 
 	num_words = desc_len(sh_desc);
 	if (num_words > MAX_SDLEN) {
@@ -646,7 +643,7 @@ static int alloc_rsp_fq_cpu(struct device *qidev, unsigned int cpu)
 
 	per_cpu(pcpu_qipriv.rsp_fq, cpu) = fq;
 
-	dev_info(qidev, "Allocated response FQ %u for CPU %u", fq->fqid, cpu);
+	dev_dbg(qidev, "Allocated response FQ %u for CPU %u", fq->fqid, cpu);
 	return 0;
 }
 
@@ -679,7 +676,7 @@ static int init_cgr(struct device *qidev)
 		return ret;
 	}
 
-	dev_info(qidev, "Congestion threshold set to %llu\n", val);
+	dev_dbg(qidev, "Congestion threshold set to %llu\n", val);
 	return 0;
 }
 
@@ -737,6 +734,7 @@ int caam_qi_init(struct platform_device *caam_pdev)
 	qi_pdev = platform_device_register_full(&qi_pdev_info);
 	if (IS_ERR(qi_pdev))
 		return PTR_ERR(qi_pdev);
+	set_dma_ops(&qi_pdev->dev, get_dma_ops(ctrldev));
 
 	ctrlpriv = dev_get_drvdata(ctrldev);
 	qidev = &qi_pdev->dev;
