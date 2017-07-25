@@ -596,7 +596,8 @@ static const struct vga_switcheroo_client_ops i915_switcheroo_ops = {
 
 static void i915_gem_fini(struct drm_i915_private *dev_priv)
 {
-	flush_workqueue(dev_priv->wq);
+	/* Flush any outstanding unpin_work. */
+	i915_gem_drain_workqueue(dev_priv);
 
 	mutex_lock(&dev_priv->drm.struct_mutex);
 	intel_uc_fini_hw(dev_priv);
@@ -875,7 +876,6 @@ static int i915_driver_init_early(struct drm_i915_private *dev_priv,
 	spin_lock_init(&dev_priv->uncore.lock);
 
 	spin_lock_init(&dev_priv->mm.object_stat_lock);
-	spin_lock_init(&dev_priv->mmio_flip_lock);
 	mutex_init(&dev_priv->sb_lock);
 	mutex_init(&dev_priv->modeset_restore_lock);
 	mutex_init(&dev_priv->av_mutex);
@@ -1240,6 +1240,7 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
  */
 static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 {
+	intel_fbdev_unregister(dev_priv);
 	intel_audio_deinit(dev_priv);
 
 	intel_gpu_ips_teardown();
@@ -1371,7 +1372,7 @@ void i915_driver_unload(struct drm_device *dev)
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct pci_dev *pdev = dev_priv->drm.pdev;
 
-	intel_fbdev_fini(dev);
+	i915_driver_unregister(dev_priv);
 
 	if (i915_gem_suspend(dev_priv))
 		DRM_ERROR("failed to idle hardware; continuing to unload!\n");
@@ -1381,8 +1382,6 @@ void i915_driver_unload(struct drm_device *dev)
 	drm_atomic_helper_shutdown(dev);
 
 	intel_gvt_cleanup(dev_priv);
-
-	i915_driver_unregister(dev_priv);
 
 	intel_modeset_cleanup(dev);
 
@@ -1408,9 +1407,6 @@ void i915_driver_unload(struct drm_device *dev)
 	/* Free error state after interrupts are fully disabled. */
 	cancel_delayed_work_sync(&dev_priv->gpu_error.hangcheck_work);
 	i915_reset_error_state(dev_priv);
-
-	/* Flush any outstanding unpin_work. */
-	drain_workqueue(dev_priv->wq);
 
 	i915_gem_fini(dev_priv);
 	intel_uc_fini_fw(dev_priv);
@@ -1865,9 +1861,10 @@ void i915_reset(struct drm_i915_private *dev_priv)
 	if (!i915_gem_unset_wedged(dev_priv))
 		goto wakeup;
 
+	dev_notice(dev_priv->drm.dev,
+		   "Resetting chip after gpu hang\n");
 	error->reset_count++;
 
-	pr_notice("drm/i915: Resetting chip after gpu hang\n");
 	disable_irq(dev_priv->drm.irq);
 	ret = i915_gem_reset_prepare(dev_priv);
 	if (ret) {
@@ -1945,12 +1942,22 @@ int i915_reset_engine(struct intel_engine_cs *engine)
 
 	GEM_BUG_ON(!test_bit(I915_RESET_ENGINE + engine->id, &error->flags));
 
-	DRM_DEBUG_DRIVER("resetting %s\n", engine->name);
+	dev_notice(engine->i915->drm.dev,
+		   "Resetting %s after gpu hang\n", engine->name);
+	error->reset_engine_count[engine->id]++;
 
 	active_request = i915_gem_reset_prepare_engine(engine);
 	if (IS_ERR(active_request)) {
 		DRM_DEBUG_DRIVER("Previous reset failed, promote to full reset\n");
 		ret = PTR_ERR(active_request);
+		goto out;
+	}
+
+	ret = intel_gpu_reset(engine->i915, intel_engine_flag(engine));
+	if (ret) {
+		/* If we fail here, we expect to fallback to a global reset */
+		DRM_DEBUG_DRIVER("Failed to reset %s, ret=%d\n",
+				 engine->name, ret);
 		goto out;
 	}
 
@@ -1961,18 +1968,6 @@ int i915_reset_engine(struct intel_engine_cs *engine)
 	 */
 	i915_gem_reset_engine(engine, active_request);
 
-	/* Finally, reset just this engine. */
-	ret = intel_gpu_reset(engine->i915, intel_engine_flag(engine));
-
-	i915_gem_reset_finish_engine(engine);
-
-	if (ret) {
-		/* If we fail here, we expect to fallback to a global reset */
-		DRM_DEBUG_DRIVER("Failed to reset %s, ret=%d\n",
-				 engine->name, ret);
-		goto out;
-	}
-
 	/*
 	 * The engine and its registers (and workarounds in case of render)
 	 * have been reset to their default values. Follow the init_ring
@@ -1982,8 +1977,8 @@ int i915_reset_engine(struct intel_engine_cs *engine)
 	if (ret)
 		goto out;
 
-	error->reset_engine_count[engine->id]++;
 out:
+	i915_gem_reset_finish_engine(engine);
 	return ret;
 }
 

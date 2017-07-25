@@ -602,7 +602,7 @@ struct drm_i915_file_private {
  * to limit the badly behaving clients access to gpu.
  */
 #define I915_MAX_CLIENT_CONTEXT_BANS 3
-	int context_bans;
+	atomic_t context_bans;
 };
 
 /* Used by dp and fdi links */
@@ -715,11 +715,6 @@ struct drm_i915_display_funcs {
 	void (*fdi_link_train)(struct intel_crtc *crtc,
 			       const struct intel_crtc_state *crtc_state);
 	void (*init_clock_gating)(struct drm_i915_private *dev_priv);
-	int (*queue_flip)(struct drm_device *dev, struct drm_crtc *crtc,
-			  struct drm_framebuffer *fb,
-			  struct drm_i915_gem_object *obj,
-			  struct drm_i915_gem_request *req,
-			  uint32_t flags);
 	void (*hpd_irq_setup)(struct drm_i915_private *dev_priv);
 	/* clock updates for mode set */
 	/* cursor updates */
@@ -1388,12 +1383,23 @@ struct i915_power_well {
 	bool hw_enabled;
 	u64 domains;
 	/* unique identifier for this power well */
-	unsigned long id;
+	enum i915_power_well_id id;
 	/*
 	 * Arbitraty data associated with this power well. Platform and power
 	 * well specific.
 	 */
-	unsigned long data;
+	union {
+		struct {
+			enum dpio_phy phy;
+		} bxt;
+		struct {
+			/* Mask of pipes whose IRQ logic is backed by the pw */
+			u8 irq_pipe_mask;
+			/* The pw is backing the VGA functionality */
+			bool has_vga:1;
+			bool has_fuses:1;
+		} hsw;
+	};
 	const struct i915_power_well_ops *ops;
 };
 
@@ -2148,9 +2154,6 @@ struct drm_i915_private {
 	/* protects the irq masks */
 	spinlock_t irq_lock;
 
-	/* protects the mmio flip data */
-	spinlock_t mmio_flip_lock;
-
 	bool display_irqs_enabled;
 
 	/* To control wakeup latency, e.g. for irq-driven dp aux transfers. */
@@ -2255,7 +2258,6 @@ struct drm_i915_private {
 
 	struct intel_crtc *plane_to_crtc_mapping[I915_MAX_PIPES];
 	struct intel_crtc *pipe_to_crtc_mapping[I915_MAX_PIPES];
-	wait_queue_head_t pending_flip_queue;
 
 #ifdef CONFIG_DEBUG_FS
 	struct intel_pipe_crc pipe_crc[I915_MAX_PIPES];
@@ -3296,6 +3298,26 @@ static inline void i915_gem_drain_freed_objects(struct drm_i915_private *i915)
 	do {
 		rcu_barrier();
 	} while (flush_work(&i915->mm.free_work));
+}
+
+static inline void i915_gem_drain_workqueue(struct drm_i915_private *i915)
+{
+	/*
+	 * Similar to objects above (see i915_gem_drain_freed-objects), in
+	 * general we have workers that are armed by RCU and then rearm
+	 * themselves in their callbacks. To be paranoid, we need to
+	 * drain the workqueue a second time after waiting for the RCU
+	 * grace period so that we catch work queued via RCU from the first
+	 * pass. As neither drain_workqueue() nor flush_workqueue() report
+	 * a result, we make an assumption that we only don't require more
+	 * than 2 passes to catch all recursive RCU delayed work.
+	 *
+	 */
+	int pass = 2;
+	do {
+		rcu_barrier();
+		drain_workqueue(i915->wq);
+	} while (--pass);
 }
 
 struct i915_vma * __must_check

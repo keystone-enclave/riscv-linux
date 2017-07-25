@@ -2740,34 +2740,38 @@ i915_gem_object_pwrite_gtt(struct drm_i915_gem_object *obj,
 	return 0;
 }
 
-static bool ban_context(const struct i915_gem_context *ctx)
+static bool ban_context(const struct i915_gem_context *ctx,
+			unsigned int score)
 {
 	return (i915_gem_context_is_bannable(ctx) &&
-		ctx->ban_score >= CONTEXT_SCORE_BAN_THRESHOLD);
+		score >= CONTEXT_SCORE_BAN_THRESHOLD);
 }
 
 static void i915_gem_context_mark_guilty(struct i915_gem_context *ctx)
 {
-	ctx->guilty_count++;
-	ctx->ban_score += CONTEXT_SCORE_GUILTY;
-	if (ban_context(ctx))
-		i915_gem_context_set_banned(ctx);
+	unsigned int score;
+	bool banned;
 
+	atomic_inc(&ctx->guilty_count);
+
+	score = atomic_add_return(CONTEXT_SCORE_GUILTY, &ctx->ban_score);
+	banned = ban_context(ctx, score);
 	DRM_DEBUG_DRIVER("context %s marked guilty (score %d) banned? %s\n",
-			 ctx->name, ctx->ban_score,
-			 yesno(i915_gem_context_is_banned(ctx)));
-
-	if (!i915_gem_context_is_banned(ctx) || IS_ERR_OR_NULL(ctx->file_priv))
+			 ctx->name, score, yesno(banned));
+	if (!banned)
 		return;
 
-	ctx->file_priv->context_bans++;
-	DRM_DEBUG_DRIVER("client %s has had %d context banned\n",
-			 ctx->name, ctx->file_priv->context_bans);
+	i915_gem_context_set_banned(ctx);
+	if (!IS_ERR_OR_NULL(ctx->file_priv)) {
+		atomic_inc(&ctx->file_priv->context_bans);
+		DRM_DEBUG_DRIVER("client %s has had %d context banned\n",
+				 ctx->name, atomic_read(&ctx->file_priv->context_bans));
+	}
 }
 
 static void i915_gem_context_mark_innocent(struct i915_gem_context *ctx)
 {
-	ctx->active_count++;
+	atomic_inc(&ctx->active_count);
 }
 
 struct drm_i915_gem_request *
@@ -2964,6 +2968,8 @@ static bool i915_gem_reset_request(struct drm_i915_gem_request *request)
 void i915_gem_reset_engine(struct intel_engine_cs *engine,
 			   struct drm_i915_gem_request *request)
 {
+	engine->irq_posted = 0;
+
 	if (request && i915_gem_reset_request(request)) {
 		DRM_DEBUG_DRIVER("resetting %s to restart from tail of request 0x%x\n",
 				 engine->name, request->global_seqno);
@@ -3026,6 +3032,7 @@ void i915_gem_reset_finish(struct drm_i915_private *dev_priv)
 
 static void nop_submit_request(struct drm_i915_gem_request *request)
 {
+	GEM_BUG_ON(!i915_terminally_wedged(&request->i915->gpu_error));
 	dma_fence_set_error(&request->fence, -EIO);
 	i915_gem_request_submit(request);
 	intel_engine_init_global_seqno(request->engine, request->global_seqno);
@@ -3050,13 +3057,6 @@ static void engine_set_wedged(struct intel_engine_cs *engine)
 		if (!i915_gem_request_completed(request))
 			dma_fence_set_error(&request->fence, -EIO);
 	spin_unlock_irqrestore(&engine->timeline->lock, flags);
-
-	/* Mark all pending requests as complete so that any concurrent
-	 * (lockless) lookup doesn't try and wait upon the request as we
-	 * reset it.
-	 */
-	intel_engine_init_global_seqno(engine,
-				       intel_engine_last_submit(engine));
 
 	/*
 	 * Clear the execlists queue up before freeing the requests, as those
@@ -3086,6 +3086,13 @@ static void engine_set_wedged(struct intel_engine_cs *engine)
 		 */
 		clear_bit(ENGINE_IRQ_EXECLIST, &engine->irq_posted);
 	}
+
+	/* Mark all pending requests as complete so that any concurrent
+	 * (lockless) lookup doesn't try and wait upon the request as we
+	 * reset it.
+	 */
+	intel_engine_init_global_seqno(engine,
+				       intel_engine_last_submit(engine));
 }
 
 static int __i915_gem_set_wedged_BKL(void *data)
@@ -3094,9 +3101,11 @@ static int __i915_gem_set_wedged_BKL(void *data)
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 
-	set_bit(I915_WEDGED, &i915->gpu_error.flags);
 	for_each_engine(engine, i915, id)
 		engine_set_wedged(engine);
+
+	set_bit(I915_WEDGED, &i915->gpu_error.flags);
+	wake_up_all(&i915->gpu_error.reset_queue);
 
 	return 0;
 }
@@ -4935,8 +4944,6 @@ i915_gem_load_init(struct drm_i915_private *dev_priv)
 			  i915_gem_idle_work_handler);
 	init_waitqueue_head(&dev_priv->gpu_error.wait_queue);
 	init_waitqueue_head(&dev_priv->gpu_error.reset_queue);
-
-	init_waitqueue_head(&dev_priv->pending_flip_queue);
 
 	atomic_set(&dev_priv->mm.bsd_engine_dispatch_index, 0);
 
