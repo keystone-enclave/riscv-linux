@@ -61,8 +61,6 @@ $(obj)/aic7xxx_seq.h: $(src)/aic7xxx.seq $(src)/aic7xxx.reg $(obj)/aicasm/aicasm
 
 $(aic7xxx-gen-y): $(objtree)/$(obj)/aic7xxx_seq.h
 	@true
-else
-$(obj)/aic7xxx_reg_print.c: $(src)/aic7xxx_reg_print.c_shipped
 endif
 
 aic79xx-gen-$(CONFIG_AIC79XX_BUILD_FIRMWARE)	:= $(obj)/aic79xx_reg.h
@@ -79,8 +77,6 @@ $(obj)/aic79xx_seq.h: $(src)/aic79xx.seq $(src)/aic79xx.reg $(obj)/aicasm/aicasm
 
 $(aic79xx-gen-y): $(objtree)/$(obj)/aic79xx_seq.h
 	@true
-else
-$(obj)/aic79xx_reg_print.c: $(src)/aic79xx_reg_print.c_shipped
 endif
 
 $(obj)/aicasm/aicasm: $(srctree)/$(src)/aicasm/*.[chyl]
