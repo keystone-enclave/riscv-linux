@@ -191,8 +191,16 @@ int __init parse_spcr(bool earlycon)
 	if (xgene_8250_erratum_present(table))
 		iotype = "mmio32";
 
-	snprintf(opts, sizeof(opts), "%s,%s,0x%llx,%d", uart, iotype,
-		 table->serial_port.address, baud_rate);
+		/* for xgene v1 and v2 we don't know the clock rate of the
+		 * UART so don't attempt to change to the baud rate state
+		 * in the table because driver cannot calculate the dividers
+		 */
+		snprintf(opts, sizeof(opts), "%s,%s,0x%llx", uart, iotype,
+			 table->serial_port.address);
+	} else {
+		snprintf(opts, sizeof(opts), "%s,%s,0x%llx,%d", uart, iotype,
+			 table->serial_port.address, baud_rate);
+	}
 
 	pr_info("console: %s\n", opts);
 
