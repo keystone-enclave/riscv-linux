@@ -881,7 +881,6 @@ out_free:
 	atomic_dec(&sdp->sd_glock_disposal);
 
 out:
-	rcu_read_unlock();
 	return ret;
 }
 
