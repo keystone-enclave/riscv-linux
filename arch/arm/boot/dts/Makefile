@@ -340,6 +340,7 @@ dtb-$(CONFIG_SOC_IMX51) += \
 	imx51-ts4800.dtb
 dtb-$(CONFIG_SOC_IMX53) += \
 	imx53-ard.dtb \
+	imx53-cx9020.dtb \
 	imx53-m53evk.dtb \
 	imx53-mba53.dtb \
 	imx53-qsb.dtb \
@@ -466,7 +467,7 @@ dtb-$(CONFIG_SOC_IMX6SX) += \
 	imx6sx-udoo-neo-full.dtb
 dtb-$(CONFIG_SOC_IMX6UL) += \
 	imx6ul-14x14-evk.dtb \
-	imx6ul-geam-kit.dtb \
+	imx6ul-geam.dtb \
 	imx6ul-isiot-emmc.dtb \
 	imx6ul-isiot-nand.dtb \
 	imx6ul-liteboard.dtb \
