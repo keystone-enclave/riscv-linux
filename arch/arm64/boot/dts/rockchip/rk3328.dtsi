@@ -76,6 +76,7 @@
 			clocks = <&cru ARMCLK>;
 			enable-method = "psci";
 			next-level-cache = <&l2>;
+			operating-points-v2 = <&cpu0_opp_table>;
 		};
 
 		cpu1: cpu@1 {
@@ -85,6 +86,7 @@
 			clocks = <&cru ARMCLK>;
 			enable-method = "psci";
 			next-level-cache = <&l2>;
+			operating-points-v2 = <&cpu0_opp_table>;
 		};
 
 		cpu2: cpu@2 {
@@ -94,6 +96,7 @@
 			clocks = <&cru ARMCLK>;
 			enable-method = "psci";
 			next-level-cache = <&l2>;
+			operating-points-v2 = <&cpu0_opp_table>;
 		};
 
 		cpu3: cpu@3 {
@@ -103,10 +106,48 @@
 			clocks = <&cru ARMCLK>;
 			enable-method = "psci";
 			next-level-cache = <&l2>;
+			operating-points-v2 = <&cpu0_opp_table>;
 		};
 
 		l2: l2-cache0 {
 			compatible = "cache";
+		};
+	};
+
+	cpu0_opp_table: opp_table0 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-408000000 {
+			opp-hz = /bits/ 64 <408000000>;
+			opp-microvolt = <950000>;
+			clock-latency-ns = <40000>;
+			opp-suspend;
+		};
+		opp-600000000 {
+			opp-hz = /bits/ 64 <600000000>;
+			opp-microvolt = <950000>;
+			clock-latency-ns = <40000>;
+		};
+		opp-816000000 {
+			opp-hz = /bits/ 64 <816000000>;
+			opp-microvolt = <1000000>;
+			clock-latency-ns = <40000>;
+		};
+		opp-1008000000 {
+			opp-hz = /bits/ 64 <1008000000>;
+			opp-microvolt = <1100000>;
+			clock-latency-ns = <40000>;
+		};
+		opp-1200000000 {
+			opp-hz = /bits/ 64 <1200000000>;
+			opp-microvolt = <1225000>;
+			clock-latency-ns = <40000>;
+		};
+		opp-1296000000 {
+			opp-hz = /bits/ 64 <1296000000>;
+			opp-microvolt = <1300000>;
+			clock-latency-ns = <40000>;
 		};
 	};
 
@@ -156,11 +197,62 @@
 		clock-output-names = "xin24m";
 	};
 
+	i2s0: i2s@ff000000 {
+		compatible = "rockchip,rk3328-i2s", "rockchip,rk3066-i2s";
+		reg = <0x0 0xff000000 0x0 0x1000>;
+		interrupts = <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru SCLK_I2S0>, <&cru HCLK_I2S0_8CH>;
+		clock-names = "i2s_clk", "i2s_hclk";
+		dmas = <&dmac 11>, <&dmac 12>;
+		dma-names = "tx", "rx";
+		status = "disabled";
+	};
+
+	i2s1: i2s@ff010000 {
+		compatible = "rockchip,rk3328-i2s", "rockchip,rk3066-i2s";
+		reg = <0x0 0xff010000 0x0 0x1000>;
+		interrupts = <GIC_SPI 27 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru SCLK_I2S1>, <&cru HCLK_I2S1_8CH>;
+		clock-names = "i2s_clk", "i2s_hclk";
+		dmas = <&dmac 14>, <&dmac 15>;
+		dma-names = "tx", "rx";
+		status = "disabled";
+	};
+
+	i2s2: i2s@ff020000 {
+		compatible = "rockchip,rk3328-i2s", "rockchip,rk3066-i2s";
+		reg = <0x0 0xff020000 0x0 0x1000>;
+		interrupts = <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru SCLK_I2S2>, <&cru HCLK_I2S2_2CH>;
+		clock-names = "i2s_clk", "i2s_hclk";
+		dmas = <&dmac 0>, <&dmac 1>;
+		dma-names = "tx", "rx";
+		status = "disabled";
+	};
+
+	spdif: spdif@ff030000 {
+		compatible = "rockchip,rk3328-spdif";
+		reg = <0x0 0xff030000 0x0 0x1000>;
+		interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru SCLK_SPDIF>, <&cru HCLK_SPDIF_8CH>;
+		clock-names = "mclk", "hclk";
+		dmas = <&dmac 10>;
+		dma-names = "tx";
+		pinctrl-names = "default";
+		pinctrl-0 = <&spdifm2_tx>;
+		status = "disabled";
+	};
+
 	grf: syscon@ff100000 {
 		compatible = "rockchip,rk3328-grf", "syscon", "simple-mfd";
 		reg = <0x0 0xff100000 0x0 0x1000>;
 		#address-cells = <1>;
 		#size-cells = <1>;
+
+		io_domains: io-domains {
+			compatible = "rockchip,rk3328-io-voltage-domain";
+			status = "disabled";
+		};
 
 		power: power-controller {
 			compatible = "rockchip,rk3328-power-controller";
@@ -372,6 +464,43 @@
 			<32768>;
 	};
 
+	usb2phy_grf: syscon@ff450000 {
+		compatible = "rockchip,rk3328-usb2phy-grf", "syscon",
+			     "simple-mfd";
+		reg = <0x0 0xff450000 0x0 0x10000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		u2phy: usb2-phy@100 {
+			compatible = "rockchip,rk3328-usb2phy";
+			reg = <0x100 0x10>;
+			clocks = <&xin24m>;
+			clock-names = "phyclk";
+			clock-output-names = "usb480m_phy";
+			#clock-cells = <0>;
+			assigned-clocks = <&cru USB480M>;
+			assigned-clock-parents = <&u2phy>;
+			status = "disabled";
+
+			u2phy_otg: otg-port {
+				#phy-cells = <0>;
+				interrupts = <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>,
+					     <GIC_SPI 60 IRQ_TYPE_LEVEL_HIGH>,
+					     <GIC_SPI 61 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "otg-bvalid", "otg-id",
+						  "linestate";
+				status = "disabled";
+			};
+
+			u2phy_host: host-port {
+				#phy-cells = <0>;
+				interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "linestate";
+				status = "disabled";
+			};
+		};
+	};
+
 	sdmmc: dwmmc@ff500000 {
 		compatible = "rockchip,rk3328-dw-mshc", "rockchip,rk3288-dw-mshc";
 		reg = <0x0 0xff500000 0x0 0x4000>;
@@ -421,6 +550,45 @@
 		resets = <&cru SRST_GMAC2IO_A>;
 		reset-names = "stmmaceth";
 		rockchip,grf = <&grf>;
+		status = "disabled";
+	};
+
+	usb20_otg: usb@ff580000 {
+		compatible = "rockchip,rk3328-usb", "rockchip,rk3066-usb",
+			     "snps,dwc2";
+		reg = <0x0 0xff580000 0x0 0x40000>;
+		interrupts = <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru HCLK_OTG>;
+		clock-names = "otg";
+		dr_mode = "otg";
+		g-np-tx-fifo-size = <16>;
+		g-rx-fifo-size = <280>;
+		g-tx-fifo-size = <256 128 128 64 32 16>;
+		g-use-dma;
+		phys = <&u2phy_otg>;
+		phy-names = "usb2-phy";
+		status = "disabled";
+	};
+
+	usb_host0_ehci: usb@ff5c0000 {
+		compatible = "generic-ehci";
+		reg = <0x0 0xff5c0000 0x0 0x10000>;
+		interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru HCLK_HOST0>, <&u2phy>;
+		clock-names = "usbhost", "utmi";
+		phys = <&u2phy_host>;
+		phy-names = "usb";
+		status = "disabled";
+	};
+
+	usb_host0_ohci: usb@ff5d0000 {
+		compatible = "generic-ohci";
+		reg = <0x0 0xff5d0000 0x0 0x10000>;
+		interrupts = <GIC_SPI 17 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru HCLK_HOST0>, <&u2phy>;
+		clock-names = "usbhost", "utmi";
+		phys = <&u2phy_host>;
+		phy-names = "usb";
 		status = "disabled";
 	};
 
