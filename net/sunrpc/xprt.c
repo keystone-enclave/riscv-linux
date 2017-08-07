@@ -937,6 +937,12 @@ bool xprt_prepare_transmit(struct rpc_task *task)
 		goto out_unlock;
 	}
 	ret = true;
+	if (test_bit(RPC_TASK_MSG_XMIT, &task->tk_runstate)) {
+		clear_bit(RPC_TASK_MSG_XMIT, &task->tk_runstate);
+		smp_mb__after_atomic();
+		if (test_bit(RPC_TASK_MSG_XMIT_WAIT, &task->tk_runstate))
+			wake_up_bit(&task->tk_runstate, RPC_TASK_MSG_XMIT);
+	}
 out_unlock:
 	spin_unlock_bh(&xprt->transport_lock);
 	return ret;
