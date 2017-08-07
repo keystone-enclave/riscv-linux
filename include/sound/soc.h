@@ -888,7 +888,6 @@ struct snd_soc_codec {
 	struct list_head list;
 
 	/* runtime */
-	unsigned int cache_bypass:1; /* Suppress access to the cache */
 	unsigned int cache_init:1; /* codec cache has been initialized */
 
 	/* codec IO */
@@ -898,10 +897,6 @@ struct snd_soc_codec {
 
 	/* component */
 	struct snd_soc_component component;
-
-#ifdef CONFIG_DEBUG_FS
-	struct dentry *debugfs_reg;
-#endif
 };
 
 /* codec driver */
