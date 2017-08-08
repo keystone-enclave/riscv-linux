@@ -339,11 +339,12 @@ static void soc_cleanup_component_debugfs(struct snd_soc_component *component)
 static void soc_init_codec_debugfs(struct snd_soc_component *component)
 {
 	struct snd_soc_codec *codec = snd_soc_component_to_codec(component);
+	struct dentry *debugfs_reg;
 
-	codec->debugfs_reg = debugfs_create_file("codec_reg", 0644,
-						 codec->component.debugfs_root,
-						 codec, &codec_reg_fops);
-	if (!codec->debugfs_reg)
+	debugfs_reg = debugfs_create_file("codec_reg", 0644,
+					  codec->component.debugfs_root,
+					  codec, &codec_reg_fops);
+	if (!debugfs_reg)
 		dev_warn(codec->dev,
 			"ASoC: Failed to create codec register debugfs file\n");
 }
@@ -494,7 +495,7 @@ static void soc_cleanup_card_debugfs(struct snd_soc_card *card)
 static void snd_soc_debugfs_init(void)
 {
 	snd_soc_debugfs_root = debugfs_create_dir("asoc", NULL);
-	if (IS_ERR(snd_soc_debugfs_root) || !snd_soc_debugfs_root) {
+	if (IS_ERR_OR_NULL(snd_soc_debugfs_root)) {
 		pr_warn("ASoC: Failed to create debugfs directory\n");
 		snd_soc_debugfs_root = NULL;
 		return;
@@ -3280,40 +3281,40 @@ static void snd_soc_component_del_unlocked(struct snd_soc_component *component)
 }
 
 int snd_soc_register_component(struct device *dev,
-			       const struct snd_soc_component_driver *cmpnt_drv,
+			       const struct snd_soc_component_driver *component_driver,
 			       struct snd_soc_dai_driver *dai_drv,
 			       int num_dai)
 {
-	struct snd_soc_component *cmpnt;
+	struct snd_soc_component *component;
 	int ret;
 
-	cmpnt = kzalloc(sizeof(*cmpnt), GFP_KERNEL);
-	if (!cmpnt) {
+	component = kzalloc(sizeof(*component), GFP_KERNEL);
+	if (!component) {
 		dev_err(dev, "ASoC: Failed to allocate memory\n");
 		return -ENOMEM;
 	}
 
-	ret = snd_soc_component_initialize(cmpnt, cmpnt_drv, dev);
+	ret = snd_soc_component_initialize(component, component_driver, dev);
 	if (ret)
 		goto err_free;
 
-	cmpnt->ignore_pmdown_time = true;
-	cmpnt->registered_as_component = true;
+	component->ignore_pmdown_time = true;
+	component->registered_as_component = true;
 
-	ret = snd_soc_register_dais(cmpnt, dai_drv, num_dai, true);
+	ret = snd_soc_register_dais(component, dai_drv, num_dai, true);
 	if (ret < 0) {
 		dev_err(dev, "ASoC: Failed to register DAIs: %d\n", ret);
 		goto err_cleanup;
 	}
 
-	snd_soc_component_add(cmpnt);
+	snd_soc_component_add(component);
 
 	return 0;
 
 err_cleanup:
-	snd_soc_component_cleanup(cmpnt);
+	snd_soc_component_cleanup(component);
 err_free:
-	kfree(cmpnt);
+	kfree(component);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_soc_register_component);
@@ -3325,22 +3326,26 @@ EXPORT_SYMBOL_GPL(snd_soc_register_component);
  */
 void snd_soc_unregister_component(struct device *dev)
 {
-	struct snd_soc_component *cmpnt;
+	struct snd_soc_component *component;
+	int found = 0;
 
 	mutex_lock(&client_mutex);
-	list_for_each_entry(cmpnt, &component_list, list) {
-		if (dev == cmpnt->dev && cmpnt->registered_as_component)
-			goto found;
+	list_for_each_entry(component, &component_list, list) {
+		if (dev != component->dev ||
+		    !component->registered_as_component)
+			continue;
+
+		snd_soc_tplg_component_remove(component, SND_SOC_TPLG_INDEX_ALL);
+		snd_soc_component_del_unlocked(component);
+		found = 1;
+		break;
 	}
 	mutex_unlock(&client_mutex);
-	return;
 
-found:
-	snd_soc_tplg_component_remove(cmpnt, SND_SOC_TPLG_INDEX_ALL);
-	snd_soc_component_del_unlocked(cmpnt);
-	mutex_unlock(&client_mutex);
-	snd_soc_component_cleanup(cmpnt);
-	kfree(cmpnt);
+	if (found) {
+		snd_soc_component_cleanup(component);
+		kfree(component);
+	}
 }
 EXPORT_SYMBOL_GPL(snd_soc_unregister_component);
 
