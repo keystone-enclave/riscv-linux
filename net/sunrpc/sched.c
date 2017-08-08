@@ -320,6 +320,19 @@ int __rpc_wait_for_completion_task(struct rpc_task *task, wait_bit_action_f *act
 EXPORT_SYMBOL_GPL(__rpc_wait_for_completion_task);
 
 /*
+ * Allow callers to wait for completion of an RPC call
+ */
+int rpc_wait_for_msg_send(struct rpc_task *task)
+{
+	if (!test_bit(RPC_TASK_MSG_XMIT, &task->tk_runstate))
+		return 0;
+	set_bit(RPC_TASK_MSG_XMIT_WAIT, &task->tk_runstate);
+	return wait_on_bit_action(&task->tk_runstate, RPC_TASK_MSG_XMIT,
+			rpc_wait_bit_killable, TASK_KILLABLE);
+}
+EXPORT_SYMBOL_GPL(rpc_wait_for_msg_send);
+
+/*
  * Make an RPC task runnable.
  *
  * Note: If the task is ASYNC, and is being made runnable after sitting on an
@@ -700,6 +713,7 @@ rpc_reset_task_statistics(struct rpc_task *task)
 {
 	task->tk_timeouts = 0;
 	task->tk_flags &= ~(RPC_CALL_MAJORSEEN|RPC_TASK_KILLED|RPC_TASK_SENT);
+	set_bit(RPC_TASK_MSG_XMIT, &task->tk_runstate);
 
 	rpc_init_task_statistics(task);
 }
@@ -928,6 +942,7 @@ static void rpc_init_task(struct rpc_task *task, const struct rpc_task_setup *ta
 	memset(task, 0, sizeof(*task));
 	atomic_set(&task->tk_count, 1);
 	task->tk_flags  = task_setup_data->flags;
+	task->tk_runstate = BIT(RPC_TASK_MSG_XMIT);
 	task->tk_ops = task_setup_data->callback_ops;
 	task->tk_calldata = task_setup_data->callback_data;
 	INIT_LIST_HEAD(&task->tk_task);
@@ -1012,6 +1027,13 @@ static void rpc_async_release(struct work_struct *work)
 
 static void rpc_release_resources_task(struct rpc_task *task)
 {
+	if (test_bit(RPC_TASK_MSG_XMIT, &task->tk_runstate)) {
+		clear_bit(RPC_TASK_MSG_XMIT, &task->tk_runstate);
+		smp_mb__after_atomic();
+		if (test_bit(RPC_TASK_MSG_XMIT_WAIT, &task->tk_runstate))
+			wake_up_bit(&task->tk_runstate, RPC_TASK_MSG_XMIT);
+	}
+
 	xprt_release(task);
 	if (task->tk_msg.rpc_cred) {
 		put_rpccred(task->tk_msg.rpc_cred);
