@@ -602,15 +602,23 @@ static int write_data_dma(struct qcom_nand_controller *nandc, int reg_off,
 }
 
 /*
- * helper to prepare dma descriptors to configure registers needed for reading a
- * codeword/step in a page
+ * Helper to prepare DMA descriptors for configuring registers
+ * before reading a NAND page.
  */
-static void config_cw_read(struct qcom_nand_controller *nandc)
+static void config_nand_page_read(struct qcom_nand_controller *nandc)
 {
-	write_reg_dma(nandc, NAND_FLASH_CMD, 3);
+	write_reg_dma(nandc, NAND_ADDR0, 2);
 	write_reg_dma(nandc, NAND_DEV0_CFG0, 3);
 	write_reg_dma(nandc, NAND_EBI2_ECC_BUF_CFG, 1);
+}
 
+/*
+ * Helper to prepare DMA descriptors for configuring registers
+ * before reading each codeword in NAND page.
+ */
+static void config_nand_cw_read(struct qcom_nand_controller *nandc)
+{
+	write_reg_dma(nandc, NAND_FLASH_CMD, 1);
 	write_reg_dma(nandc, NAND_EXEC_CMD, 1);
 
 	read_reg_dma(nandc, NAND_FLASH_STATUS, 2);
@@ -618,18 +626,33 @@ static void config_cw_read(struct qcom_nand_controller *nandc)
 }
 
 /*
- * helpers to prepare dma descriptors used to configure registers needed for
- * writing a codeword/step in a page
+ * Helper to prepare dma descriptors to configure registers needed for reading a
+ * single codeword in page
  */
-static void config_cw_write_pre(struct qcom_nand_controller *nandc)
+static void config_nand_single_cw_page_read(struct qcom_nand_controller *nandc)
 {
-	write_reg_dma(nandc, NAND_FLASH_CMD, 3);
+	config_nand_page_read(nandc);
+	config_nand_cw_read(nandc);
+}
+
+/*
+ * Helper to prepare DMA descriptors used to configure registers needed for
+ * before writing a NAND page.
+ */
+static void config_nand_page_write(struct qcom_nand_controller *nandc)
+{
+	write_reg_dma(nandc, NAND_ADDR0, 2);
 	write_reg_dma(nandc, NAND_DEV0_CFG0, 3);
 	write_reg_dma(nandc, NAND_EBI2_ECC_BUF_CFG, 1);
 }
 
-static void config_cw_write_post(struct qcom_nand_controller *nandc)
+/*
+ * Helper to prepare DMA descriptors for configuring registers
+ * before writing each codeword in NAND page.
+ */
+static void config_nand_cw_write(struct qcom_nand_controller *nandc)
 {
+	write_reg_dma(nandc, NAND_FLASH_CMD, 1);
 	write_reg_dma(nandc, NAND_EXEC_CMD, 1);
 
 	read_reg_dma(nandc, NAND_FLASH_STATUS, 1);
@@ -689,7 +712,7 @@ static int nandc_param(struct qcom_nand_host *host)
 	nandc->buf_count = 512;
 	memset(nandc->data_buffer, 0xff, nandc->buf_count);
 
-	config_cw_read(nandc);
+	config_nand_single_cw_page_read(nandc);
 
 	read_data_dma(nandc, FLASH_BUF_ACC, nandc->data_buffer,
 		      nandc->buf_count);
@@ -800,8 +823,6 @@ static void free_descs(struct qcom_nand_controller *nandc)
 static void clear_read_regs(struct qcom_nand_controller *nandc)
 {
 	nandc->reg_read_pos = 0;
-	memset(nandc->reg_read_buf, 0,
-	       MAX_REG_RD * sizeof(*nandc->reg_read_buf));
 }
 
 static void pre_command(struct qcom_nand_host *host, int command)
@@ -1102,6 +1123,8 @@ static int read_page_ecc(struct qcom_nand_host *host, u8 *data_buf,
 	struct nand_ecc_ctrl *ecc = &chip->ecc;
 	int i, ret;
 
+	config_nand_page_read(nandc);
+
 	/* queue cmd descs for each codeword */
 	for (i = 0; i < ecc->steps; i++) {
 		int data_size, oob_size;
@@ -1115,7 +1138,7 @@ static int read_page_ecc(struct qcom_nand_host *host, u8 *data_buf,
 			oob_size = host->ecc_bytes_hw + host->spare_bytes;
 		}
 
-		config_cw_read(nandc);
+		config_nand_cw_read(nandc);
 
 		if (data_buf)
 			read_data_dma(nandc, FLASH_BUF_ACC, data_buf,
@@ -1175,7 +1198,7 @@ static int copy_last_cw(struct qcom_nand_host *host, int page)
 	set_address(host, host->cw_size * (ecc->steps - 1), page);
 	update_rw_regs(host, 1, true);
 
-	config_cw_read(nandc);
+	config_nand_single_cw_page_read(nandc);
 
 	read_data_dma(nandc, FLASH_BUF_ACC, nandc->data_buffer, size);
 
@@ -1225,6 +1248,7 @@ static int qcom_nandc_read_page_raw(struct mtd_info *mtd,
 
 	host->use_ecc = false;
 	update_rw_regs(host, ecc->steps, true);
+	config_nand_page_read(nandc);
 
 	for (i = 0; i < ecc->steps; i++) {
 		int data_size1, data_size2, oob_size1, oob_size2;
@@ -1243,7 +1267,7 @@ static int qcom_nandc_read_page_raw(struct mtd_info *mtd,
 			oob_size2 = host->ecc_bytes_hw + host->spare_bytes;
 		}
 
-		config_cw_read(nandc);
+		config_nand_cw_read(nandc);
 
 		read_data_dma(nandc, reg_off, data_buf, data_size1);
 		reg_off += data_size1;
@@ -1309,6 +1333,7 @@ static int qcom_nandc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 
 	host->use_ecc = true;
 	update_rw_regs(host, ecc->steps, false);
+	config_nand_page_write(nandc);
 
 	for (i = 0; i < ecc->steps; i++) {
 		int data_size, oob_size;
@@ -1322,7 +1347,6 @@ static int qcom_nandc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 			oob_size = ecc->bytes;
 		}
 
-		config_cw_write_pre(nandc);
 
 		write_data_dma(nandc, FLASH_BUF_ACC, data_buf, data_size);
 
@@ -1340,7 +1364,7 @@ static int qcom_nandc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 				       oob_buf, oob_size);
 		}
 
-		config_cw_write_post(nandc);
+		config_nand_cw_write(nandc);
 
 		data_buf += data_size;
 		oob_buf += oob_size;
@@ -1373,6 +1397,7 @@ static int qcom_nandc_write_page_raw(struct mtd_info *mtd,
 
 	host->use_ecc = false;
 	update_rw_regs(host, ecc->steps, false);
+	config_nand_page_write(nandc);
 
 	for (i = 0; i < ecc->steps; i++) {
 		int data_size1, data_size2, oob_size1, oob_size2;
@@ -1391,8 +1416,6 @@ static int qcom_nandc_write_page_raw(struct mtd_info *mtd,
 			oob_size2 = host->ecc_bytes_hw + host->spare_bytes;
 		}
 
-		config_cw_write_pre(nandc);
-
 		write_data_dma(nandc, reg_off, data_buf, data_size1);
 		reg_off += data_size1;
 		data_buf += data_size1;
@@ -1408,7 +1431,7 @@ static int qcom_nandc_write_page_raw(struct mtd_info *mtd,
 		write_data_dma(nandc, reg_off, oob_buf, oob_size2);
 		oob_buf += oob_size2;
 
-		config_cw_write_post(nandc);
+		config_nand_cw_write(nandc);
 	}
 
 	ret = submit_descs(nandc);
@@ -1458,10 +1481,10 @@ static int qcom_nandc_write_oob(struct mtd_info *mtd, struct nand_chip *chip,
 	set_address(host, host->cw_size * (ecc->steps - 1), page);
 	update_rw_regs(host, 1, false);
 
-	config_cw_write_pre(nandc);
+	config_nand_page_write(nandc);
 	write_data_dma(nandc, FLASH_BUF_ACC, nandc->data_buffer,
 		       data_size + oob_size);
-	config_cw_write_post(nandc);
+	config_nand_cw_write(nandc);
 
 	ret = submit_descs(nandc);
 
@@ -1543,9 +1566,9 @@ static int qcom_nandc_block_markbad(struct mtd_info *mtd, loff_t ofs)
 	set_address(host, host->cw_size * (ecc->steps - 1), page);
 	update_rw_regs(host, 1, false);
 
-	config_cw_write_pre(nandc);
+	config_nand_page_write(nandc);
 	write_data_dma(nandc, FLASH_BUF_ACC, nandc->data_buffer, host->cw_size);
-	config_cw_write_post(nandc);
+	config_nand_cw_write(nandc);
 
 	ret = submit_descs(nandc);
 
@@ -1893,7 +1916,7 @@ static int qcom_nand_host_setup(struct qcom_nand_host *host)
 				| wide_bus << WIDE_FLASH
 				| 1 << DEV0_CFG1_ECC_DISABLE;
 
-	host->ecc_bch_cfg = host->bch_enabled << ECC_CFG_ECC_DISABLE
+	host->ecc_bch_cfg = !host->bch_enabled << ECC_CFG_ECC_DISABLE
 				| 0 << ECC_SW_RESET
 				| host->cw_data << ECC_NUM_DATA_BYTES
 				| 1 << ECC_FORCE_CLK_OPEN
@@ -2034,14 +2057,67 @@ static int qcom_nand_host_init(struct qcom_nand_controller *nandc,
 		return ret;
 
 	ret = qcom_nand_host_setup(host);
-	if (ret)
-		return ret;
+
+	return ret;
+}
+
+static int qcom_nand_mtd_register(struct qcom_nand_controller *nandc,
+				  struct qcom_nand_host *host,
+				  struct device_node *dn)
+{
+	struct nand_chip *chip = &host->chip;
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	int ret;
 
 	ret = nand_scan_tail(mtd);
 	if (ret)
 		return ret;
 
-	return mtd_device_register(mtd, NULL, 0);
+	ret = mtd_device_register(mtd, NULL, 0);
+	if (ret)
+		nand_cleanup(mtd_to_nand(mtd));
+
+	return ret;
+}
+
+static int qcom_probe_nand_devices(struct qcom_nand_controller *nandc)
+{
+	struct device *dev = nandc->dev;
+	struct device_node *dn = dev->of_node, *child;
+	struct qcom_nand_host *host, *tmp;
+	int ret;
+
+	for_each_available_child_of_node(dn, child) {
+		host = devm_kzalloc(dev, sizeof(*host), GFP_KERNEL);
+		if (!host) {
+			of_node_put(child);
+			return -ENOMEM;
+		}
+
+		ret = qcom_nand_host_init(nandc, host, child);
+		if (ret) {
+			devm_kfree(dev, host);
+			continue;
+		}
+
+		list_add_tail(&host->node, &nandc->host_list);
+	}
+
+	if (list_empty(&nandc->host_list))
+		return -ENODEV;
+
+	list_for_each_entry_safe(host, tmp, &nandc->host_list, node) {
+		ret = qcom_nand_mtd_register(nandc, host, child);
+		if (ret) {
+			list_del(&host->node);
+			devm_kfree(dev, host);
+		}
+	}
+
+	if (list_empty(&nandc->host_list))
+		return -ENODEV;
+
+	return 0;
 }
 
 /* parse custom DT properties here */
@@ -2069,10 +2145,8 @@ static int qcom_nandc_parse_dt(struct platform_device *pdev)
 static int qcom_nandc_probe(struct platform_device *pdev)
 {
 	struct qcom_nand_controller *nandc;
-	struct qcom_nand_host *host;
 	const void *dev_data;
 	struct device *dev = &pdev->dev;
-	struct device_node *dn = dev->of_node, *child;
 	struct resource *res;
 	int ret;
 
@@ -2126,35 +2200,12 @@ static int qcom_nandc_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_setup;
 
-	for_each_available_child_of_node(dn, child) {
-		if (of_device_is_compatible(child, "qcom,nandcs")) {
-			host = devm_kzalloc(dev, sizeof(*host), GFP_KERNEL);
-			if (!host) {
-				of_node_put(child);
-				ret = -ENOMEM;
-				goto err_cs_init;
-			}
-
-			ret = qcom_nand_host_init(nandc, host, child);
-			if (ret) {
-				devm_kfree(dev, host);
-				continue;
-			}
-
-			list_add_tail(&host->node, &nandc->host_list);
-		}
-	}
-
-	if (list_empty(&nandc->host_list)) {
-		ret = -ENODEV;
-		goto err_cs_init;
-	}
+	ret = qcom_probe_nand_devices(nandc);
+	if (ret)
+		goto err_setup;
 
 	return 0;
 
-err_cs_init:
-	list_for_each_entry(host, &nandc->host_list, node)
-		nand_release(nand_to_mtd(&host->chip));
 err_setup:
 	clk_disable_unprepare(nandc->aon_clk);
 err_aon_clk:
