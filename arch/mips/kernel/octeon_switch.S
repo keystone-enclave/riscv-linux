@@ -11,11 +11,6 @@
  *    written by Carsten Langgaard, carstenl@mips.com
  */
 
-#define USE_ALTERNATE_RESUME_IMPL 1
-	.set push
-	.set arch=mips64r2
-#include "r4k_switch.S"
-	.set pop
 /*
  * task_struct *resume(task_struct *prev, task_struct *next,
  *		       struct thread_info *next_ti)
