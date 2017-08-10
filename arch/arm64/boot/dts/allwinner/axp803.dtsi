@@ -1,6 +1,5 @@
 /*
- * Copyright 2015 Vishnu Patekar
- * Vishnu Patekar <vishnupatekar0510@gmail.com>
+ * Copyright 2017 Icenowy Zheng <icenowy@aosc.xyz>
  *
  * This file is dual-licensed: you can use it either under the terms
  * of the GPL or the X11 license, at your option. Note that this dual
@@ -41,80 +40,111 @@
  *     OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/dts-v1/;
-#include "sun8i-a83t.dtsi"
-#include "sunxi-common-regulators.dtsi"
+/*
+ * AXP803 Integrated Power Management Chip
+ * http://files.pine64.org/doc/datasheet/pine64/AXP803_Datasheet_V1.0.pdf
+ */
 
-/ {
-	model = "Allwinner A83T H8Homlet Proto Dev Board v2.0";
-	compatible = "allwinner,h8homlet-v2", "allwinner,sun8i-a83t";
+&axp803 {
+	interrupt-controller;
+	#interrupt-cells = <1>;
 
-	aliases {
-		serial0 = &uart0;
-	};
+	regulators {
+		/* Default work frequency for buck regulators */
+		x-powers,dcdc-freq = <3000>;
 
-	chosen {
-		stdout-path = "serial0:115200n8";
-	};
-};
-
-&mmc0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mmc0_pins>;
-	vmmc-supply = <&reg_vcc3v0>;
-	cd-gpios = <&pio 5 6 GPIO_ACTIVE_HIGH>; /* PF6 */
-	bus-width = <4>;
-	cd-inverted;
-	status = "okay";
-};
-
-&mmc2 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mmc2_8bit_emmc_pins>;
-	vmmc-supply = <&reg_vcc3v0>;
-	bus-width = <8>;
-	non-removable;
-	cap-mmc-hw-reset;
-	status = "okay";
-};
-
-&r_rsb {
-	status = "okay";
-
-	axp81x: pmic@3a3 {
-		compatible = "x-powers,axp818", "x-powers,axp813";
-		reg = <0x3a3>;
-		interrupt-parent = <&r_intc>;
-		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
-	};
-
-	ac100: codec@e89 {
-		compatible = "x-powers,ac100";
-		reg = <0xe89>;
-
-		ac100_codec: codec {
-			compatible = "x-powers,ac100-codec";
-			interrupt-parent = <&r_pio>;
-			interrupts = <0 11 IRQ_TYPE_LEVEL_LOW>; /* PL11 */
-			#clock-cells = <0>;
-			clock-output-names = "4M_adda";
+		reg_aldo1: aldo1 {
+			regulator-name = "aldo1";
 		};
 
-		ac100_rtc: rtc {
-			compatible = "x-powers,ac100-rtc";
-			interrupt-parent = <&r_intc>;
-			interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
-			clocks = <&ac100_codec>;
-			#clock-cells = <1>;
-			clock-output-names = "cko1_rtc",
-					     "cko2_rtc",
-					     "cko3_rtc";
+		reg_aldo2: aldo2 {
+			regulator-name = "aldo2";
+		};
+
+		reg_aldo3: aldo3 {
+			regulator-name = "aldo3";
+		};
+
+		reg_dc1sw: dc1sw {
+			regulator-name = "dc1sw";
+		};
+
+		reg_dcdc1: dcdc1 {
+			regulator-name = "dcdc1";
+		};
+
+		reg_dcdc2: dcdc2 {
+			regulator-name = "dcdc2";
+		};
+
+		reg_dcdc3: dcdc3 {
+			regulator-name = "dcdc3";
+		};
+
+		reg_dcdc4: dcdc4 {
+			regulator-name = "dcdc4";
+		};
+
+		reg_dcdc5: dcdc5 {
+			regulator-name = "dcdc5";
+		};
+
+		reg_dcdc6: dcdc6 {
+			regulator-name = "dcdc6";
+		};
+
+		reg_dldo1: dldo1 {
+			regulator-name = "dldo1";
+		};
+
+		reg_dldo2: dldo2 {
+			regulator-name = "dldo2";
+		};
+
+		reg_dldo3: dldo3 {
+			regulator-name = "dldo3";
+		};
+
+		reg_dldo4: dldo4 {
+			regulator-name = "dldo4";
+		};
+
+		reg_eldo1: eldo1 {
+			regulator-name = "eldo1";
+		};
+
+		reg_eldo2: eldo2 {
+			regulator-name = "eldo2";
+		};
+
+		reg_eldo3: eldo3 {
+			regulator-name = "eldo3";
+		};
+
+		reg_fldo1: fldo1 {
+			regulator-name = "fldo1";
+		};
+
+		reg_fldo2: fldo2 {
+			regulator-name = "fldo2";
+		};
+
+		reg_ldo_io0: ldo-io0 {
+			regulator-name = "ldo-io0";
+			status = "disabled";
+		};
+
+		reg_ldo_io1: ldo-io1 {
+			regulator-name = "ldo-io1";
+			status = "disabled";
+		};
+
+		reg_rtc_ldo: rtc-ldo {
+			/* RTC_LDO is a fixed, always-on regulator */
+			regulator-always-on;
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-name = "rtc-ldo";
 		};
 	};
-};
-
-&uart0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&uart0_pb_pins>;
-	status = "okay";
 };
