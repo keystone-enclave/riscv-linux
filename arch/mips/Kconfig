@@ -2023,20 +2023,39 @@ config CPU_MIPS64
 config CPU_MIPSR1
 	bool
 	default y if CPU_MIPS32_R1 || CPU_MIPS64_R1
+	select CPU_ISA_GE_R1
 
 config CPU_MIPSR2
 	bool
 	default y if CPU_MIPS32_R2 || CPU_MIPS64_R2 || CPU_CAVIUM_OCTEON
 	select CPU_HAS_RIXI
+	select CPU_ISA_GE_R2
 	select MIPS_SPRAM
 
 config CPU_MIPSR6
 	bool
 	default y if CPU_MIPS32_R6 || CPU_MIPS64_R6
 	select CPU_HAS_RIXI
+	select CPU_ISA_GE_R6
 	select HAVE_ARCH_BITREVERSE
 	select MIPS_ASID_BITS_VARIABLE
 	select MIPS_SPRAM
+
+#
+# The following CPU_ISA_GE_* entries indicate that the ISA we're targeting is
+# greater than or equal to the appropriate revision. They can be used to
+# require a particular range of ISA revisions.
+#
+config CPU_ISA_GE_R1
+	bool
+
+config CPU_ISA_GE_R2
+	bool
+	select CPU_ISA_GE_R1
+
+config CPU_ISA_GE_R6
+	bool
+	select CPU_ISA_GE_R2
 
 config EVA
 	bool
@@ -2062,14 +2081,14 @@ config CPU_SUPPORTS_UNCACHED_ACCELERATED
 	bool
 config MIPS_PGD_C0_CONTEXT
 	bool
-	default y if 64BIT && (CPU_MIPSR2 || CPU_MIPSR6) && !CPU_XLP
+	default y if 64BIT && CPU_ISA_GE_R2 && !CPU_XLP
 
 #
 # Set to y for ptrace access to watch registers.
 #
 config HARDWARE_WATCHPOINTS
        bool
-       default y if CPU_MIPSR1 || CPU_MIPSR2 || CPU_MIPSR6
+       default y if CPU_ISA_GE_R1
 
 menu "Kernel type"
 
@@ -2574,7 +2593,7 @@ config SYS_SUPPORTS_NUMA
 
 config RELOCATABLE
 	bool "Relocatable kernel"
-	depends on SYS_SUPPORTS_RELOCATABLE && (CPU_MIPS32_R2 || CPU_MIPS64_R2 || CPU_MIPS32_R6 || CPU_MIPS64_R6 || CAVIUM_OCTEON_SOC)
+	depends on SYS_SUPPORTS_RELOCATABLE && CPU_ISA_GE_R2
 	help
 	  This builds a kernel image that retains relocation information
 	  so it can be loaded someplace besides the default 1MB.
