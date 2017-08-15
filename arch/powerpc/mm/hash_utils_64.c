@@ -507,7 +507,7 @@ static int __init htab_dt_scan_hugepage_blocks(unsigned long node,
 	printk(KERN_INFO "Huge page(16GB) memory: "
 			"addr = 0x%lX size = 0x%lX pages = %d\n",
 			phys_addr, block_size, expected_pages);
-	if (phys_addr + (16 * GB) <= memblock_end_of_DRAM()) {
+	if (phys_addr + block_size * expected_pages <= memblock_end_of_DRAM()) {
 		memblock_reserve(phys_addr, block_size * expected_pages);
 		add_gpage(phys_addr, block_size, expected_pages);
 	}
@@ -1019,6 +1019,7 @@ void __init hash__early_init_mmu(void)
 	__kernel_virt_size = H_KERN_VIRT_SIZE;
 	__vmalloc_start = H_VMALLOC_START;
 	__vmalloc_end = H_VMALLOC_END;
+	__kernel_io_start = H_KERN_IO_START;
 	vmemmap = (struct page *)H_VMEMMAP_BASE;
 	ioremap_bot = IOREMAP_BASE;
 

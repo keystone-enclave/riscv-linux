@@ -541,7 +541,7 @@ EXC_COMMON_BEGIN(instruction_access_common)
 	RECONCILE_IRQ_STATE(r10, r11)
 	ld	r12,_MSR(r1)
 	ld	r3,_NIP(r1)
-	andis.	r4,r12,0x5820
+	andis.	r4,r12,DSISR_BAD_FAULT_64S@h
 	li	r5,0x400
 	std	r3,_DAR(r1)
 	std	r4,_DSISR(r1)
@@ -1314,7 +1314,7 @@ EXC_REAL_NONE(0x1800, 0x100)
 EXC_VIRT_NONE(0x5800, 0x100)
 #endif
 
-#if defined(CONFIG_HARDLOCKUP_DETECTOR) && defined(CONFIG_HAVE_HARDLOCKUP_DETECTOR_ARCH)
+#ifdef CONFIG_PPC_WATCHDOG
 
 #define MASKED_DEC_HANDLER_LABEL 3f
 
@@ -1343,10 +1343,10 @@ EXC_COMMON_BEGIN(soft_nmi_common)
 			ADD_NVGPRS;ADD_RECONCILE)
 	b	ret_from_except
 
-#else
+#else /* CONFIG_PPC_WATCHDOG */
 #define MASKED_DEC_HANDLER_LABEL 2f /* normal return */
 #define MASKED_DEC_HANDLER(_H)
-#endif
+#endif /* CONFIG_PPC_WATCHDOG */
 
 /*
  * An interrupt came in while soft-disabled. We set paca->irq_happened, then:
@@ -1485,8 +1485,10 @@ USE_TEXT_SECTION()
  */
 	.balign	IFETCH_ALIGN_BYTES
 do_hash_page:
-#ifdef CONFIG_PPC_STD_MMU_64
-	andis.	r0,r4,0xa450		/* weird error? */
+	#ifdef CONFIG_PPC_STD_MMU_64
+	lis	r0,DSISR_BAD_FAULT_64S@h
+	ori	r0,r0,DSISR_BAD_FAULT_64S@l
+	and.	r0,r4,r0		/* weird error? */
 	bne-	handle_page_fault	/* if not, try to insert a HPTE */
 	CURRENT_THREAD_INFO(r11, r1)
 	lwz	r0,TI_PREEMPT(r11)	/* If we're in an "NMI" */
