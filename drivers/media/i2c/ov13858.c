@@ -60,13 +60,12 @@
 #define OV13858_VBLANK_MIN		56
 
 /* HBLANK control - read only */
-#define OV13858_PPL_540MHZ		2244
-#define OV13858_PPL_1080MHZ		4488
+#define OV13858_PPL_270MHZ		2244
+#define OV13858_PPL_540MHZ		4488
 
 /* Exposure control */
 #define OV13858_REG_EXPOSURE		0x3500
 #define OV13858_EXPOSURE_MIN		4
-#define OV13858_EXPOSURE_MAX		(OV13858_VTS_MAX - 8)
 #define OV13858_EXPOSURE_STEP		1
 #define OV13858_EXPOSURE_DEFAULT	0x640
 
@@ -78,13 +77,13 @@
 #define OV13858_ANA_GAIN_DEFAULT	0x80
 
 /* Digital gain control */
-#define OV13858_REG_DIGITAL_GAIN	0x350a
-#define OV13858_DGTL_GAIN_MASK		0xf3
-#define OV13858_DGTL_GAIN_SHIFT		2
-#define OV13858_DGTL_GAIN_MIN		1
-#define OV13858_DGTL_GAIN_MAX		4
-#define OV13858_DGTL_GAIN_STEP		1
-#define OV13858_DGTL_GAIN_DEFAULT	1
+#define OV13858_REG_B_MWB_GAIN		0x5100
+#define OV13858_REG_G_MWB_GAIN		0x5102
+#define OV13858_REG_R_MWB_GAIN		0x5104
+#define OV13858_DGTL_GAIN_MIN		0
+#define OV13858_DGTL_GAIN_MAX		16384	/* Max = 16 X */
+#define OV13858_DGTL_GAIN_DEFAULT	1024	/* Default gain = 1 X */
+#define OV13858_DGTL_GAIN_STEP		1	/* Each step = 1/1024 */
 
 /* Test Pattern Control */
 #define OV13858_REG_TEST_PATTERN	0x4503
@@ -944,31 +943,33 @@ static const char * const ov13858_test_pattern_menu[] = {
 
 /* Configurations for supported link frequencies */
 #define OV13858_NUM_OF_LINK_FREQS	2
-#define OV13858_LINK_FREQ_1080MBPS	1080000000
-#define OV13858_LINK_FREQ_540MBPS	540000000
+#define OV13858_LINK_FREQ_540MHZ	540000000ULL
+#define OV13858_LINK_FREQ_270MHZ	270000000ULL
 #define OV13858_LINK_FREQ_INDEX_0	0
 #define OV13858_LINK_FREQ_INDEX_1	1
 
 /* Menu items for LINK_FREQ V4L2 control */
 static const s64 link_freq_menu_items[OV13858_NUM_OF_LINK_FREQS] = {
-	OV13858_LINK_FREQ_1080MBPS,
-	OV13858_LINK_FREQ_540MBPS
+	OV13858_LINK_FREQ_540MHZ,
+	OV13858_LINK_FREQ_270MHZ
 };
 
 /* Link frequency configs */
 static const struct ov13858_link_freq_config
 			link_freq_configs[OV13858_NUM_OF_LINK_FREQS] = {
 	{
-		.pixel_rate = 864000000,
-		.pixels_per_line = OV13858_PPL_1080MHZ,
+		/* pixel_rate = link_freq * 2 * nr_of_lanes / bits_per_sample */
+		.pixel_rate = (OV13858_LINK_FREQ_540MHZ * 2 * 4) / 10,
+		.pixels_per_line = OV13858_PPL_540MHZ,
 		.reg_list = {
 			.num_of_regs = ARRAY_SIZE(mipi_data_rate_1080mbps),
 			.regs = mipi_data_rate_1080mbps,
 		}
 	},
 	{
-		.pixel_rate = 432000000,
-		.pixels_per_line = OV13858_PPL_540MHZ,
+		/* pixel_rate = link_freq * 2 * nr_of_lanes / bits_per_sample */
+		.pixel_rate = (OV13858_LINK_FREQ_270MHZ * 2 * 4) / 10,
+		.pixels_per_line = OV13858_PPL_270MHZ,
 		.reg_list = {
 			.num_of_regs = ARRAY_SIZE(mipi_data_rate_540mbps),
 			.regs = mipi_data_rate_540mbps,
@@ -1161,21 +1162,21 @@ static int ov13858_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 static int ov13858_update_digital_gain(struct ov13858 *ov13858, u32 d_gain)
 {
 	int ret;
-	u32 val;
 
-	if (d_gain == 3)
-		return -EINVAL;
-
-	ret = ov13858_read_reg(ov13858, OV13858_REG_DIGITAL_GAIN,
-			       OV13858_REG_VALUE_08BIT, &val);
+	ret = ov13858_write_reg(ov13858, OV13858_REG_B_MWB_GAIN,
+				OV13858_REG_VALUE_16BIT, d_gain);
 	if (ret)
 		return ret;
 
-	val &= OV13858_DGTL_GAIN_MASK;
-	val |= (d_gain - 1) << OV13858_DGTL_GAIN_SHIFT;
+	ret = ov13858_write_reg(ov13858, OV13858_REG_G_MWB_GAIN,
+				OV13858_REG_VALUE_16BIT, d_gain);
+	if (ret)
+		return ret;
 
-	return ov13858_write_reg(ov13858, OV13858_REG_DIGITAL_GAIN,
-				 OV13858_REG_VALUE_08BIT, val);
+	ret = ov13858_write_reg(ov13858, OV13858_REG_R_MWB_GAIN,
+				OV13858_REG_VALUE_16BIT, d_gain);
+
+	return ret;
 }
 
 static int ov13858_enable_test_pattern(struct ov13858 *ov13858, u32 pattern)
@@ -1377,6 +1378,7 @@ ov13858_set_pad_format(struct v4l2_subdev *sd,
 	struct ov13858 *ov13858 = to_ov13858(sd);
 	const struct ov13858_mode *mode;
 	struct v4l2_mbus_framefmt *framefmt;
+	s32 vblank_def;
 	s64 h_blank;
 
 	mutex_lock(&ov13858->mutex);
@@ -1397,10 +1399,12 @@ ov13858_set_pad_format(struct v4l2_subdev *sd,
 			ov13858->pixel_rate,
 			link_freq_configs[mode->link_freq_index].pixel_rate);
 		/* Update limits and set FPS to default */
+		vblank_def = ov13858->cur_mode->vts - ov13858->cur_mode->height;
 		__v4l2_ctrl_modify_range(
 			ov13858->vblank, OV13858_VBLANK_MIN,
 			OV13858_VTS_MAX - ov13858->cur_mode->height, 1,
-			ov13858->cur_mode->vts - ov13858->cur_mode->height);
+			vblank_def);
+		__v4l2_ctrl_s_ctrl(ov13858->vblank, vblank_def);
 		h_blank =
 			link_freq_configs[mode->link_freq_index].pixels_per_line
 			 - ov13858->cur_mode->width;
@@ -1602,6 +1606,7 @@ static int ov13858_init_controls(struct ov13858 *ov13858)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&ov13858->sd);
 	struct v4l2_ctrl_handler *ctrl_hdlr;
+	s64 exposure_max;
 	int ret;
 
 	ctrl_hdlr = &ov13858->ctrl_handler;
@@ -1634,16 +1639,17 @@ static int ov13858_init_controls(struct ov13858 *ov13858)
 
 	ov13858->hblank = v4l2_ctrl_new_std(
 				ctrl_hdlr, &ov13858_ctrl_ops, V4L2_CID_HBLANK,
-				OV13858_PPL_1080MHZ - ov13858->cur_mode->width,
-				OV13858_PPL_1080MHZ - ov13858->cur_mode->width,
+				OV13858_PPL_540MHZ - ov13858->cur_mode->width,
+				OV13858_PPL_540MHZ - ov13858->cur_mode->width,
 				1,
-				OV13858_PPL_1080MHZ - ov13858->cur_mode->width);
+				OV13858_PPL_540MHZ - ov13858->cur_mode->width);
 	ov13858->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
+	exposure_max = ov13858->cur_mode->vts - 8;
 	ov13858->exposure = v4l2_ctrl_new_std(
 				ctrl_hdlr, &ov13858_ctrl_ops,
 				V4L2_CID_EXPOSURE, OV13858_EXPOSURE_MIN,
-				OV13858_EXPOSURE_MAX, OV13858_EXPOSURE_STEP,
+				exposure_max, OV13858_EXPOSURE_STEP,
 				OV13858_EXPOSURE_DEFAULT);
 
 	v4l2_ctrl_new_std(ctrl_hdlr, &ov13858_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,

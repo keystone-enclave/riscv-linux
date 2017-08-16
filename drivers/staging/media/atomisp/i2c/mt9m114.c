@@ -1806,7 +1806,7 @@ static const struct v4l2_subdev_video_ops mt9m114_video_ops = {
 	.g_frame_interval = mt9m114_g_frame_interval,
 };
 
-static struct v4l2_subdev_sensor_ops mt9m114_sensor_ops = {
+static const struct v4l2_subdev_sensor_ops mt9m114_sensor_ops = {
 	.g_skip_frames	= mt9m114_g_skip_frames,
 };
 
@@ -1928,7 +1928,7 @@ static int mt9m114_probe(struct i2c_client *client,
 
 MODULE_DEVICE_TABLE(i2c, mt9m114_id);
 
-static struct acpi_device_id mt9m114_acpi_match[] = {
+static const struct acpi_device_id mt9m114_acpi_match[] = {
 	{ "INT33F0" },
 	{ "CRMT1040" },
 	{},

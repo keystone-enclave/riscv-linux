@@ -571,7 +571,7 @@ static u32 functionality(struct i2c_adapter *adap)
 	return I2C_FUNC_I2C;
 }
 
-static struct i2c_algorithm dm1105_algo = {
+static const struct i2c_algorithm dm1105_algo = {
 	.master_xfer   = dm1105_i2c_xfer,
 	.functionality = functionality,
 };
@@ -1208,7 +1208,7 @@ static void dm1105_remove(struct pci_dev *pdev)
 	kfree(dev);
 }
 
-static struct pci_device_id dm1105_id_table[] = {
+static const struct pci_device_id dm1105_id_table[] = {
 	{
 		.vendor = PCI_VENDOR_ID_TRIGEM,
 		.device = PCI_DEVICE_ID_DM1105,
