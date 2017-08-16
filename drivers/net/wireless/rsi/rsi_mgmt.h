@@ -69,6 +69,7 @@
 #define RSI_QOS_ENABLE			BIT(12)
 #define RSI_REKEY_PURPOSE		BIT(13)
 #define RSI_ENCRYPT_PKT			BIT(15)
+#define RSI_SET_PS_ENABLE		BIT(12)
 
 #define RSI_CMDDESC_40MHZ		BIT(4)
 #define RSI_CMDDESC_UPPER_20_ENABLE	BIT(5)
@@ -155,6 +156,8 @@
 
 #define ANTENNA_SEL_INT			0x02 /* RF_OUT_2 / Integerated */
 #define ANTENNA_SEL_UFL			0x03 /* RF_OUT_1 / U.FL */
+#define ANTENNA_MASK_VALUE		0x00ff
+#define ANTENNA_SEL_TYPE		1
 
 /* Rx filter word definitions */
 #define PROMISCOUS_MODE			BIT(0)
@@ -169,6 +172,20 @@
 #define RSI_CHAN_RADAR			BIT(7)
 #define RSI_BEACON_INTERVAL		200
 #define RSI_DTIM_COUNT			2
+
+#define RSI_PS_DISABLE_IND		BIT(15)
+#define RSI_PS_ENABLE			1
+#define RSI_PS_DISABLE			0
+#define RSI_DEEP_SLEEP			1
+#define RSI_CONNECTED_SLEEP		2
+#define RSI_SLEEP_REQUEST		1
+#define RSI_WAKEUP_REQUEST		2
+
+#define RSI_IEEE80211_UAPSD_QUEUES \
+	(IEEE80211_WMM_IE_STA_QOSINFO_AC_VO | \
+	 IEEE80211_WMM_IE_STA_QOSINFO_AC_VI | \
+	 IEEE80211_WMM_IE_STA_QOSINFO_AC_BE | \
+	 IEEE80211_WMM_IE_STA_QOSINFO_AC_BK)
 
 enum opmode {
 	STA_OPMODE = 1,
@@ -222,6 +239,7 @@ enum cmd_frame_type {
 	CW_MODE_REQ,
 	PER_CMD_PKT,
 	ANT_SEL_FRAME = 0x20,
+	VAP_DYNAMIC_UPDATE = 0x27,
 	COMMON_DEV_CONFIG = 0x28,
 	RADIO_PARAMS_UPDATE = 0x29
 };
@@ -346,6 +364,27 @@ struct rsi_vap_caps {
 	__le16 beacon_interval;
 	__le16 dtim_period;
 	__le16 beacon_miss_threshold;
+} __packed;
+
+struct rsi_ant_sel_frame {
+	struct rsi_cmd_desc_dword0 desc_dword0;
+	u8 reserved;
+	u8 sub_frame_type;
+	__le16 ant_value;
+	__le32 reserved1;
+	__le32 reserved2;
+} __packed;
+
+struct rsi_dynamic_s {
+	struct rsi_cmd_desc_dword0 desc_dword0;
+	struct rsi_cmd_desc_dword1 desc_dword1;
+	struct rsi_cmd_desc_dword2 desc_dword2;
+	struct rsi_cmd_desc_dword3 desc_dword3;
+	struct framebody {
+		__le16 data_rate;
+		__le16 mgmt_rate;
+		__le16 keep_alive_period;
+	} frame_body;
 } __packed;
 
 /* Key descriptor flags */
@@ -508,6 +547,18 @@ struct rsi_eeprom_read_frame {
 	__le16 reserved3;
 } __packed;
 
+struct rsi_request_ps {
+	struct rsi_cmd_desc desc;
+	struct ps_sleep_params ps_sleep;
+	u8 ps_mimic_support;
+	u8 ps_uapsd_acs;
+	u8 ps_uapsd_wakeup_period;
+	u8 reserved;
+	__le32 ps_listen_interval;
+	__le32 ps_dtim_interval_duration;
+	__le16 ps_num_dtim_intervals;
+} __packed;
+
 static inline u32 rsi_get_queueno(u8 *addr, u16 offset)
 {
 	return (le16_to_cpu(*(__le16 *)&addr[offset]) & 0x7000) >> 12;
@@ -547,6 +598,7 @@ int rsi_hal_load_key(struct rsi_common *common, u8 *data, u16 key_len,
 		     u8 key_type, u8 key_id, u32 cipher);
 int rsi_set_channel(struct rsi_common *common,
 		    struct ieee80211_channel *channel);
+int rsi_send_vap_dynamic_update(struct rsi_common *common);
 int rsi_send_block_unblock_frame(struct rsi_common *common, bool event);
 void rsi_inform_bss_status(struct rsi_common *common, u8 status,
 			   const u8 *bssid, u8 qos_enable, u16 aid);

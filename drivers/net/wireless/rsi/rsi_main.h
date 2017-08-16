@@ -21,6 +21,10 @@
 #include <linux/skbuff.h>
 #include <net/mac80211.h>
 
+struct rsi_hw;
+
+#include "rsi_ps.h"
+
 #define ERR_ZONE                        BIT(0)  /* For Error Msgs             */
 #define INFO_ZONE                       BIT(1)  /* For General Status Msgs    */
 #define INIT_ZONE                       BIT(2)  /* For Driver Init Seq Msgs   */
@@ -54,6 +58,7 @@ extern __printf(2, 3) void rsi_dbg(u32 zone, const char *fmt, ...);
 #define IEEE80211_ADDR_LEN              6
 #define FRAME_DESC_SZ                   16
 #define MIN_802_11_HDR_LEN              24
+#define RSI_DEF_KEEPALIVE               90
 
 #define DATA_QUEUE_WATER_MARK           400
 #define MIN_DATA_QUEUE_WATER_MARK       300
@@ -177,8 +182,6 @@ enum rsi_dfs_regions {
 	RSI_REGION_WORLD
 };
 
-struct rsi_hw;
-
 struct rsi_common {
 	struct rsi_hw *priv;
 	struct vif_priv vif_info[RSI_MAX_VIFS];
@@ -241,6 +244,7 @@ struct rsi_common {
 	u16 oper_mode;
 	u8 lp_ps_handshake_mode;
 	u8 ulp_ps_handshake_mode;
+	u8 uapsd_bitmap;
 	u8 rf_power_val;
 	u8 wlan_rf_power_mode;
 	u8 obm_ant_sel_val;
@@ -282,6 +286,9 @@ struct rsi_hw {
 
 	enum host_intf rsi_host_intf;
 	u16 block_size;
+	enum ps_state ps_state;
+	struct rsi_ps_info ps_info;
+	spinlock_t ps_lock; /*To protect power save config*/
 	u32 usb_buffer_status_reg;
 #ifdef CONFIG_RSI_DEBUGFS
 	struct rsi_debugfs *dfsentry;

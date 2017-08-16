@@ -17,6 +17,7 @@
 #include <linux/etherdevice.h>
 #include "rsi_mgmt.h"
 #include "rsi_common.h"
+#include "rsi_ps.h"
 
 static struct bootup_params boot_params_20 = {
 	.magic_number = cpu_to_le16(0x5aa5),
@@ -274,6 +275,7 @@ static int rsi_send_internal_mgmt_frame(struct rsi_common *common,
 		rsi_dbg(ERR_ZONE, "%s: Unable to allocate skb\n", __func__);
 		return -ENOMEM;
 	}
+	desc = (struct rsi_cmd_desc *)skb->data;
 	desc->desc_dword0.len_qno |= cpu_to_le16(DESC_IMMEDIATE_WAKEUP);
 	skb->priority = MGMT_SOFT_Q;
 	tx_params = (struct skb_info *)&IEEE80211_SKB_CB(skb)->driver_data;
@@ -1056,6 +1058,37 @@ int rsi_send_radio_params_update(struct rsi_common *common)
 	return rsi_send_internal_mgmt_frame(common, skb);
 }
 
+/* This function programs the threshold. */
+int rsi_send_vap_dynamic_update(struct rsi_common *common)
+{
+	struct sk_buff *skb;
+	struct rsi_dynamic_s *dynamic_frame;
+
+	rsi_dbg(MGMT_TX_ZONE,
+		"%s: Sending vap update indication frame\n", __func__);
+
+	skb = dev_alloc_skb(sizeof(struct rsi_dynamic_s));
+	if (!skb)
+		return -ENOMEM;
+
+	memset(skb->data, 0, sizeof(struct rsi_dynamic_s));
+	dynamic_frame = (struct rsi_dynamic_s *)skb->data;
+	rsi_set_len_qno(&dynamic_frame->desc_dword0.len_qno,
+			sizeof(dynamic_frame->frame_body), RSI_WIFI_MGMT_Q);
+
+	dynamic_frame->desc_dword0.frame_type = VAP_DYNAMIC_UPDATE;
+	dynamic_frame->desc_dword2.pkt_info =
+					cpu_to_le32(common->rts_threshold);
+	/* Beacon miss threshold */
+	dynamic_frame->frame_body.keep_alive_period =
+					cpu_to_le16(RSI_DEF_KEEPALIVE);
+	dynamic_frame->desc_dword3.sta_id = 0; /* vap id */
+
+	skb_put(skb, sizeof(struct rsi_dynamic_s));
+
+	return rsi_send_internal_mgmt_frame(common, skb);
+}
+
 /**
  * rsi_compare() - This function is used to compare two integers
  * @a: pointer to the first integer
@@ -1395,6 +1428,61 @@ int rsi_send_rx_filter_frame(struct rsi_common *common, u16 rx_filter_word)
 	return rsi_send_internal_mgmt_frame(common, skb);
 }
 
+int rsi_send_ps_request(struct rsi_hw *adapter, bool enable)
+{
+	struct rsi_common *common = adapter->priv;
+	struct ieee80211_bss_conf *bss = &adapter->vifs[0]->bss_conf;
+	struct rsi_request_ps *ps;
+	struct rsi_ps_info *ps_info;
+	struct sk_buff *skb;
+	int frame_len = sizeof(*ps);
+
+	skb = dev_alloc_skb(frame_len);
+	if (!skb)
+		return -ENOMEM;
+	memset(skb->data, 0, frame_len);
+
+	ps = (struct rsi_request_ps *)skb->data;
+	ps_info = &adapter->ps_info;
+
+	rsi_set_len_qno(&ps->desc.desc_dword0.len_qno,
+			(frame_len - FRAME_DESC_SZ), RSI_WIFI_MGMT_Q);
+	ps->desc.desc_dword0.frame_type = WAKEUP_SLEEP_REQUEST;
+	if (enable) {
+		ps->ps_sleep.enable = RSI_PS_ENABLE;
+		ps->desc.desc_dword3.token = cpu_to_le16(RSI_SLEEP_REQUEST);
+	} else {
+		ps->ps_sleep.enable = RSI_PS_DISABLE;
+		ps->desc.desc_dword0.len_qno |= cpu_to_le16(RSI_PS_DISABLE_IND);
+		ps->desc.desc_dword3.token = cpu_to_le16(RSI_WAKEUP_REQUEST);
+	}
+
+	ps->ps_uapsd_acs = common->uapsd_bitmap;
+
+	ps->ps_sleep.sleep_type = ps_info->sleep_type;
+	ps->ps_sleep.num_bcns_per_lis_int =
+		cpu_to_le16(ps_info->num_bcns_per_lis_int);
+	ps->ps_sleep.sleep_duration =
+		cpu_to_le32(ps_info->deep_sleep_wakeup_period);
+
+	if (bss->assoc)
+		ps->ps_sleep.connected_sleep = RSI_CONNECTED_SLEEP;
+	else
+		ps->ps_sleep.connected_sleep = RSI_DEEP_SLEEP;
+
+	ps->ps_listen_interval = cpu_to_le32(ps_info->listen_interval);
+	ps->ps_dtim_interval_duration =
+		cpu_to_le32(ps_info->dtim_interval_duration);
+
+	if (ps_info->listen_interval > ps_info->dtim_interval_duration)
+		ps->ps_listen_interval = cpu_to_le32(RSI_PS_DISABLE);
+
+	ps->ps_num_dtim_intervals = cpu_to_le16(ps_info->num_dtims_per_sleep);
+	skb_put(skb, frame_len);
+
+	return rsi_send_internal_mgmt_frame(common, skb);
+}
+
 /**
  * rsi_set_antenna() - This fuction send antenna configuration request
  *		       to device
@@ -1406,7 +1494,7 @@ int rsi_send_rx_filter_frame(struct rsi_common *common, u16 rx_filter_word)
  */
 int rsi_set_antenna(struct rsi_common *common, u8 antenna)
 {
-	struct rsi_mac_frame *cmd_frame;
+	struct rsi_ant_sel_frame *ant_sel_frame;
 	struct sk_buff *skb;
 
 	skb = dev_alloc_skb(FRAME_DESC_SZ);
@@ -1417,12 +1505,13 @@ int rsi_set_antenna(struct rsi_common *common, u8 antenna)
 	}
 
 	memset(skb->data, 0, FRAME_DESC_SZ);
-	cmd_frame = (struct rsi_mac_frame *)skb->data;
 
-	cmd_frame->desc_word[1] = cpu_to_le16(ANT_SEL_FRAME);
-	cmd_frame->desc_word[3] = cpu_to_le16(antenna & 0x00ff);
-	cmd_frame->desc_word[0] = cpu_to_le16(RSI_WIFI_MGMT_Q << 12);
-
+	ant_sel_frame = (struct rsi_ant_sel_frame *)skb->data;
+	ant_sel_frame->desc_dword0.frame_type = ANT_SEL_FRAME;
+	ant_sel_frame->sub_frame_type = ANTENNA_SEL_TYPE;
+	ant_sel_frame->ant_value = cpu_to_le16(antenna & ANTENNA_MASK_VALUE);
+	rsi_set_len_qno(&ant_sel_frame->desc_dword0.len_qno,
+			0, RSI_WIFI_MGMT_Q);
 	skb_put(skb, FRAME_DESC_SZ);
 
 	return rsi_send_internal_mgmt_frame(common, skb);
@@ -1567,7 +1656,9 @@ static int rsi_handle_ta_confirm_type(struct rsi_common *common,
 			return 0;
 		}
 		break;
-
+	case WAKEUP_SLEEP_REQUEST:
+		rsi_dbg(INFO_ZONE, "Wakeup/Sleep confirmation.\n");
+		return rsi_handle_ps_confirm(adapter, msg);
 	default:
 		rsi_dbg(INFO_ZONE, "%s: Invalid TA confirm pkt received\n",
 			__func__);

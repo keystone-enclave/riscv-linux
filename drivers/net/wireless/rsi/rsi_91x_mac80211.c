@@ -18,6 +18,7 @@
 #include "rsi_debugfs.h"
 #include "rsi_mgmt.h"
 #include "rsi_common.h"
+#include "rsi_ps.h"
 
 static const struct ieee80211_channel rsi_2ghz_channels[] = {
 	{ .band = NL80211_BAND_2GHZ, .center_freq = 2412,
@@ -279,11 +280,12 @@ static int rsi_mac80211_start(struct ieee80211_hw *hw)
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
 
+	rsi_dbg(ERR_ZONE, "===> Interface UP <===\n");
 	mutex_lock(&common->mutex);
 	common->iface_down = false;
-	mutex_unlock(&common->mutex);
-
+	wiphy_rfkill_start_polling(hw->wiphy);
 	rsi_send_rx_filter_frame(common, 0);
+	mutex_unlock(&common->mutex);
 
 	return 0;
 }
@@ -299,8 +301,10 @@ static void rsi_mac80211_stop(struct ieee80211_hw *hw)
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
 
+	rsi_dbg(ERR_ZONE, "===> Interface DOWN <===\n");
 	mutex_lock(&common->mutex);
 	common->iface_down = true;
+	wiphy_rfkill_stop_polling(hw->wiphy);
 
 	/* Block all rx frames */
 	rsi_send_rx_filter_frame(common, 0xffff);
@@ -323,6 +327,7 @@ static int rsi_mac80211_add_interface(struct ieee80211_hw *hw,
 	struct rsi_common *common = adapter->priv;
 	int ret = -EOPNOTSUPP;
 
+	vif->driver_flags |= IEEE80211_VIF_SUPPORTS_UAPSD;
 	mutex_lock(&common->mutex);
 	switch (vif->type) {
 	case NL80211_IFTYPE_STATION:
@@ -464,6 +469,8 @@ static int rsi_mac80211_config(struct ieee80211_hw *hw,
 {
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
+	struct ieee80211_vif *vif = adapter->vifs[0];
+	struct ieee80211_conf *conf = &hw->conf;
 	int status = -EOPNOTSUPP;
 
 	mutex_lock(&common->mutex);
@@ -477,6 +484,28 @@ static int rsi_mac80211_config(struct ieee80211_hw *hw,
 		status = rsi_config_power(hw);
 	}
 
+	/* Power save parameters */
+	if ((changed & IEEE80211_CONF_CHANGE_PS) &&
+	    (vif->type == NL80211_IFTYPE_STATION)) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&adapter->ps_lock, flags);
+		if (conf->flags & IEEE80211_CONF_PS)
+			rsi_enable_ps(adapter);
+		else
+			rsi_disable_ps(adapter);
+		spin_unlock_irqrestore(&adapter->ps_lock, flags);
+	}
+
+	/* RTS threshold */
+	if (changed & WIPHY_PARAM_RTS_THRESHOLD) {
+		rsi_dbg(INFO_ZONE, "RTS threshold\n");
+		if ((common->rts_threshold) <= IEEE80211_MAX_RTS_THRESHOLD) {
+			rsi_dbg(INFO_ZONE,
+				"%s: Sending vap updates....\n", __func__);
+			status = rsi_send_vap_dynamic_update(common);
+		}
+	}
 	mutex_unlock(&common->mutex);
 
 	return status;
@@ -519,6 +548,8 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 {
 	struct rsi_hw *adapter = hw->priv;
 	struct rsi_common *common = adapter->priv;
+	struct ieee80211_bss_conf *bss = &vif->bss_conf;
+	struct ieee80211_conf *conf = &hw->conf;
 	u16 rx_filter_word = 0;
 
 	mutex_lock(&common->mutex);
@@ -537,6 +568,18 @@ static void rsi_mac80211_bss_info_changed(struct ieee80211_hw *hw,
 				      bss_conf->bssid,
 				      bss_conf->qos,
 				      bss_conf->aid);
+		adapter->ps_info.dtim_interval_duration = bss->dtim_period;
+		adapter->ps_info.listen_interval = conf->listen_interval;
+
+	/* If U-APSD is updated, send ps parameters to firmware */
+	if (bss->assoc) {
+		if (common->uapsd_bitmap) {
+			rsi_dbg(INFO_ZONE, "Configuring UAPSD\n");
+			rsi_conf_uapsd(adapter);
+		}
+	} else {
+		common->uapsd_bitmap = 0;
+	}
 	}
 
 	if (changed & BSS_CHANGED_CQM) {
@@ -618,6 +661,12 @@ static int rsi_mac80211_conf_tx(struct ieee80211_hw *hw,
 	memcpy(&common->edca_params[idx],
 	       params,
 	       sizeof(struct ieee80211_tx_queue_params));
+
+	if (params->uapsd)
+		common->uapsd_bitmap |= idx;
+	else
+		common->uapsd_bitmap &= (~idx);
+
 	mutex_unlock(&common->mutex);
 
 	return 0;
@@ -1214,6 +1263,19 @@ static void rsi_reg_notify(struct wiphy *wiphy,
 	mutex_unlock(&common->mutex);
 }
 
+static void rsi_mac80211_rfkill_poll(struct ieee80211_hw *hw)
+{
+	struct rsi_hw *adapter = hw->priv;
+	struct rsi_common *common = adapter->priv;
+
+	mutex_lock(&common->mutex);
+	if (common->fsm_state != FSM_MAC_INIT_DONE)
+		wiphy_rfkill_set_hw_state(hw->wiphy, true);
+	else
+		wiphy_rfkill_set_hw_state(hw->wiphy, false);
+	mutex_unlock(&common->mutex);
+}
+
 static struct ieee80211_ops mac80211_ops = {
 	.tx = rsi_mac80211_tx,
 	.start = rsi_mac80211_start,
@@ -1232,6 +1294,7 @@ static struct ieee80211_ops mac80211_ops = {
 	.sta_remove = rsi_mac80211_sta_remove,
 	.set_antenna = rsi_mac80211_set_antenna,
 	.get_antenna = rsi_mac80211_get_antenna,
+	.rfkill_poll = rsi_mac80211_rfkill_poll,
 };
 
 /**
@@ -1266,12 +1329,16 @@ int rsi_mac80211_attach(struct rsi_common *common)
 	ieee80211_hw_set(hw, SIGNAL_DBM);
 	ieee80211_hw_set(hw, HAS_RATE_CONTROL);
 	ieee80211_hw_set(hw, AMPDU_AGGREGATION);
+	ieee80211_hw_set(hw, SUPPORTS_PS);
+	ieee80211_hw_set(hw, SUPPORTS_DYNAMIC_PS);
 
 	hw->queues = MAX_HW_QUEUES;
 	hw->extra_tx_headroom = RSI_NEEDED_HEADROOM;
 
 	hw->max_rates = 1;
 	hw->max_rate_tries = MAX_RETRIES;
+	hw->uapsd_queues = RSI_IEEE80211_UAPSD_QUEUES;
+	hw->uapsd_max_sp_len = IEEE80211_WMM_IE_STA_QOSINFO_SP_ALL;
 
 	hw->max_tx_aggregation_subframes = 6;
 	rsi_register_rates_channels(adapter, NL80211_BAND_2GHZ);
