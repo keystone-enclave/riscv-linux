@@ -64,6 +64,8 @@
 #include <linux/cgroup_rdma.h>
 #include <uapi/rdma/ib_user_verbs.h>
 
+#define IB_FW_VERSION_NAME_MAX	ETHTOOL_FWVERS_LEN
+
 extern struct workqueue_struct *ib_wq;
 extern struct workqueue_struct *ib_comp_wq;
 
@@ -549,8 +551,8 @@ struct ib_port_attr {
 	u32			bad_pkey_cntr;
 	u32			qkey_viol_cntr;
 	u16			pkey_tbl_len;
-	u16			lid;
-	u16			sm_lid;
+	u32			sm_lid;
+	u32			lid;
 	u8			lmc;
 	u8			max_vl_num;
 	u8			sm_sl;
@@ -577,7 +579,8 @@ struct ib_device_modify {
 enum ib_port_modify_flags {
 	IB_PORT_SHUTDOWN		= 1,
 	IB_PORT_INIT_TYPE		= (1<<2),
-	IB_PORT_RESET_QKEY_CNTR		= (1<<3)
+	IB_PORT_RESET_QKEY_CNTR		= (1<<3),
+	IB_PORT_OPA_MASK_CHG		= (1<<4)
 };
 
 struct ib_port_modify {
@@ -663,6 +666,8 @@ union rdma_network_hdr {
 		struct iphdr	roce4grh;
 	};
 };
+
+#define IB_QPN_MASK		0xFFFFFF
 
 enum {
 	IB_MULTICAST_QPN = 0xffffff
@@ -948,7 +953,7 @@ struct ib_wc {
 	u32			src_qp;
 	int			wc_flags;
 	u16			pkey_index;
-	u16			slid;
+	u32			slid;
 	u8			sl;
 	u8			dlid_path_bits;
 	u8			port_num;	/* valid only for DR SMPs on switches */
@@ -1059,6 +1064,7 @@ enum ib_qp_create_flags {
 	/* FREE					= 1 << 7, */
 	IB_QP_CREATE_SCATTER_FCS		= 1 << 8,
 	IB_QP_CREATE_CVLAN_STRIPPING		= 1 << 9,
+	IB_QP_CREATE_SOURCE_QPN			= 1 << 10,
 	/* reserve bits 26-31 for low level drivers' internal use */
 	IB_QP_CREATE_RESERVED_START		= 1 << 26,
 	IB_QP_CREATE_RESERVED_END		= 1 << 31,
@@ -1086,6 +1092,7 @@ struct ib_qp_init_attr {
 	 */
 	u8			port_num;
 	struct ib_rwq_ind_table *rwq_ind_tbl;
+	u32			source_qpn;
 };
 
 struct ib_qp_open_attr {
@@ -1546,6 +1553,10 @@ enum ib_raw_packet_caps {
 	IB_RAW_PACKET_CAP_SCATTER_FCS		= (1 << 1),
 	/* Checksum offloads are supported (for both send and receive). */
 	IB_RAW_PACKET_CAP_IP_CSUM		= (1 << 2),
+	/* When a packet is received for an RQ with no receive WQEs, the
+	 * packet processing is delayed.
+	 */
+	IB_RAW_PACKET_CAP_DELAY_DROP		= (1 << 3),
 };
 
 enum ib_wq_type {
@@ -1574,6 +1585,7 @@ struct ib_wq {
 enum ib_wq_flags {
 	IB_WQ_FLAGS_CVLAN_STRIPPING	= 1 << 0,
 	IB_WQ_FLAGS_SCATTER_FCS		= 1 << 1,
+	IB_WQ_FLAGS_DELAY_DROP		= 1 << 2,
 };
 
 struct ib_wq_init_attr {
@@ -2288,6 +2300,8 @@ struct ib_device {
 	struct rdmacg_device         cg_device;
 #endif
 
+	u32                          index;
+
 	/**
 	 * The following mandatory functions are used only at device
 	 * registration.  Keep functions such as these at the end of this
@@ -2295,7 +2309,9 @@ struct ib_device {
 	 * in fast paths.
 	 */
 	int (*get_port_immutable)(struct ib_device *, u8, struct ib_port_immutable *);
-	void (*get_dev_fw_str)(struct ib_device *, char *str, size_t str_len);
+	void (*get_dev_fw_str)(struct ib_device *, char *str);
+	const struct cpumask *(*get_vector_affinity)(struct ib_device *ibdev,
+						     int comp_vector);
 };
 
 struct ib_client {
@@ -2331,7 +2347,7 @@ struct ib_client {
 struct ib_device *ib_alloc_device(size_t size);
 void ib_dealloc_device(struct ib_device *device);
 
-void ib_get_device_fw_str(struct ib_device *device, char *str, size_t str_len);
+void ib_get_device_fw_str(struct ib_device *device, char *str);
 
 int ib_register_device(struct ib_device *device,
 		       int (*port_callback)(struct ib_device *,
@@ -3555,6 +3571,7 @@ void ib_drain_qp(struct ib_qp *qp);
 
 int ib_resolve_eth_dmac(struct ib_device *device,
 			struct rdma_ah_attr *ah_attr);
+int ib_get_eth_speed(struct ib_device *dev, u8 port_num, u8 *speed, u8 *width);
 
 static inline u8 *rdma_ah_retrieve_dmac(struct rdma_ah_attr *attr)
 {
@@ -3706,4 +3723,38 @@ static inline enum rdma_ah_attr_type rdma_ah_find_type(struct ib_device *dev,
 	else
 		return RDMA_AH_ATTR_TYPE_IB;
 }
+
+/* Return slid in 16bit CPU encoding */
+static inline u16 ib_slid_cpu16(u32 slid)
+{
+	return (u16)slid;
+}
+
+/* Return slid in 16bit BE encoding */
+static inline u16 ib_slid_be16(u32 slid)
+{
+	return cpu_to_be16((u16)slid);
+}
+
+/**
+ * ib_get_vector_affinity - Get the affinity mappings of a given completion
+ *   vector
+ * @device:         the rdma device
+ * @comp_vector:    index of completion vector
+ *
+ * Returns NULL on failure, otherwise a corresponding cpu map of the
+ * completion vector (returns all-cpus map if the device driver doesn't
+ * implement get_vector_affinity).
+ */
+static inline const struct cpumask *
+ib_get_vector_affinity(struct ib_device *device, int comp_vector)
+{
+	if (comp_vector < 0 || comp_vector >= device->num_comp_vectors ||
+	    !device->get_vector_affinity)
+		return NULL;
+
+	return device->get_vector_affinity(device, comp_vector);
+
+}
+
 #endif /* IB_VERBS_H */
