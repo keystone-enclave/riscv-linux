@@ -2660,6 +2660,7 @@ scsi_device_set_state(struct scsi_device *sdev, enum scsi_device_state state)
 
 	}
 	sdev->sdev_state = state;
+	sysfs_notify(&sdev->sdev_gendev.kobj, NULL, "state");
 	return 0;
 
  illegal:
@@ -3079,19 +3080,26 @@ int scsi_internal_device_unblock_nowait(struct scsi_device *sdev,
 	 * Try to transition the scsi device to SDEV_RUNNING or one of the
 	 * offlined states and goose the device queue if successful.
 	 */
-	if ((sdev->sdev_state == SDEV_BLOCK) ||
-	    (sdev->sdev_state == SDEV_TRANSPORT_OFFLINE))
+	switch (sdev->sdev_state) {
+	case SDEV_BLOCK:
+	case SDEV_TRANSPORT_OFFLINE:
 		sdev->sdev_state = new_state;
-	else if (sdev->sdev_state == SDEV_CREATED_BLOCK) {
+		sysfs_notify(&sdev->sdev_gendev.kobj, NULL, "state");
+		break;
+	case SDEV_CREATED_BLOCK:
 		if (new_state == SDEV_TRANSPORT_OFFLINE ||
 		    new_state == SDEV_OFFLINE)
 			sdev->sdev_state = new_state;
 		else
 			sdev->sdev_state = SDEV_CREATED;
-	} else if (sdev->sdev_state != SDEV_CANCEL &&
-		 sdev->sdev_state != SDEV_OFFLINE)
+		sysfs_notify(&sdev->sdev_gendev.kobj, NULL, "state");
+		break;
+	case SDEV_CANCEL:
+	case SDEV_OFFLINE:
+		break;
+	default:
 		return -EINVAL;
-
+	}
 	scsi_start_queue(sdev);
 
 	return 0;
