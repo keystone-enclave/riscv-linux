@@ -628,10 +628,6 @@ static int _autofs_dev_ioctl(unsigned int command,
 	ioctl_fn fn = NULL;
 	int err = 0;
 
-	/* only root can play with this */
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
 	cmd_first = _IOC_NR(AUTOFS_DEV_IOCTL_IOC_FIRST);
 	cmd = _IOC_NR(command);
 
@@ -639,6 +635,14 @@ static int _autofs_dev_ioctl(unsigned int command,
 	    cmd - cmd_first > AUTOFS_DEV_IOCTL_IOC_COUNT) {
 		return -ENOTTY;
 	}
+
+	/* Only root can use ioctls other than AUTOFS_DEV_IOCTL_VERSION_CMD
+	 * and AUTOFS_DEV_IOCTL_ISMOUNTPOINT_CMD
+	 */
+	if (cmd != AUTOFS_DEV_IOCTL_VERSION_CMD &&
+	    cmd != AUTOFS_DEV_IOCTL_ISMOUNTPOINT_CMD &&
+	    !capable(CAP_SYS_ADMIN))
+		return -EPERM;
 
 	/* Copy the parameters into kernel space. */
 	param = copy_dev_ioctl(user);
@@ -733,7 +737,8 @@ static const struct file_operations _dev_ioctl_fops = {
 static struct miscdevice _autofs_dev_ioctl_misc = {
 	.minor		= AUTOFS_MINOR,
 	.name		= AUTOFS_DEVICE_NAME,
-	.fops		= &_dev_ioctl_fops
+	.fops		= &_dev_ioctl_fops,
+	.mode           = 0644,
 };
 
 MODULE_ALIAS_MISCDEV(AUTOFS_MINOR);
