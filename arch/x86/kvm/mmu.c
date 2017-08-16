@@ -4055,7 +4055,8 @@ static void reset_rsvds_bits_mask(struct kvm_vcpu *vcpu,
 {
 	__reset_rsvds_bits_mask(vcpu, &context->guest_rsvd_check,
 				cpuid_maxphyaddr(vcpu), context->root_level,
-				context->nx, guest_cpuid_has_gbpages(vcpu),
+				context->nx,
+				guest_cpuid_has(vcpu, X86_FEATURE_GBPAGES),
 				is_pse(vcpu), guest_cpuid_is_amd(vcpu));
 }
 
@@ -4117,8 +4118,8 @@ reset_shadow_zero_bits_mask(struct kvm_vcpu *vcpu, struct kvm_mmu *context)
 	__reset_rsvds_bits_mask(vcpu, &context->shadow_zero_check,
 				boot_cpu_data.x86_phys_bits,
 				context->shadow_root_level, uses_nx,
-				guest_cpuid_has_gbpages(vcpu), is_pse(vcpu),
-				true);
+				guest_cpuid_has(vcpu, X86_FEATURE_GBPAGES),
+				is_pse(vcpu), true);
 }
 EXPORT_SYMBOL_GPL(reset_shadow_zero_bits_mask);
 
@@ -4838,11 +4839,9 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u64 error_code,
 	 * This can occur when using nested virtualization with nested
 	 * paging in both guests. If true, we simply unprotect the page
 	 * and resume the guest.
-	 *
-	 * Note: AMD only (since it supports the PFERR_GUEST_PAGE_MASK used
-	 *       in PFERR_NEXT_GUEST_PAGE)
 	 */
-	if (error_code == PFERR_NESTED_GUEST_PAGE) {
+	if (vcpu->arch.mmu.direct_map &&
+	    (error_code & PFERR_NESTED_GUEST_PAGE) == PFERR_NESTED_GUEST_PAGE) {
 		kvm_mmu_unprotect_page(vcpu->kvm, gpa_to_gfn(cr2));
 		return 1;
 	}

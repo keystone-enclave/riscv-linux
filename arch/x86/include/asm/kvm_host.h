@@ -204,7 +204,6 @@ enum {
 #define PFERR_GUEST_PAGE_MASK (1ULL << PFERR_GUEST_PAGE_BIT)
 
 #define PFERR_NESTED_GUEST_PAGE (PFERR_GUEST_PAGE_MASK |	\
-				 PFERR_USER_MASK |		\
 				 PFERR_WRITE_MASK |		\
 				 PFERR_PRESENT_MASK)
 
@@ -688,6 +687,9 @@ struct kvm_vcpu_arch {
 
 	/* GPA available (AMD only) */
 	bool gpa_available;
+
+	/* be preempted when it's in kernel-mode(cpl=0) */
+	bool preempted_in_kernel;
 };
 
 struct kvm_lpage_info {
