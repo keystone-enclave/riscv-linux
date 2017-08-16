@@ -1967,8 +1967,8 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * reordered with p->state check below. This pairs with mb() in
 	 * set_current_state() the waiting thread does.
 	 */
-	smp_mb__before_spinlock();
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	smp_mb__after_spinlock();
 	if (!(p->state & state))
 		goto out;
 
@@ -3281,8 +3281,8 @@ static void __sched notrace __schedule(bool preempt)
 	 * can't be reordered with __set_current_state(TASK_INTERRUPTIBLE)
 	 * done by the caller to avoid the race with signal_wake_up().
 	 */
-	smp_mb__before_spinlock();
 	rq_lock(rq, &rf);
+	smp_mb__after_spinlock();
 
 	/* Promote REQ to ACT */
 	rq->clock_update_flags <<= 1;
@@ -5103,24 +5103,17 @@ out_unlock:
 	return retval;
 }
 
-static const char stat_nam[] = TASK_STATE_TO_CHAR_STR;
-
 void sched_show_task(struct task_struct *p)
 {
 	unsigned long free = 0;
 	int ppid;
-	unsigned long state = p->state;
-
-	/* Make sure the string lines up properly with the number of task states: */
-	BUILD_BUG_ON(sizeof(TASK_STATE_TO_CHAR_STR)-1 != ilog2(TASK_STATE_MAX)+1);
 
 	if (!try_get_task_stack(p))
 		return;
-	if (state)
-		state = __ffs(state) + 1;
-	printk(KERN_INFO "%-15.15s %c", p->comm,
-		state < sizeof(stat_nam) - 1 ? stat_nam[state] : '?');
-	if (state == TASK_RUNNING)
+
+	printk(KERN_INFO "%-15.15s %c", p->comm, task_state_to_char(p));
+
+	if (p->state == TASK_RUNNING)
 		printk(KERN_CONT "  running task    ");
 #ifdef CONFIG_DEBUG_STACK_USAGE
 	free = stack_not_used(p);
@@ -5175,11 +5168,6 @@ void show_state_filter(unsigned long state_filter)
 	 */
 	if (!state_filter)
 		debug_show_all_locks();
-}
-
-void init_idle_bootup_task(struct task_struct *idle)
-{
-	idle->sched_class = &idle_sched_class;
 }
 
 /**
@@ -5438,7 +5426,7 @@ static void migrate_tasks(struct rq *dead_rq, struct rq_flags *rf)
 		 */
 		next = pick_next_task(rq, &fake_task, rf);
 		BUG_ON(!next);
-		next->sched_class->put_prev_task(rq, next);
+		put_prev_task(rq, next);
 
 		/*
 		 * Rules for changing task_struct::cpus_allowed are holding

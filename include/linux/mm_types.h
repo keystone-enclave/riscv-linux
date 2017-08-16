@@ -535,6 +535,10 @@ extern void tlb_finish_mmu(struct mmu_gather *tlb,
  */
 static inline bool mm_tlb_flush_pending(struct mm_struct *mm)
 {
+	/*
+	 * Must be called with PTL held; such that our PTL acquire will have
+	 * observed the store from set_tlb_flush_pending().
+	 */
 	return atomic_read(&mm->tlb_flush_pending) > 0;
 }
 
@@ -556,10 +560,29 @@ static inline void inc_tlb_flush_pending(struct mm_struct *mm)
 	atomic_inc(&mm->tlb_flush_pending);
 
 	/*
-	 * Guarantee that the tlb_flush_pending increase does not leak into the
-	 * critical section updating the page tables
+	 * The only time this value is relevant is when there are indeed pages
+	 * to flush. And we'll only flush pages after changing them, which
+	 * requires the PTL.
+	 *
+	 * So the ordering here is:
+	 *
+	 *	atomic_inc(&mm->tlb_flush_pending);
+	 *	spin_lock(&ptl);
+	 *	...
+	 *	set_pte_at();
+	 *	spin_unlock(&ptl);
+	 *
+	 *				spin_lock(&ptl)
+	 *				mm_tlb_flush_pending();
+	 *				....
+	 *				spin_unlock(&ptl);
+	 *
+	 *	flush_tlb_range();
+	 *	atomic_dec(&mm->tlb_flush_pending);
+	 *
+	 * So the =true store is constrained by the PTL unlock, and the =false
+	 * store is constrained by the TLB invalidate.
 	 */
-	smp_mb__before_spinlock();
 }
 
 /* Clearing is done after a TLB flush, which also provides a barrier. */
