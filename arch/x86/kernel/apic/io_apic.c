@@ -2512,9 +2512,8 @@ int acpi_get_override_irq(u32 gsi, int *trigger, int *polarity)
 }
 
 /*
- * This function currently is only a helper for the i386 smp boot process where
- * we need to reprogram the ioredtbls to cater for the cpus which have come online
- * so mask in all cases should simply be apic->target_cpus()
+ * This function updates target affinity of IOAPIC interrupts to include
+ * the CPUs which came online during SMP bringup.
  */
 #ifdef CONFIG_SMP
 void __init setup_ioapic_dest(void)
@@ -2547,7 +2546,7 @@ void __init setup_ioapic_dest(void)
 		if (!irqd_can_balance(idata) || irqd_affinity_was_set(idata))
 			mask = irq_data_get_affinity_mask(idata);
 		else
-			mask = apic->target_cpus();
+			mask = irq_default_affinity;
 
 		chip = irq_data_get_irq_chip(idata);
 		/* Might be lapic_chip for irq 0 */
