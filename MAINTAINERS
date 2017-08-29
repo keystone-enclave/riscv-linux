@@ -1161,7 +1161,7 @@ M:	Brendan Higgins <brendanhiggins@google.com>
 R:	Benjamin Herrenschmidt <benh@kernel.crashing.org>
 R:	Joel Stanley <joel@jms.id.au>
 L:	linux-i2c@vger.kernel.org
-L:	openbmc@lists.ozlabs.org
+L:	openbmc@lists.ozlabs.org (moderated for non-subscribers)
 S:	Maintained
 F:	drivers/irqchip/irq-aspeed-i2c-ic.c
 F:	drivers/i2c/busses/i2c-aspeed.c
@@ -5834,7 +5834,7 @@ F:	drivers/staging/greybus/spi.c
 F:	drivers/staging/greybus/spilib.c
 F:	drivers/staging/greybus/spilib.h
 
-GREYBUS LOOBACK/TIME PROTOCOLS DRIVERS
+GREYBUS LOOPBACK/TIME PROTOCOLS DRIVERS
 M:	Bryan O'Donoghue <pure.logic@nexus-software.ie>
 S:	Maintained
 F:	drivers/staging/greybus/loopback.c
@@ -7110,7 +7110,6 @@ M:	Marc Zyngier <marc.zyngier@arm.com>
 L:	linux-kernel@vger.kernel.org
 S:	Maintained
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git irq/core
-T:	git git://git.infradead.org/users/jcooper/linux.git irqchip/core
 F:	Documentation/devicetree/bindings/interrupt-controller/
 F:	drivers/irqchip/
 
@@ -8793,6 +8792,7 @@ M:	Paul Burton <paul.burton@imgtec.com>
 L:	linux-mips@linux-mips.org
 S:	Supported
 F:	arch/mips/generic/
+F:	arch/mips/tools/generic-board-config.sh
 
 MIPS/LOONGSON1 ARCHITECTURE
 M:	Keguang Zhang <keguang.zhang@gmail.com>
@@ -8802,6 +8802,13 @@ F:	arch/mips/loongson32/
 F:	arch/mips/include/asm/mach-loongson32/
 F:	drivers/*/*loongson1*
 F:	drivers/*/*/*loongson1*
+
+MIPS RINT INSTRUCTION EMULATION
+M:	Aleksandar Markovic <aleksandar.markovic@imgtec.com>
+L:	linux-mips@linux-mips.org
+S:	Supported
+F:	arch/mips/math-emu/sp_rint.c
+F:	arch/mips/math-emu/dp_rint.c
 
 MIROSOUND PCM20 FM RADIO RECEIVER DRIVER
 M:	Hans Verkuil <hverkuil@xs4all.nl>
@@ -9675,6 +9682,12 @@ F:	drivers/regulator/twl-regulator.c
 F:	drivers/regulator/twl6030-regulator.c
 F:	include/linux/i2c-omap.h
 
+ONION OMEGA2+ BOARD
+M:	Harvey Hunt <harveyhuntnexus@gmail.com>
+L:	linux-mips@linux-mips.org
+S:	Maintained
+F:	arch/mips/boot/dts/ralink/omega2p.dts
+
 OMFS FILESYSTEM
 M:	Bob Copeland <me@bobcopeland.com>
 L:	linux-karma-devel@lists.sourceforge.net
@@ -10383,7 +10396,7 @@ L:	linux-gpio@vger.kernel.org
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-pinctrl.git
 S:	Maintained
 F:	Documentation/devicetree/bindings/pinctrl/
-F:	Documentation/pinctrl.txt
+F:	Documentation/driver-api/pinctl.rst
 F:	drivers/pinctrl/
 F:	include/linux/pinctrl/
 
@@ -14004,6 +14017,7 @@ F:	drivers/block/virtio_blk.c
 F:	include/linux/virtio*.h
 F:	include/uapi/linux/virtio_*.h
 F:	drivers/crypto/virtio/
+F:	mm/balloon_compaction.c
 
 VIRTIO CRYPTO DRIVER
 M:	Gonglei <arei.gonglei@huawei.com>
@@ -14125,6 +14139,12 @@ M:	"VMware, Inc." <pv-drivers@vmware.com>
 L:	netdev@vger.kernel.org
 S:	Maintained
 F:	drivers/net/vmxnet3/
+
+VOCORE VOCORE2 BOARD
+M:	Harvey Hunt <harveyhuntnexus@gmail.com>
+L:	linux-mips@linux-mips.org
+S:	Maintained
+F:	arch/mips/boot/dts/ralink/vocore2.dts
 
 VOLTAGE AND CURRENT REGULATOR FRAMEWORK
 M:	Liam Girdwood <lgirdwood@gmail.com>
