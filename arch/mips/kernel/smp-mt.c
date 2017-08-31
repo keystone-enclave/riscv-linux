@@ -83,7 +83,7 @@ static unsigned int __init smvp_vpe_init(unsigned int tc, unsigned int mvpconf0,
 	if (tc != 0)
 		smvp_copy_vpe_config();
 
-	cpu_data[ncpu].vpe_id = tc;
+	cpu_set_vpe_id(&cpu_data[ncpu], tc);
 
 	return ncpu;
 }
@@ -152,7 +152,7 @@ static void vsmp_smp_finish(void)
  * (unsigned long)idle->thread_info the gp
  * assumes a 1:1 mapping of TC => VPE
  */
-static void vsmp_boot_secondary(int cpu, struct task_struct *idle)
+static int vsmp_boot_secondary(int cpu, struct task_struct *idle)
 {
 	struct thread_info *gp = task_thread_info(idle);
 	dvpe();
@@ -184,6 +184,8 @@ static void vsmp_boot_secondary(int cpu, struct task_struct *idle)
 	clear_c0_mvpcontrol(MVPCONTROL_VPC);
 
 	evpe(EVPE_ENABLE);
+
+	return 0;
 }
 
 /*
@@ -239,7 +241,7 @@ static void __init vsmp_prepare_cpus(unsigned int max_cpus)
 	mips_mt_set_cpuoptions();
 }
 
-struct plat_smp_ops vsmp_smp_ops = {
+const struct plat_smp_ops vsmp_smp_ops = {
 	.send_ipi_single	= mips_smp_send_ipi_single,
 	.send_ipi_mask		= mips_smp_send_ipi_mask,
 	.init_secondary		= vsmp_init_secondary,
