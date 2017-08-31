@@ -5084,17 +5084,14 @@ static void setup_pageset(struct per_cpu_pageset *p, unsigned long batch);
 static DEFINE_PER_CPU(struct per_cpu_pageset, boot_pageset);
 static DEFINE_PER_CPU(struct per_cpu_nodestat, boot_nodestats);
 
-/*
- * Global mutex to protect against size modification of zonelists
- * as well as to serialize pageset setup for the new populated zone.
- */
-DEFINE_MUTEX(zonelists_mutex);
-
 static void __build_all_zonelists(void *data)
 {
 	int nid;
 	int __maybe_unused cpu;
 	pg_data_t *self = data;
+	static DEFINE_SPINLOCK(lock);
+
+	spin_lock(&lock);
 
 #ifdef CONFIG_NUMA
 	memset(node_load, 0, sizeof(node_load));
@@ -5126,6 +5123,8 @@ static void __build_all_zonelists(void *data)
 			set_cpu_numa_mem(cpu, local_memory_node(cpu_to_node(cpu)));
 #endif
 	}
+
+	spin_unlock(&lock);
 }
 
 static noinline void __init
@@ -5156,7 +5155,6 @@ build_all_zonelists_init(void)
 }
 
 /*
- * Called with zonelists_mutex held always
  * unless system_state == SYSTEM_BOOTING.
  *
  * __ref due to call of __init annotated helper build_all_zonelists_init
@@ -6892,9 +6890,11 @@ static void __setup_per_zone_wmarks(void)
  */
 void setup_per_zone_wmarks(void)
 {
-	mutex_lock(&zonelists_mutex);
+	static DEFINE_SPINLOCK(lock);
+
+	spin_lock(&lock);
 	__setup_per_zone_wmarks();
-	mutex_unlock(&zonelists_mutex);
+	spin_unlock(&lock);
 }
 
 /*
