@@ -4447,12 +4447,15 @@ void clear_huge_page(struct page *page,
 	 * towards the sub-page to access
 	 */
 	for (i = 0; i < l; i++) {
+		int left_idx = base + i;
+		int right_idx = base + 2 * l - 1 - i;
+
 		cond_resched();
-		clear_user_highpage(page + base + i,
-				    addr + (base + i) * PAGE_SIZE);
+		clear_user_highpage(page + left_idx,
+				    addr + left_idx * PAGE_SIZE);
 		cond_resched();
-		clear_user_highpage(page + base + 2 * l - 1 - i,
-				    addr + (base + 2 * l - 1 - i) * PAGE_SIZE);
+		clear_user_highpage(page + right_idx,
+				    addr + right_idx * PAGE_SIZE);
 	}
 }
 
