@@ -1150,7 +1150,6 @@ fail:
 	if (i < 256)
 		return (i << 24) | (j << 16) | k;
 	return 0;
-	return 0;
 }
 
 static __init int string_selftest_init(void)
@@ -1180,4 +1179,4 @@ fail:
 }
 
 module_init(string_selftest_init);
-#endif
+#endif	/* CONFIG_STRING_SELFTEST */
