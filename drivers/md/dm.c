@@ -1133,32 +1133,18 @@ static void flush_current_bio_list(struct blk_plug_cb *cb, bool from_schedule)
 {
 	struct clone_info *ci = container_of(cb, struct clone_info, cb);
 	struct bio_list list;
-	struct bio *bio;
-	int i;
 
 	INIT_LIST_HEAD(&ci->cb.list);
 
-	if (unlikely(!current->bio_list))
+	if (unlikely(!current->bio_list || bio_list_empty(&current->bio_list[0])))
 		return;
 
-	for (i = 0; i < 2; i++) {
-		list = current->bio_list[i];
-		bio_list_init(&current->bio_list[i]);
-
-		while ((bio = bio_list_pop(&list))) {
-			struct bio_set *bs = bio->bi_pool;
-			if (unlikely(!bs) || bs == fs_bio_set ||
-			    !bs->rescue_workqueue) {
-				bio_list_add(&current->bio_list[i], bio);
-				continue;
-			}
-
-			spin_lock(&bs->rescue_lock);
-			bio_list_add(&bs->rescue_list, bio);
-			queue_work(bs->rescue_workqueue, &bs->rescue_work);
-			spin_unlock(&bs->rescue_lock);
-		}
-	}
+	list = current->bio_list[0];
+	bio_list_init(&current->bio_list[0]);
+	spin_lock(&ci->md->deferred_lock);
+	bio_list_merge(&ci->md->rescued, &list);
+	spin_unlock(&ci->md->deferred_lock);
+	queue_work(ci->md->wq, &ci->md->work);
 }
 
 static void dm_offload_start(struct clone_info *ci)
@@ -2225,6 +2211,16 @@ static void dm_wq_work(struct work_struct *work)
 	int srcu_idx;
 	struct dm_table *map;
 
+	if (!bio_list_empty(&md->rescued)) {
+		struct bio_list list;
+		spin_lock_irq(&md->deferred_lock);
+		list = md->rescued;
+		bio_list_init(&md->rescued);
+		spin_unlock_irq(&md->deferred_lock);
+		while ((c = bio_list_pop(&list)))
+			generic_make_request(c);
+	}
+
 	map = dm_get_live_table(md, &srcu_idx);
 
 	while (!test_bit(DMF_BLOCK_IO_FOR_SUSPEND, &md->flags)) {
@@ -2778,7 +2774,7 @@ struct dm_md_mempools *dm_alloc_md_mempools(struct mapped_device *md, enum dm_qu
 		BUG();
 	}
 
-	pools->bs = bioset_create(pool_size, front_pad, BIOSET_NEED_RESCUER);
+	pools->bs = bioset_create(pool_size, front_pad, 0);
 	if (!pools->bs)
 		goto out;
 
