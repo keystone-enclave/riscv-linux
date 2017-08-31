@@ -653,15 +653,11 @@ enum bq27xxx_dm_reg_id {
 #define bq2751x_dm_regs 0
 #define bq2752x_dm_regs 0
 
-#if 0 /* not yet tested */
 static struct bq27xxx_dm_reg bq27500_dm_regs[] = {
 	[BQ27XXX_DM_DESIGN_CAPACITY]   = { 48, 10, 2,    0, 65535 },
 	[BQ27XXX_DM_DESIGN_ENERGY]     = { }, /* missing on chip */
 	[BQ27XXX_DM_TERMINATE_VOLTAGE] = { 80, 48, 2, 1000, 32767 },
 };
-#else
-#define bq27500_dm_regs 0
-#endif
 
 /* todo create data memory definitions from datasheets and test on chips */
 #define bq27510g1_dm_regs 0
