@@ -546,72 +546,10 @@ static int do_req_filebacked(struct loop_device *lo, struct request *rq)
 	}
 }
 
-struct switch_request {
-	struct file *file;
-	struct completion wait;
-};
-
 static inline void loop_update_dio(struct loop_device *lo)
 {
 	__loop_update_dio(lo, io_is_direct(lo->lo_backing_file) |
 			lo->use_dio);
-}
-
-/*
- * Do the actual switch; called from the BIO completion routine
- */
-static void do_loop_switch(struct loop_device *lo, struct switch_request *p)
-{
-	struct file *file = p->file;
-	struct file *old_file = lo->lo_backing_file;
-	struct address_space *mapping;
-
-	/* if no new file, only flush of queued bios requested */
-	if (!file)
-		return;
-
-	mapping = file->f_mapping;
-	mapping_set_gfp_mask(old_file->f_mapping, lo->old_gfp_mask);
-	lo->lo_backing_file = file;
-	lo->lo_blocksize = S_ISBLK(mapping->host->i_mode) ?
-		mapping->host->i_bdev->bd_block_size : PAGE_SIZE;
-	lo->old_gfp_mask = mapping_gfp_mask(mapping);
-	mapping_set_gfp_mask(mapping, lo->old_gfp_mask & ~(__GFP_IO|__GFP_FS));
-	loop_update_dio(lo);
-}
-
-/*
- * loop_switch performs the hard work of switching a backing store.
- * First it needs to flush existing IO, it does this by sending a magic
- * BIO down the pipe. The completion of this BIO does the actual switch.
- */
-static int loop_switch(struct loop_device *lo, struct file *file)
-{
-	struct switch_request w;
-
-	w.file = file;
-
-	/* freeze queue and wait for completion of scheduled requests */
-	blk_mq_freeze_queue(lo->lo_queue);
-
-	/* do the switch action */
-	do_loop_switch(lo, &w);
-
-	/* unfreeze */
-	blk_mq_unfreeze_queue(lo->lo_queue);
-
-	return 0;
-}
-
-/*
- * Helper to flush the IOs in loop, but keeping loop thread running
- */
-static int loop_flush(struct loop_device *lo)
-{
-	/* loop not yet configured, no running thread, nothing to flush */
-	if (lo->lo_state != Lo_bound)
-		return 0;
-	return loop_switch(lo, NULL);
 }
 
 static void loop_reread_partitions(struct loop_device *lo,
@@ -678,9 +616,14 @@ static int loop_change_fd(struct loop_device *lo, struct block_device *bdev,
 		goto out_putf;
 
 	/* and ... switch */
-	error = loop_switch(lo, file);
-	if (error)
-		goto out_putf;
+	blk_mq_freeze_queue(lo->lo_queue);
+	mapping_set_gfp_mask(old_file->f_mapping, lo->old_gfp_mask);
+	lo->lo_backing_file = file;
+	lo->old_gfp_mask = mapping_gfp_mask(file->f_mapping);
+	mapping_set_gfp_mask(file->f_mapping,
+			     lo->old_gfp_mask & ~(__GFP_IO|__GFP_FS));
+	loop_update_dio(lo);
+	blk_mq_unfreeze_queue(lo->lo_queue);
 
 	fput(old_file);
 	if (lo->lo_flags & LO_FLAGS_PARTSCAN)
@@ -867,7 +810,6 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	struct file	*file, *f;
 	struct inode	*inode;
 	struct address_space *mapping;
-	unsigned lo_blocksize;
 	int		lo_flags = 0;
 	int		error;
 	loff_t		size;
@@ -911,9 +853,6 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	    !file->f_op->write_iter)
 		lo_flags |= LO_FLAGS_READ_ONLY;
 
-	lo_blocksize = S_ISBLK(inode->i_mode) ?
-		inode->i_bdev->bd_block_size : PAGE_SIZE;
-
 	error = -EFBIG;
 	size = get_loop_size(lo, file);
 	if ((loff_t)(sector_t)size != size)
@@ -927,7 +866,6 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	set_device_ro(bdev, (lo_flags & LO_FLAGS_READ_ONLY) != 0);
 
 	lo->use_dio = false;
-	lo->lo_blocksize = lo_blocksize;
 	lo->lo_device = bdev;
 	lo->lo_flags = lo_flags;
 	lo->lo_backing_file = file;
@@ -947,7 +885,8 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	/* let user-space know about the new size */
 	kobject_uevent(&disk_to_dev(bdev->bd_disk)->kobj, KOBJ_CHANGE);
 
-	set_blocksize(bdev, lo_blocksize);
+	set_blocksize(bdev, S_ISBLK(inode->i_mode) ?
+		      block_size(inode->i_bdev) : PAGE_SIZE);
 
 	lo->lo_state = Lo_bound;
 	if (part_shift)
@@ -1053,6 +992,7 @@ static int loop_clr_fd(struct loop_device *lo)
 	memset(lo->lo_encrypt_key, 0, LO_KEY_SIZE);
 	memset(lo->lo_crypt_name, 0, LO_NAME_SIZE);
 	memset(lo->lo_file_name, 0, LO_NAME_SIZE);
+	blk_queue_logical_block_size(lo->lo_queue, 512);
 	if (bdev) {
 		bdput(bdev);
 		invalidate_bdev(bdev);
@@ -1336,6 +1276,24 @@ static int loop_set_dio(struct loop_device *lo, unsigned long arg)
 	return error;
 }
 
+static int loop_set_block_size(struct loop_device *lo, unsigned long arg)
+{
+	if (lo->lo_state != Lo_bound)
+		return -ENXIO;
+
+	if (arg < 512 || arg > PAGE_SIZE || !is_power_of_2(arg))
+		return -EINVAL;
+
+	blk_mq_freeze_queue(lo->lo_queue);
+
+	blk_queue_logical_block_size(lo->lo_queue, arg);
+	loop_update_dio(lo);
+
+	blk_mq_unfreeze_queue(lo->lo_queue);
+
+	return 0;
+}
+
 static int lo_ioctl(struct block_device *bdev, fmode_t mode,
 	unsigned int cmd, unsigned long arg)
 {
@@ -1383,6 +1341,11 @@ static int lo_ioctl(struct block_device *bdev, fmode_t mode,
 		err = -EPERM;
 		if ((mode & FMODE_WRITE) || capable(CAP_SYS_ADMIN))
 			err = loop_set_dio(lo, arg);
+		break;
+	case LOOP_SET_BLOCK_SIZE:
+		err = -EPERM;
+		if ((mode & FMODE_WRITE) || capable(CAP_SYS_ADMIN))
+			err = loop_set_block_size(lo, arg);
 		break;
 	default:
 		err = lo->ioctl ? lo->ioctl(lo, cmd, arg) : -EINVAL;
@@ -1583,12 +1546,13 @@ static void lo_release(struct gendisk *disk, fmode_t mode)
 		err = loop_clr_fd(lo);
 		if (!err)
 			return;
-	} else {
+	} else if (lo->lo_state == Lo_bound) {
 		/*
 		 * Otherwise keep thread (if running) and config,
 		 * but flush possible ongoing bios in thread.
 		 */
-		loop_flush(lo);
+		blk_mq_freeze_queue(lo->lo_queue);
+		blk_mq_unfreeze_queue(lo->lo_queue);
 	}
 
 	mutex_unlock(&lo->lo_ctl_mutex);
@@ -1769,6 +1733,8 @@ static int loop_add(struct loop_device **l, int i)
 		goto out_cleanup_tags;
 	}
 	lo->lo_queue->queuedata = lo;
+
+	blk_queue_physical_block_size(lo->lo_queue, PAGE_SIZE);
 
 	/*
 	 * It doesn't make sense to enable merge because the I/O
