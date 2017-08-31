@@ -30,6 +30,7 @@ DEFINE_STATIC_KEY_FALSE(page_owner_inited);
 
 static depot_stack_handle_t dummy_handle;
 static depot_stack_handle_t failure_handle;
+static depot_stack_handle_t early_handle;
 
 static void init_early_allocated_pages(void);
 
@@ -53,7 +54,7 @@ static bool need_page_owner(void)
 	return true;
 }
 
-static noinline void register_dummy_stack(void)
+static __always_inline depot_stack_handle_t create_dummy_stack(void)
 {
 	unsigned long entries[4];
 	struct stack_trace dummy;
@@ -64,21 +65,22 @@ static noinline void register_dummy_stack(void)
 	dummy.skip = 0;
 
 	save_stack_trace(&dummy);
-	dummy_handle = depot_save_stack(&dummy, GFP_KERNEL);
+	return depot_save_stack(&dummy, GFP_KERNEL);
+}
+
+static noinline void register_dummy_stack(void)
+{
+	dummy_handle = create_dummy_stack();
 }
 
 static noinline void register_failure_stack(void)
 {
-	unsigned long entries[4];
-	struct stack_trace failure;
+	failure_handle = create_dummy_stack();
+}
 
-	failure.nr_entries = 0;
-	failure.max_entries = ARRAY_SIZE(entries);
-	failure.entries = &entries[0];
-	failure.skip = 0;
-
-	save_stack_trace(&failure);
-	failure_handle = depot_save_stack(&failure, GFP_KERNEL);
+static noinline void register_early_stack(void)
+{
+	early_handle = create_dummy_stack();
 }
 
 static void init_page_owner(void)
@@ -88,6 +90,7 @@ static void init_page_owner(void)
 
 	register_dummy_stack();
 	register_failure_stack();
+	register_early_stack();
 	static_branch_enable(&page_owner_inited);
 	init_early_allocated_pages();
 }
@@ -529,12 +532,9 @@ static void init_pages_in_zone(pg_data_t *pgdat, struct zone *zone)
 	unsigned long pfn = zone->zone_start_pfn, block_end_pfn;
 	unsigned long end_pfn = pfn + zone->spanned_pages;
 	unsigned long count = 0;
-	depot_stack_handle_t init_handle;
 
 	/* Scan block by block. First and last block may be incomplete */
 	pfn = zone->zone_start_pfn;
-
-	init_handle = save_stack(0);
 
 	/*
 	 * Walk the zone in pageblock_nr_pages steps. If a page block spans
@@ -582,7 +582,7 @@ static void init_pages_in_zone(pg_data_t *pgdat, struct zone *zone)
 				continue;
 
 			/* Found early allocated page */
-			__set_page_owner_handle(page_ext, init_handle, 0, 0);
+			__set_page_owner_handle(page_ext, early_handle, 0, 0);
 			count++;
 		}
 	}
