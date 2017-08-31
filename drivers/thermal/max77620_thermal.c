@@ -149,7 +149,7 @@ static int max77620_thermal_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_device_id max77620_thermal_devtype[] = {
+static const struct platform_device_id max77620_thermal_devtype[] = {
 	{ .name = "max77620-thermal", },
 	{},
 };
