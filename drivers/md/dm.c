@@ -1114,23 +1114,29 @@ void dm_remap_zone_report(struct dm_target *ti, struct bio *bio, sector_t start)
 }
 EXPORT_SYMBOL_GPL(dm_remap_zone_report);
 
-/*
- * Flush current->bio_list when the target map method blocks.
- * This fixes deadlocks in snapshot and possibly in other targets.
- */
-struct dm_offload {
+struct clone_info {
+	struct mapped_device *md;
+	struct dm_table *map;
+	struct bio *bio;
+	struct dm_io *io;
+	sector_t sector;
+	unsigned sector_count;
 	struct blk_plug plug;
 	struct blk_plug_cb cb;
 };
 
+/*
+ * Flush current->bio_list when the target map method blocks.
+ * This fixes deadlocks in snapshot and possibly in other targets.
+ */
 static void flush_current_bio_list(struct blk_plug_cb *cb, bool from_schedule)
 {
-	struct dm_offload *o = container_of(cb, struct dm_offload, cb);
+	struct clone_info *ci = container_of(cb, struct clone_info, cb);
 	struct bio_list list;
 	struct bio *bio;
 	int i;
 
-	INIT_LIST_HEAD(&o->cb.list);
+	INIT_LIST_HEAD(&ci->cb.list);
 
 	if (unlikely(!current->bio_list))
 		return;
@@ -1155,24 +1161,29 @@ static void flush_current_bio_list(struct blk_plug_cb *cb, bool from_schedule)
 	}
 }
 
-static void dm_offload_start(struct dm_offload *o)
+static void dm_offload_start(struct clone_info *ci)
 {
-	blk_start_plug(&o->plug);
-	o->cb.callback = flush_current_bio_list;
-	list_add(&o->cb.list, &current->plug->cb_list);
+	blk_start_plug(&ci->plug);
+	INIT_LIST_HEAD(&ci->cb.list);
+	ci->cb.callback = flush_current_bio_list;
 }
 
-static void dm_offload_end(struct dm_offload *o)
+static void dm_offload_end(struct clone_info *ci)
 {
-	list_del(&o->cb.list);
-	blk_finish_plug(&o->plug);
+	list_del(&ci->cb.list);
+	blk_finish_plug(&ci->plug);
 }
 
-static void __map_bio(struct dm_target_io *tio)
+static void dm_offload_check(struct clone_info *ci)
+{
+	if (list_empty(&ci->cb.list))
+		list_add(&ci->cb.list, &current->plug->cb_list);
+}
+
+static void __map_bio(struct clone_info *ci, struct dm_target_io *tio)
 {
 	int r;
 	sector_t sector;
-	struct dm_offload o;
 	struct bio *clone = &tio->clone;
 	struct dm_target *ti = tio->ti;
 
@@ -1186,9 +1197,8 @@ static void __map_bio(struct dm_target_io *tio)
 	atomic_inc(&tio->io->io_count);
 	sector = clone->bi_iter.bi_sector;
 
-	dm_offload_start(&o);
+	dm_offload_check(ci);
 	r = ti->type->map(ti, clone);
-	dm_offload_end(&o);
 
 	switch (r) {
 	case DM_MAPIO_SUBMITTED:
@@ -1212,15 +1222,6 @@ static void __map_bio(struct dm_target_io *tio)
 		BUG();
 	}
 }
-
-struct clone_info {
-	struct mapped_device *md;
-	struct dm_table *map;
-	struct bio *bio;
-	struct dm_io *io;
-	sector_t sector;
-	unsigned sector_count;
-};
 
 static void bio_setup_sector(struct bio *bio, sector_t sector, unsigned len)
 {
@@ -1271,6 +1272,7 @@ static struct dm_target_io *alloc_tio(struct clone_info *ci,
 	struct dm_target_io *tio;
 	struct bio *clone;
 
+	dm_offload_check(ci);
 	clone = bio_alloc_bioset(GFP_NOIO, 0, ci->md->bs);
 	tio = container_of(clone, struct dm_target_io, clone);
 
@@ -1294,7 +1296,7 @@ static void __clone_and_map_simple_bio(struct clone_info *ci,
 	if (len)
 		bio_setup_sector(clone, ci->sector, *len);
 
-	__map_bio(tio);
+	__map_bio(ci, tio);
 }
 
 static void __send_duplicate_bios(struct clone_info *ci, struct dm_target *ti,
@@ -1341,7 +1343,7 @@ static int __clone_and_map_data_bio(struct clone_info *ci, struct dm_target *ti,
 			free_tio(tio);
 			break;
 		}
-		__map_bio(tio);
+		__map_bio(ci, tio);
 	}
 
 	return r;
@@ -1474,6 +1476,8 @@ static void __split_and_process_bio(struct mapped_device *md,
 		return;
 	}
 
+	dm_offload_start(&ci);
+
 	ci.map = map;
 	ci.md = md;
 	ci.io = alloc_io(md);
@@ -1515,6 +1519,8 @@ static void __split_and_process_bio(struct mapped_device *md,
 			}
 		}
 	}
+
+	dm_offload_end(&ci);
 
 	/* drop the extra reference count */
 	dec_pending(ci.io, errno_to_blk_status(error));
