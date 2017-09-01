@@ -1464,6 +1464,7 @@ qla24xx_handle_plogi_done_event(struct scsi_qla_host *vha, struct event_arg *ea)
 				__func__, __LINE__, ea->fcport->port_name);
 			ea->fcport->chip_reset = vha->hw->base_qpair->chip_reset;
 			ea->fcport->logout_on_delete = 1;
+			ea->fcport->send_els_logo = 0;
 			qla24xx_post_gpdb_work(vha, ea->fcport, 0);
 		}
 		break;
@@ -4937,6 +4938,7 @@ qla2x00_find_all_fabric_devs(scsi_qla_host_t *vha)
 				new_fcport->fc4_type = swl[swl_idx].fc4_type;
 
 				new_fcport->nvme_flag = 0;
+				new_fcport->fc4f_nvme = 0;
 				if (vha->flags.nvme_enabled &&
 				    swl[swl_idx].fc4f_nvme) {
 					new_fcport->fc4f_nvme =
