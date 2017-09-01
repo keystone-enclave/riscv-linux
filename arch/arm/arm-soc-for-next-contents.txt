@@ -103,6 +103,10 @@ next/dt
 		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt-v4.14-2
 	sunxi/dt-3
 		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt-for-4.14-3
+	<no branch> (fe45174b72aead678da581bab9e9a37c9b26a070)
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.13-3
+	at91/dt2
+		git://git.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.14-dt2
 
 next/defconfig
 	samsung/defconfig
@@ -129,6 +133,8 @@ next/defconfig
 		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.14/defconfig
 	aspeed/defconfig
 		git://git.kernel.org/pub/scm/linux/kernel/git/joel/aspeed tags/aspeed-4.14-defconfig
+	patch
+		ARM: multi_v7_defconfig: make eSDHC driver built-in
 
 next/drivers
 	patch
@@ -213,6 +219,10 @@ next/dt64
 		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64-2
 	uniphier/dt64-2
 		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt64-v4.14-2
+	<no branch> (fe45174b72aead678da581bab9e9a37c9b26a070)
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.13-3
+	mvebu/dt64-4
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt64-4.14-4
 
 next/arm64
 	patch
@@ -241,4 +251,6 @@ next/arm64
 fixes
 	<no branch> (fe45174b72aead678da581bab9e9a37c9b26a070)
 		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.13-3
+	<no branch> (a0ac89b57207ccc87d76f4e6aa9a83026743861b)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.13-3
 
