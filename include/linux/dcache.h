@@ -562,6 +562,9 @@ static inline struct dentry *d_backing_dentry(struct dentry *upper)
 	return upper;
 }
 
+/* d_real() flags */
+#define D_REAL_ALL	0x1	/* return real dentry for all file types */
+
 /**
  * d_real - Return the real dentry
  * @dentry: the dentry to query
