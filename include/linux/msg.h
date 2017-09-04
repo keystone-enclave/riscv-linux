@@ -30,6 +30,6 @@ struct msg_queue {
 	struct list_head q_messages;
 	struct list_head q_receivers;
 	struct list_head q_senders;
-};
+} __randomize_layout;
 
 #endif /* _LINUX_MSG_H */
