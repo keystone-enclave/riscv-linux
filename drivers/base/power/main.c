@@ -1458,10 +1458,14 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 		goto Complete;
 
 	if (dev->power.direct_complete) {
+		dev_err(dev, "__device_suspend: direct_complete true\n");
 		if (pm_runtime_status_suspended(dev)) {
 			pm_runtime_disable(dev);
-			if (pm_runtime_status_suspended(dev))
+			dev_err(dev, "__device_suspend: runtime disabled\n");
+			if (pm_runtime_status_suspended(dev)) {
+				dev_err(dev, "__device_suspend: still runtime suspended\n");
 				goto Complete;
+			}
 
 			pm_runtime_enable(dev);
 		}

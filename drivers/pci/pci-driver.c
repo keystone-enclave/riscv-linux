@@ -681,7 +681,7 @@ static bool pci_has_legacy_pm_support(struct pci_dev *pci_dev)
 static int pci_pm_prepare(struct device *dev)
 {
 	struct device_driver *drv = dev->driver;
-
+	int result;
 	/*
 	 * Devices having power.ignore_children set may still be necessary for
 	 * suspending their children in the next phase of device suspend.
@@ -694,7 +694,11 @@ static int pci_pm_prepare(struct device *dev)
 		if (error)
 			return error;
 	}
-	return pci_dev_keep_suspended(to_pci_dev(dev));
+	dev_err(dev, "pci_dev_keep_suspended\n");
+	result = pci_dev_keep_suspended(to_pci_dev(dev));
+
+	dev_err(dev, "pci_dev_keep_suspended return %d\n", result);
+	return result;
 }
 
 static void pci_pm_complete(struct device *dev)
