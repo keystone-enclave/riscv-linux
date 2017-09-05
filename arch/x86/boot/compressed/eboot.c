@@ -997,6 +997,9 @@ struct boot_params *efi_main(struct efi_config *c,
 	if (boot_params->secure_boot == efi_secureboot_mode_unset)
 		boot_params->secure_boot = efi_get_secureboot(sys_table);
 
+	/* Ask the firmware to clear memory on unclean shutdown */
+	efi_enable_reset_attack_mitigation(sys_table);
+
 	setup_graphics(boot_params);
 
 	setup_efi_pci(boot_params);
@@ -1058,7 +1061,7 @@ struct boot_params *efi_main(struct efi_config *c,
 		desc->s = DESC_TYPE_CODE_DATA;
 		desc->dpl = 0;
 		desc->p = 1;
-		desc->limit = 0xf;
+		desc->limit1 = 0xf;
 		desc->avl = 0;
 		desc->l = 0;
 		desc->d = SEG_OP_SIZE_32BIT;
@@ -1078,7 +1081,7 @@ struct boot_params *efi_main(struct efi_config *c,
 	desc->s = DESC_TYPE_CODE_DATA;
 	desc->dpl = 0;
 	desc->p = 1;
-	desc->limit = 0xf;
+	desc->limit1 = 0xf;
 	desc->avl = 0;
 	if (IS_ENABLED(CONFIG_X86_64)) {
 		desc->l = 1;
@@ -1099,7 +1102,7 @@ struct boot_params *efi_main(struct efi_config *c,
 	desc->s = DESC_TYPE_CODE_DATA;
 	desc->dpl = 0;
 	desc->p = 1;
-	desc->limit = 0xf;
+	desc->limit1 = 0xf;
 	desc->avl = 0;
 	desc->l = 0;
 	desc->d = SEG_OP_SIZE_32BIT;
@@ -1116,7 +1119,7 @@ struct boot_params *efi_main(struct efi_config *c,
 		desc->s = 0;
 		desc->dpl = 0;
 		desc->p = 1;
-		desc->limit = 0x0;
+		desc->limit1 = 0x0;
 		desc->avl = 0;
 		desc->l = 0;
 		desc->d = 0;

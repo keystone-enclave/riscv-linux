@@ -268,6 +268,7 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *cpumask,
 	if (read_gic_mask(irq))
 		set_bit(irq, per_cpu_ptr(pcpu_masks, cpu));
 
+	irq_data_update_effective_affinity(d, cpumask_of(cpu));
 	spin_unlock_irqrestore(&gic_lock, flags);
 
 	return IRQ_SET_MASK_OK;
@@ -466,6 +467,7 @@ static int gic_irq_domain_map(struct irq_domain *d, unsigned int virq,
 		if (err)
 			return err;
 
+		irqd_set_single_target(irq_desc_get_irq_data(irq_to_desc(virq)));
 		return gic_shared_irq_domain_map(d, virq, hwirq, 0);
 	}
 
