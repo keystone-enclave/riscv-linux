@@ -720,6 +720,7 @@ static int eb_lookup_vmas(struct i915_execbuffer *eb)
 			goto err_obj;
 		}
 
+		vma->open_count++;
 		list_add(&lut->obj_link, &obj->lut_list);
 		list_add(&lut->ctx_link, &eb->ctx->handles_list);
 		lut->ctx = eb->ctx;
@@ -1070,7 +1071,9 @@ static int __reloc_gpu_alloc(struct i915_execbuffer *eb,
 		return PTR_ERR(obj);
 
 	cmd = i915_gem_object_pin_map(obj,
-				      cache->has_llc ? I915_MAP_WB : I915_MAP_WC);
+				      cache->has_llc ?
+				      I915_MAP_FORCE_WB :
+				      I915_MAP_FORCE_WC);
 	i915_gem_object_unpin_pages(obj);
 	if (IS_ERR(cmd))
 		return PTR_ERR(cmd);
