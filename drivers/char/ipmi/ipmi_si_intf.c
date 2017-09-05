@@ -2275,8 +2275,9 @@ static void spmi_find_bmc(void)
 #endif
 
 #if defined(CONFIG_DMI) || defined(CONFIG_ACPI)
-struct resource *ipmi_get_info_from_resources(struct platform_device *pdev,
-					      struct smi_info *info)
+static struct resource *
+ipmi_get_info_from_resources(struct platform_device *pdev,
+			     struct smi_info *info)
 {
 	struct resource *res, *res_second;
 
@@ -2784,7 +2785,7 @@ static int acpi_ipmi_probe(struct platform_device *dev)
 
 static int ipmi_probe(struct platform_device *dev)
 {
-	if (of_ipmi_probe(dev) == 0)
+	if (dev->dev.of_node && of_ipmi_probe(dev) == 0)
 		return 0;
 
 	if (acpi_ipmi_probe(dev) == 0)
