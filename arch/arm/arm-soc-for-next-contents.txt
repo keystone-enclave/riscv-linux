@@ -254,3 +254,7 @@ fixes
 	<no branch> (a0ac89b57207ccc87d76f4e6aa9a83026743861b)
 		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.13-3
 
+next/late
+	brcm/drivers
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.14/drivers
+
