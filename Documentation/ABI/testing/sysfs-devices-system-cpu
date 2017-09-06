@@ -373,3 +373,10 @@ Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
 Description:	information about CPUs heterogeneity.
 
 		cpu_capacity: capacity of cpu#.
+
+What:		/sys/devices/system/cpu/cpu#/info/
+Date:		June 2017
+Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+Description:	Various information about the online cpu. Which attributes are
+		available depends on the architecture, kernel configuration and
+		cpu model.
