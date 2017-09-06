@@ -403,3 +403,25 @@ Description:	Expose information about x86 cpu information.
 		flags: Extended capabilities supported by the cpu
 		bugs: Known bugs by cpu
 		bogomips: calculated bogomips
+
+
+What:		/sys/devices/system/cpu/cpu#/info/
+		/sys/devices/system/cpu/cpu#/info/implementer
+		/sys/devices/system/cpu/cpu#/info/architecture
+		/sys/devices/system/cpu/cpu#/info/variant
+		/sys/devices/system/cpu/cpu#/info/part
+		/sys/devices/system/cpu/cpu#/info/revision
+		/sys/devices/system/cpu/cpu#/info/flags
+		/sys/devices/system/cpu/cpu#/info/bogomips
+Date:		August 2017
+Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+Description:	Expose information about arm64 cpu.
+
+		implementer,
+		architecture,
+		variant,
+		part,
+		revision: Cpu identification depending on each vendor
+
+		flags: Extended capabilities supported by the cpu
+		bogomips: calculated bogomips
