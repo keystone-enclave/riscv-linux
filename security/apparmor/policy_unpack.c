@@ -448,7 +448,7 @@ fail:
  */
 static bool unpack_trans_table(struct aa_ext *e, struct aa_profile *profile)
 {
-	void *pos = e->pos;
+	void *saved_pos = e->pos;
 
 	/* exec table is optional */
 	if (unpack_nameX(e, AA_STRUCT, "xtable")) {
@@ -511,7 +511,7 @@ static bool unpack_trans_table(struct aa_ext *e, struct aa_profile *profile)
 
 fail:
 	aa_free_domain_entries(&profile->file.trans);
-	e->pos = pos;
+	e->pos = saved_pos;
 	return 0;
 }
 
@@ -832,7 +832,7 @@ static int verify_header(struct aa_ext *e, int required, const char **ns)
 	 * if not specified use previous version
 	 * Mask off everything that is not kernel abi version
 	 */
-	if (VERSION_LT(e->version, v5) && VERSION_GT(e->version, v7)) {
+	if (VERSION_LT(e->version, v5) || VERSION_GT(e->version, v7)) {
 		audit_iface(NULL, NULL, NULL, "unsupported interface version",
 			    e, error);
 		return error;

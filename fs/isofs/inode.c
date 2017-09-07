@@ -114,7 +114,7 @@ static void destroy_inodecache(void)
 static int isofs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
-	if (!(*flags & MS_RDONLY))
+	if (!(*flags & SB_RDONLY))
 		return -EROFS;
 	return 0;
 }
@@ -737,7 +737,7 @@ static int isofs_fill_super(struct super_block *s, void *data, int silent)
 
 root_found:
 	/* We don't support read-write mounts */
-	if (!(s->s_flags & MS_RDONLY)) {
+	if (!sb_rdonly(s)) {
 		error = -EACCES;
 		goto out_freebh;
 	}

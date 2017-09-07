@@ -292,6 +292,7 @@ static int __commit_inmem_pages(struct inode *inode,
 		.type = DATA,
 		.op = REQ_OP_WRITE,
 		.op_flags = REQ_SYNC | REQ_PRIO,
+		.io_type = FS_DATA_IO,
 	};
 	pgoff_t last_idx = ULONG_MAX;
 	int err = 0;
@@ -309,17 +310,21 @@ static int __commit_inmem_pages(struct inode *inode,
 				inode_dec_dirty_pages(inode);
 				remove_dirty_inode(inode);
 			}
-
+retry:
 			fio.page = page;
 			fio.old_blkaddr = NULL_ADDR;
 			fio.encrypted_page = NULL;
 			fio.need_lock = LOCK_DONE;
 			err = do_write_data_page(&fio);
 			if (err) {
+				if (err == -ENOMEM) {
+					congestion_wait(BLK_RW_ASYNC, HZ/50);
+					cond_resched();
+					goto retry;
+				}
 				unlock_page(page);
 				break;
 			}
-
 			/* record old blkaddr for revoking */
 			cur->old_addr = fio.old_blkaddr;
 			last_idx = page->index;
@@ -481,6 +486,8 @@ repeat:
 	if (kthread_should_stop())
 		return 0;
 
+	sb_start_intwrite(sbi->sb);
+
 	if (!llist_empty(&fcc->issue_list)) {
 		struct flush_cmd *cmd, *next;
 		int ret;
@@ -498,6 +505,8 @@ repeat:
 		}
 		fcc->dispatch_list = NULL;
 	}
+
+	sb_end_intwrite(sbi->sb);
 
 	wait_event_interruptible(*q,
 		kthread_should_stop() || !llist_empty(&fcc->issue_list));
@@ -778,11 +787,14 @@ void __check_sit_bitmap(struct f2fs_sb_info *sbi,
 		sentry = get_seg_entry(sbi, segno);
 		offset = GET_BLKOFF_FROM_SEG0(sbi, blk);
 
-		size = min((unsigned long)(end - blk), max_blocks);
+		if (end < START_BLOCK(sbi, segno + 1))
+			size = GET_BLKOFF_FROM_SEG0(sbi, end);
+		else
+			size = max_blocks;
 		map = (unsigned long *)(sentry->cur_valid_map);
 		offset = __find_rev_next_bit(map, size, offset);
 		f2fs_bug_on(sbi, offset != size);
-		blk += size;
+		blk = START_BLOCK(sbi, segno + 1);
 	}
 #endif
 }
@@ -815,6 +827,8 @@ static void __submit_discard_cmd(struct f2fs_sb_info *sbi,
 			submit_bio(bio);
 			list_move_tail(&dc->list, &dcc->wait_list);
 			__check_sit_bitmap(sbi, dc->start, dc->start + dc->len);
+
+			f2fs_update_iostat(sbi, FS_DISCARD, 1);
 		}
 	} else {
 		__remove_discard_cmd(sbi, dc);
@@ -1126,8 +1140,12 @@ static int issue_discard_thread(void *data)
 		if (kthread_should_stop())
 			return 0;
 
+		sb_start_intwrite(sbi->sb);
+
 		__issue_discard_cmd(sbi, true);
 		__wait_discard_cmd(sbi, true);
+
+		sb_end_intwrite(sbi->sb);
 
 		congestion_wait(BLK_RW_SYNC, HZ/50);
 	} while (!kthread_should_stop());
@@ -1491,6 +1509,10 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 	struct seg_entry *se;
 	unsigned int segno, offset;
 	long int new_vblocks;
+	bool exist;
+#ifdef CONFIG_F2FS_CHECK_FS
+	bool mir_exist;
+#endif
 
 	segno = GET_SEGNO(sbi, blkaddr);
 
@@ -1507,17 +1529,25 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 
 	/* Update valid block bitmap */
 	if (del > 0) {
-		if (f2fs_test_and_set_bit(offset, se->cur_valid_map)) {
+		exist = f2fs_test_and_set_bit(offset, se->cur_valid_map);
 #ifdef CONFIG_F2FS_CHECK_FS
-			if (f2fs_test_and_set_bit(offset,
-						se->cur_valid_map_mir))
-				f2fs_bug_on(sbi, 1);
-			else
-				WARN_ON(1);
-#else
+		mir_exist = f2fs_test_and_set_bit(offset,
+						se->cur_valid_map_mir);
+		if (unlikely(exist != mir_exist)) {
+			f2fs_msg(sbi->sb, KERN_ERR, "Inconsistent error "
+				"when setting bitmap, blk:%u, old bit:%d",
+				blkaddr, exist);
 			f2fs_bug_on(sbi, 1);
-#endif
 		}
+#endif
+		if (unlikely(exist)) {
+			f2fs_msg(sbi->sb, KERN_ERR,
+				"Bitmap was wrongly set, blk:%u", blkaddr);
+			f2fs_bug_on(sbi, 1);
+			se->valid_blocks--;
+			del = 0;
+		}
+
 		if (f2fs_discard_en(sbi) &&
 			!f2fs_test_and_set_bit(offset, se->discard_map))
 			sbi->discard_blks--;
@@ -1528,17 +1558,25 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 				se->ckpt_valid_blocks++;
 		}
 	} else {
-		if (!f2fs_test_and_clear_bit(offset, se->cur_valid_map)) {
+		exist = f2fs_test_and_clear_bit(offset, se->cur_valid_map);
 #ifdef CONFIG_F2FS_CHECK_FS
-			if (!f2fs_test_and_clear_bit(offset,
-						se->cur_valid_map_mir))
-				f2fs_bug_on(sbi, 1);
-			else
-				WARN_ON(1);
-#else
+		mir_exist = f2fs_test_and_clear_bit(offset,
+						se->cur_valid_map_mir);
+		if (unlikely(exist != mir_exist)) {
+			f2fs_msg(sbi->sb, KERN_ERR, "Inconsistent error "
+				"when clearing bitmap, blk:%u, old bit:%d",
+				blkaddr, exist);
 			f2fs_bug_on(sbi, 1);
-#endif
 		}
+#endif
+		if (unlikely(!exist)) {
+			f2fs_msg(sbi->sb, KERN_ERR,
+				"Bitmap was wrongly cleared, blk:%u", blkaddr);
+			f2fs_bug_on(sbi, 1);
+			se->valid_blocks++;
+			del = 0;
+		}
+
 		if (f2fs_discard_en(sbi) &&
 			f2fs_test_and_clear_bit(offset, se->discard_map))
 			sbi->discard_blks++;
@@ -2202,8 +2240,11 @@ void allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 
 	mutex_unlock(&sit_i->sentry_lock);
 
-	if (page && IS_NODESEG(type))
+	if (page && IS_NODESEG(type)) {
 		fill_node_footer_blkaddr(page, NEXT_FREE_BLKADDR(sbi, curseg));
+
+		f2fs_inode_chksum_set(sbi, page);
+	}
 
 	if (add_list) {
 		struct f2fs_bio_info *io;
@@ -2236,7 +2277,8 @@ reallocate:
 	}
 }
 
-void write_meta_page(struct f2fs_sb_info *sbi, struct page *page)
+void write_meta_page(struct f2fs_sb_info *sbi, struct page *page,
+					enum iostat_type io_type)
 {
 	struct f2fs_io_info fio = {
 		.sbi = sbi,
@@ -2255,6 +2297,8 @@ void write_meta_page(struct f2fs_sb_info *sbi, struct page *page)
 
 	set_page_writeback(page);
 	f2fs_submit_page_write(&fio);
+
+	f2fs_update_iostat(sbi, io_type, F2FS_BLKSIZE);
 }
 
 void write_node_page(unsigned int nid, struct f2fs_io_info *fio)
@@ -2263,6 +2307,8 @@ void write_node_page(unsigned int nid, struct f2fs_io_info *fio)
 
 	set_summary(&sum, nid, 0, 0);
 	do_write_page(&sum, fio);
+
+	f2fs_update_iostat(fio->sbi, fio->io_type, F2FS_BLKSIZE);
 }
 
 void write_data_page(struct dnode_of_data *dn, struct f2fs_io_info *fio)
@@ -2276,13 +2322,22 @@ void write_data_page(struct dnode_of_data *dn, struct f2fs_io_info *fio)
 	set_summary(&sum, dn->nid, dn->ofs_in_node, ni.version);
 	do_write_page(&sum, fio);
 	f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
+
+	f2fs_update_iostat(sbi, fio->io_type, F2FS_BLKSIZE);
 }
 
 int rewrite_data_page(struct f2fs_io_info *fio)
 {
+	int err;
+
 	fio->new_blkaddr = fio->old_blkaddr;
 	stat_inc_inplace_blocks(fio->sbi);
-	return f2fs_submit_page_bio(fio);
+
+	err = f2fs_submit_page_bio(fio);
+
+	f2fs_update_iostat(fio->sbi, fio->io_type, F2FS_BLKSIZE);
+
+	return err;
 }
 
 void __f2fs_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,

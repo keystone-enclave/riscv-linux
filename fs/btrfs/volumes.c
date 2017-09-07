@@ -2337,7 +2337,7 @@ int btrfs_init_new_device(struct btrfs_fs_info *fs_info, const char *device_path
 	int seeding_dev = 0;
 	int ret = 0;
 
-	if ((sb->s_flags & MS_RDONLY) && !fs_info->fs_devices->seeding)
+	if (sb_rdonly(sb) && !fs_info->fs_devices->seeding)
 		return -EROFS;
 
 	bdev = blkdev_get_by_path(device_path, FMODE_WRITE | FMODE_EXCL,
@@ -2410,7 +2410,7 @@ int btrfs_init_new_device(struct btrfs_fs_info *fs_info, const char *device_path
 	set_blocksize(device->bdev, 4096);
 
 	if (seeding_dev) {
-		sb->s_flags &= ~MS_RDONLY;
+		sb->s_flags &= ~SB_RDONLY;
 		ret = btrfs_prepare_sprout(fs_info);
 		BUG_ON(ret); /* -ENOMEM */
 	}
@@ -4085,7 +4085,7 @@ int btrfs_pause_balance(struct btrfs_fs_info *fs_info)
 
 int btrfs_cancel_balance(struct btrfs_fs_info *fs_info)
 {
-	if (fs_info->sb->s_flags & MS_RDONLY)
+	if (sb_rdonly(fs_info->sb))
 		return -EROFS;
 
 	mutex_lock(&fs_info->balance_mutex);
@@ -4629,7 +4629,7 @@ static int __btrfs_alloc_chunk(struct btrfs_trans_handle *trans,
 {
 	struct btrfs_fs_info *info = trans->fs_info;
 	struct btrfs_fs_devices *fs_devices = info->fs_devices;
-	struct list_head *cur;
+	struct btrfs_device *device;
 	struct map_lookup *map = NULL;
 	struct extent_map_tree *em_tree;
 	struct extent_map *em;
@@ -4703,21 +4703,14 @@ static int __btrfs_alloc_chunk(struct btrfs_trans_handle *trans,
 	if (!devices_info)
 		return -ENOMEM;
 
-	cur = fs_devices->alloc_list.next;
-
 	/*
 	 * in the first pass through the devices list, we gather information
 	 * about the available holes on each device.
 	 */
 	ndevs = 0;
-	while (cur != &fs_devices->alloc_list) {
-		struct btrfs_device *device;
+	list_for_each_entry(device, &fs_devices->alloc_list, dev_alloc_list) {
 		u64 max_avail;
 		u64 dev_offset;
-
-		device = list_entry(cur, struct btrfs_device, dev_alloc_list);
-
-		cur = cur->next;
 
 		if (!device->writeable) {
 			WARN(1, KERN_ERR
@@ -4769,15 +4762,15 @@ static int __btrfs_alloc_chunk(struct btrfs_trans_handle *trans,
 	     btrfs_cmp_device_info, NULL);
 
 	/* round down to number of usable stripes */
-	ndevs -= ndevs % devs_increment;
+	ndevs = round_down(ndevs, devs_increment);
 
 	if (ndevs < devs_increment * sub_stripes || ndevs < devs_min) {
 		ret = -ENOSPC;
 		goto error;
 	}
 
-	if (devs_max && ndevs > devs_max)
-		ndevs = devs_max;
+	ndevs = min(ndevs, devs_max);
+
 	/*
 	 * the primary goal is to maximize the number of stripes, so use as many
 	 * devices as possible, even if the stripes are not maximum sized.
@@ -5180,12 +5173,13 @@ unsigned long btrfs_full_stripe_len(struct btrfs_fs_info *fs_info,
 	unsigned long len = fs_info->sectorsize;
 
 	em = get_chunk_map(fs_info, logical, len);
-	WARN_ON(IS_ERR(em));
 
-	map = em->map_lookup;
-	if (map->type & BTRFS_BLOCK_GROUP_RAID56_MASK)
-		len = map->stripe_len * nr_data_stripes(map);
-	free_extent_map(em);
+	if (!WARN_ON(IS_ERR(em))) {
+		map = em->map_lookup;
+		if (map->type & BTRFS_BLOCK_GROUP_RAID56_MASK)
+			len = map->stripe_len * nr_data_stripes(map);
+		free_extent_map(em);
+	}
 	return len;
 }
 
@@ -5197,12 +5191,13 @@ int btrfs_is_parity_mirror(struct btrfs_fs_info *fs_info,
 	int ret = 0;
 
 	em = get_chunk_map(fs_info, logical, len);
-	WARN_ON(IS_ERR(em));
 
-	map = em->map_lookup;
-	if (map->type & BTRFS_BLOCK_GROUP_RAID56_MASK)
-		ret = 1;
-	free_extent_map(em);
+	if(!WARN_ON(IS_ERR(em))) {
+		map = em->map_lookup;
+		if (map->type & BTRFS_BLOCK_GROUP_RAID56_MASK)
+			ret = 1;
+		free_extent_map(em);
+	}
 	return ret;
 }
 
@@ -6816,6 +6811,64 @@ out_short_read:
 	clear_extent_buffer_uptodate(sb);
 	free_extent_buffer_stale(sb);
 	return -EIO;
+}
+
+/*
+ * Check if all chunks in the fs are OK for read-write degraded mount
+ *
+ * Return true if all chunks meet the minimal RW mount requirements.
+ * Return false if any chunk doesn't meet the minimal RW mount requirements.
+ */
+bool btrfs_check_rw_degradable(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_mapping_tree *map_tree = &fs_info->mapping_tree;
+	struct extent_map *em;
+	u64 next_start = 0;
+	bool ret = true;
+
+	read_lock(&map_tree->map_tree.lock);
+	em = lookup_extent_mapping(&map_tree->map_tree, 0, (u64)-1);
+	read_unlock(&map_tree->map_tree.lock);
+	/* No chunk at all? Return false anyway */
+	if (!em) {
+		ret = false;
+		goto out;
+	}
+	while (em) {
+		struct map_lookup *map;
+		int missing = 0;
+		int max_tolerated;
+		int i;
+
+		map = em->map_lookup;
+		max_tolerated =
+			btrfs_get_num_tolerated_disk_barrier_failures(
+					map->type);
+		for (i = 0; i < map->num_stripes; i++) {
+			struct btrfs_device *dev = map->stripes[i].dev;
+
+			if (!dev || !dev->bdev || dev->missing ||
+			    dev->last_flush_error)
+				missing++;
+		}
+		if (missing > max_tolerated) {
+			btrfs_warn(fs_info,
+	"chunk %llu missing %d devices, max tolerance is %d for writeable mount",
+				   em->start, missing, max_tolerated);
+			free_extent_map(em);
+			ret = false;
+			goto out;
+		}
+		next_start = extent_map_end(em);
+		free_extent_map(em);
+
+		read_lock(&map_tree->map_tree.lock);
+		em = lookup_extent_mapping(&map_tree->map_tree, next_start,
+					   (u64)(-1) - next_start);
+		read_unlock(&map_tree->map_tree.lock);
+	}
+out:
+	return ret;
 }
 
 int btrfs_read_chunk_tree(struct btrfs_fs_info *fs_info)

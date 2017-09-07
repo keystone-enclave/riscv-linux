@@ -390,7 +390,7 @@ static int ext4_file_open(struct inode * inode, struct file * filp)
 		return -EIO;
 
 	if (unlikely(!(sbi->s_mount_flags & EXT4_MF_MNTDIR_SAMPLED) &&
-		     !(sb->s_flags & MS_RDONLY))) {
+		     !sb_rdonly(sb))) {
 		sbi->s_mount_flags |= EXT4_MF_MNTDIR_SAMPLED;
 		/*
 		 * Sample where the filesystem has been mounted and
@@ -595,7 +595,7 @@ static loff_t ext4_seek_data(struct file *file, loff_t offset, loff_t maxsize)
 	inode_lock(inode);
 
 	isize = i_size_read(inode);
-	if (offset >= isize) {
+	if (offset < 0 || offset >= isize) {
 		inode_unlock(inode);
 		return -ENXIO;
 	}
@@ -658,7 +658,7 @@ static loff_t ext4_seek_hole(struct file *file, loff_t offset, loff_t maxsize)
 	inode_lock(inode);
 
 	isize = i_size_read(inode);
-	if (offset >= isize) {
+	if (offset < 0 || offset >= isize) {
 		inode_unlock(inode);
 		return -ENXIO;
 	}

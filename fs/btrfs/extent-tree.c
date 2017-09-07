@@ -4199,9 +4199,9 @@ static u64 btrfs_space_info_used(struct btrfs_space_info *s_info,
 
 int btrfs_alloc_data_chunk_ondemand(struct btrfs_inode *inode, u64 bytes)
 {
-	struct btrfs_space_info *data_sinfo;
 	struct btrfs_root *root = inode->root;
 	struct btrfs_fs_info *fs_info = root->fs_info;
+	struct btrfs_space_info *data_sinfo = fs_info->data_sinfo;
 	u64 used;
 	int ret = 0;
 	int need_commit = 2;
@@ -4214,10 +4214,6 @@ int btrfs_alloc_data_chunk_ondemand(struct btrfs_inode *inode, u64 bytes)
 		need_commit = 0;
 		ASSERT(current->journal_info);
 	}
-
-	data_sinfo = fs_info->data_sinfo;
-	if (!data_sinfo)
-		goto alloc;
 
 again:
 	/* make sure we have enough space to handle the data first */
@@ -4236,7 +4232,7 @@ again:
 
 			data_sinfo->force_alloc = CHUNK_ALLOC_FORCE;
 			spin_unlock(&data_sinfo->lock);
-alloc:
+
 			alloc_target = btrfs_data_alloc_profile(fs_info);
 			/*
 			 * It is ugly that we don't call nolock join
@@ -4263,9 +4259,6 @@ alloc:
 					goto commit_trans;
 				}
 			}
-
-			if (!data_sinfo)
-				data_sinfo = fs_info->data_sinfo;
 
 			goto again;
 		}
@@ -4906,7 +4899,7 @@ struct reserve_ticket {
 
 static int flush_space(struct btrfs_fs_info *fs_info,
 		       struct btrfs_space_info *space_info, u64 num_bytes,
-		       u64 orig_bytes, int state)
+		       int state)
 {
 	struct btrfs_root *root = fs_info->extent_root;
 	struct btrfs_trans_handle *trans;
@@ -4931,7 +4924,7 @@ static int flush_space(struct btrfs_fs_info *fs_info,
 		break;
 	case FLUSH_DELALLOC:
 	case FLUSH_DELALLOC_WAIT:
-		shrink_delalloc(fs_info, num_bytes * 2, orig_bytes,
+		shrink_delalloc(fs_info, num_bytes * 2, num_bytes,
 				state == FLUSH_DELALLOC_WAIT);
 		break;
 	case ALLOC_CHUNK:
@@ -4949,15 +4942,15 @@ static int flush_space(struct btrfs_fs_info *fs_info,
 		break;
 	case COMMIT_TRANS:
 		ret = may_commit_transaction(fs_info, space_info,
-					     orig_bytes, 0);
+					     num_bytes, 0);
 		break;
 	default:
 		ret = -ENOSPC;
 		break;
 	}
 
-	trace_btrfs_flush_space(fs_info, space_info->flags, num_bytes,
-				orig_bytes, state, ret);
+	trace_btrfs_flush_space(fs_info, space_info->flags, num_bytes, state,
+				ret);
 	return ret;
 }
 
@@ -5063,8 +5056,7 @@ static void btrfs_async_reclaim_metadata_space(struct work_struct *work)
 		struct reserve_ticket *ticket;
 		int ret;
 
-		ret = flush_space(fs_info, space_info, to_reclaim, to_reclaim,
-				  flush_state);
+		ret = flush_space(fs_info, space_info, to_reclaim, flush_state);
 		spin_lock(&space_info->lock);
 		if (list_empty(&space_info->tickets)) {
 			space_info->flush = 0;
@@ -5120,8 +5112,7 @@ static void priority_reclaim_metadata_space(struct btrfs_fs_info *fs_info,
 	spin_unlock(&space_info->lock);
 
 	do {
-		flush_space(fs_info, space_info, to_reclaim, to_reclaim,
-			    flush_state);
+		flush_space(fs_info, space_info, to_reclaim, flush_state);
 		flush_state++;
 		spin_lock(&space_info->lock);
 		if (ticket->bytes == 0) {
@@ -9952,7 +9943,6 @@ btrfs_create_block_group_cache(struct btrfs_fs_info *fs_info,
 	cache->key.offset = size;
 	cache->key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
 
-	cache->sectorsize = fs_info->sectorsize;
 	cache->fs_info = fs_info;
 	cache->full_stripe_len = btrfs_full_stripe_len(fs_info,
 						       &fs_info->mapping_tree,

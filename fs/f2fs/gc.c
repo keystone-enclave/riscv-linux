@@ -28,15 +28,20 @@ static int gc_thread_func(void *data)
 	struct f2fs_sb_info *sbi = data;
 	struct f2fs_gc_kthread *gc_th = sbi->gc_thread;
 	wait_queue_head_t *wq = &sbi->gc_thread->gc_wait_queue_head;
-	long wait_ms;
+	unsigned int wait_ms;
 
 	wait_ms = gc_th->min_sleep_time;
 
 	set_freezable();
 	do {
 		wait_event_interruptible_timeout(*wq,
-				kthread_should_stop() || freezing(current),
+				kthread_should_stop() || freezing(current) ||
+				gc_th->gc_wake,
 				msecs_to_jiffies(wait_ms));
+
+		/* give it a try one time */
+		if (gc_th->gc_wake)
+			gc_th->gc_wake = 0;
 
 		if (try_to_freeze())
 			continue;
@@ -55,6 +60,9 @@ static int gc_thread_func(void *data)
 		}
 #endif
 
+		if (!sb_start_write_trylock(sbi->sb))
+			continue;
+
 		/*
 		 * [GC triggering condition]
 		 * 0. GC is not conducted currently.
@@ -69,19 +77,24 @@ static int gc_thread_func(void *data)
 		 * So, I'd like to wait some time to collect dirty segments.
 		 */
 		if (!mutex_trylock(&sbi->gc_mutex))
-			continue;
+			goto next;
+
+		if (gc_th->gc_urgent) {
+			wait_ms = gc_th->urgent_sleep_time;
+			goto do_gc;
+		}
 
 		if (!is_idle(sbi)) {
 			increase_sleep_time(gc_th, &wait_ms);
 			mutex_unlock(&sbi->gc_mutex);
-			continue;
+			goto next;
 		}
 
 		if (has_enough_invalid_blocks(sbi))
 			decrease_sleep_time(gc_th, &wait_ms);
 		else
 			increase_sleep_time(gc_th, &wait_ms);
-
+do_gc:
 		stat_inc_bggc_count(sbi);
 
 		/* if return value is not zero, no victim was selected */
@@ -93,6 +106,8 @@ static int gc_thread_func(void *data)
 
 		/* balancing f2fs's metadata periodically */
 		f2fs_balance_fs_bg(sbi);
+next:
+		sb_end_write(sbi->sb);
 
 	} while (!kthread_should_stop());
 	return 0;
@@ -110,11 +125,14 @@ int start_gc_thread(struct f2fs_sb_info *sbi)
 		goto out;
 	}
 
+	gc_th->urgent_sleep_time = DEF_GC_THREAD_URGENT_SLEEP_TIME;
 	gc_th->min_sleep_time = DEF_GC_THREAD_MIN_SLEEP_TIME;
 	gc_th->max_sleep_time = DEF_GC_THREAD_MAX_SLEEP_TIME;
 	gc_th->no_gc_sleep_time = DEF_GC_THREAD_NOGC_SLEEP_TIME;
 
 	gc_th->gc_idle = 0;
+	gc_th->gc_urgent = 0;
+	gc_th->gc_wake= 0;
 
 	sbi->gc_thread = gc_th;
 	init_waitqueue_head(&sbi->gc_thread->gc_wait_queue_head);
@@ -582,7 +600,7 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	}
 
 	*nofs = ofs_of_node(node_page);
-	source_blkaddr = datablock_addr(node_page, ofs_in_node);
+	source_blkaddr = datablock_addr(NULL, node_page, ofs_in_node);
 	f2fs_put_page(node_page, 1);
 
 	if (source_blkaddr != blkaddr)
@@ -684,6 +702,8 @@ static void move_encrypted_block(struct inode *inode, block_t bidx,
 	fio.new_blkaddr = newaddr;
 	f2fs_submit_page_write(&fio);
 
+	f2fs_update_iostat(fio.sbi, FS_GC_DATA_IO, F2FS_BLKSIZE);
+
 	f2fs_update_data_blkaddr(&dn, newaddr);
 	set_inode_flag(inode, FI_APPEND_WRITE);
 	if (page->index == 0)
@@ -731,6 +751,7 @@ static void move_data_page(struct inode *inode, block_t bidx, int gc_type,
 			.page = page,
 			.encrypted_page = NULL,
 			.need_lock = LOCK_REQ,
+			.io_type = FS_GC_DATA_IO,
 		};
 		bool is_dirty = PageDirty(page);
 		int err;
@@ -978,7 +999,7 @@ int f2fs_gc(struct f2fs_sb_info *sbi, bool sync,
 
 	cpc.reason = __get_cp_reason(sbi);
 gc_more:
-	if (unlikely(!(sbi->sb->s_flags & MS_ACTIVE))) {
+	if (unlikely(!(sbi->sb->s_flags & SB_ACTIVE))) {
 		ret = -EINVAL;
 		goto stop;
 	}
