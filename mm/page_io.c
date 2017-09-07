@@ -391,12 +391,12 @@ int swap_readpage(struct page *page, bool do_poll)
 		ret = -ENOMEM;
 		goto out;
 	}
-	disk = bio->bi_disk;
 	/*
 	 * Keep this task valid during swap readpage because the oom killer may
 	 * attempt to access it in the page fault retry time check.
 	 */
 	get_task_struct(current);
+	disk = bio->bi_disk;
 	bio->bi_private = current;
 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
 	count_vm_event(PSWPIN);
