@@ -32,6 +32,7 @@
 #include "include/audit.h"
 #include "include/context.h"
 #include "include/crypto.h"
+#include "include/ipc.h"
 #include "include/policy_ns.h"
 #include "include/label.h"
 #include "include/policy.h"
@@ -248,8 +249,10 @@ static struct dentry *aafs_create(const char *name, umode_t mode,
 
 	inode_lock(dir);
 	dentry = lookup_one_len(name, parent, strlen(name));
-	if (IS_ERR(dentry))
+	if (IS_ERR(dentry)) {
+		error = PTR_ERR(dentry);
 		goto fail_lock;
+	}
 
 	if (d_really_is_positive(dentry)) {
 		error = -EEXIST;
@@ -2127,6 +2130,11 @@ static struct aa_sfs_entry aa_sfs_entry_ptrace[] = {
 	{ }
 };
 
+static struct aa_sfs_entry aa_sfs_entry_signal[] = {
+	AA_SFS_FILE_STRING("mask", AA_SFS_SIG_MASK),
+	{ }
+};
+
 static struct aa_sfs_entry aa_sfs_entry_domain[] = {
 	AA_SFS_FILE_BOOLEAN("change_hat",	1),
 	AA_SFS_FILE_BOOLEAN("change_hatv",	1),
@@ -2151,9 +2159,14 @@ static struct aa_sfs_entry aa_sfs_entry_policy[] = {
 	{ }
 };
 
+static struct aa_sfs_entry aa_sfs_entry_mount[] = {
+	AA_SFS_FILE_STRING("mask", "mount umount pivot_root"),
+	{ }
+};
+
 static struct aa_sfs_entry aa_sfs_entry_ns[] = {
 	AA_SFS_FILE_BOOLEAN("profile",		1),
-	AA_SFS_FILE_BOOLEAN("pivot_root",	1),
+	AA_SFS_FILE_BOOLEAN("pivot_root",	0),
 	{ }
 };
 
@@ -2172,11 +2185,13 @@ static struct aa_sfs_entry aa_sfs_entry_features[] = {
 	AA_SFS_DIR("policy",			aa_sfs_entry_policy),
 	AA_SFS_DIR("domain",			aa_sfs_entry_domain),
 	AA_SFS_DIR("file",			aa_sfs_entry_file),
+	AA_SFS_DIR("mount",			aa_sfs_entry_mount),
 	AA_SFS_DIR("namespaces",		aa_sfs_entry_ns),
 	AA_SFS_FILE_U64("capability",		VFS_CAP_FLAGS_MASK),
 	AA_SFS_DIR("rlimit",			aa_sfs_entry_rlimit),
 	AA_SFS_DIR("caps",			aa_sfs_entry_caps),
 	AA_SFS_DIR("ptrace",			aa_sfs_entry_ptrace),
+	AA_SFS_DIR("signal",			aa_sfs_entry_signal),
 	AA_SFS_DIR("query",			aa_sfs_entry_query),
 	{ }
 };
@@ -2419,7 +2434,7 @@ static int __init aa_create_aafs(void)
 	aafs_mnt = kern_mount(&aafs_ops);
 	if (IS_ERR(aafs_mnt))
 		panic("can't set apparmorfs up\n");
-	aafs_mnt->mnt_sb->s_flags &= ~MS_NOUSER;
+	aafs_mnt->mnt_sb->s_flags &= ~SB_NOUSER;
 
 	/* Populate fs tree. */
 	error = entry_create_dir(&aa_sfs_entry, NULL);
