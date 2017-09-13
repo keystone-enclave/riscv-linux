@@ -2101,17 +2101,38 @@ F:	arch/arm/mach-pxa/include/mach/z2.h
 ARM/ZTE ARCHITECTURE
 M:	Jun Nie <jun.nie@linaro.org>
 M:	Baoyou Xie <baoyou.xie@linaro.org>
+M:	Shawn Guo <shawnguo@kernel.org>
 L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
 S:	Maintained
+F:	arch/arm/boot/dts/zx2967*
 F:	arch/arm/mach-zx/
+F:	arch/arm64/boot/dts/zte/
 F:	drivers/clk/zte/
+F:	drivers/dma/zx_dma.c
+F:	drivers/gpio/gpio-zx.c
+F:	drivers/i2c/busses/i2c-zx2967.c
+F:	drivers/mmc/host/dw_mmc-zx.*
+F:	drivers/pinctrl/zte/
 F:	drivers/reset/reset-zx2967.c
 F:	drivers/soc/zte/
+F:	drivers/thermal/zx2967_thermal.c
+F:	drivers/watchdog/zx2967_wdt.c
 F:	Documentation/devicetree/bindings/arm/zte.txt
-F:	Documentation/devicetree/bindings/clock/zx296702-clk.txt
+F:	Documentation/devicetree/bindings/clock/zx2967*.txt
+F:	Documentation/devicetree/bindings/dma/zxdma.txt
+F:	Documentation/devicetree/bindings/gpio/zx296702-gpio.txt
+F:	Documentation/devicetree/bindings/i2c/i2c-zx2967.txt
+F:	Documentation/devicetree/bindings/mmc/zx-dw-mshc.txt
+F:	Documentation/devicetree/bindings/pinctrl/pinctrl-zx.txt
 F:	Documentation/devicetree/bindings/reset/zte,zx2967-reset.txt
 F:	Documentation/devicetree/bindings/soc/zte/
-F:	include/dt-bindings/soc/zx*.h
+F:	Documentation/devicetree/bindings/sound/zte,*.txt
+F:	Documentation/devicetree/bindings/thermal/zx2967-thermal.txt
+F:	Documentation/devicetree/bindings/watchdog/zte,zx2967-wdt.txt
+F:	include/dt-bindings/clock/zx2967*.h
+F:	include/dt-bindings/soc/zte,*.h
+F:	sound/soc/codecs/zx_aud96p22.c
+F:	sound/soc/zte/
 
 ARM/ZYNQ ARCHITECTURE
 M:	Michal Simek <michal.simek@xilinx.com>
@@ -2575,13 +2596,6 @@ W:	http://blackfin.uclinux.org
 S:	Supported
 F:	drivers/net/ethernet/adi/
 
-BLACKFIN I2C TWI DRIVER
-M:	Sonic Zhang <sonic.zhang@analog.com>
-L:	adi-buildroot-devel@lists.sourceforge.net (moderated for non-subscribers)
-W:	http://blackfin.uclinux.org/
-S:	Supported
-F:	drivers/i2c/busses/i2c-bfin-twi.c
-
 BLACKFIN MEDIA DRIVER
 M:	Scott Jiang <scott.jiang.linux@gmail.com>
 L:	adi-buildroot-devel@lists.sourceforge.net (moderated for non-subscribers)
@@ -2598,14 +2612,12 @@ S:	Supported
 F:	drivers/rtc/rtc-bfin.c
 
 BLACKFIN SDH DRIVER
-M:	Sonic Zhang <sonic.zhang@analog.com>
 L:	adi-buildroot-devel@lists.sourceforge.net (moderated for non-subscribers)
 W:	http://blackfin.uclinux.org
 S:	Supported
 F:	drivers/mmc/host/bfin_sdh.c
 
 BLACKFIN SERIAL DRIVER
-M:	Sonic Zhang <sonic.zhang@analog.com>
 L:	adi-buildroot-devel@lists.sourceforge.net (moderated for non-subscribers)
 W:	http://blackfin.uclinux.org
 S:	Supported
@@ -3184,6 +3196,7 @@ S:	Supported
 F:	drivers/crypto/cavium/cpt/
 
 CAVIUM THUNDERX2 ARM64 SOC
+M:	Robert Richter <rrichter@cavium.com>
 M:	Jayachandran C <jnair@caviumnetworks.com>
 L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
 S:	Maintained
@@ -4206,7 +4219,7 @@ DMA MAPPING HELPERS
 M:	Christoph Hellwig <hch@lst.de>
 M:	Marek Szyprowski <m.szyprowski@samsung.com>
 R:	Robin Murphy <robin.murphy@arm.com>
-L:	linux-kernel@vger.kernel.org
+L:	iommu@lists.linux-foundation.org
 T:	git git://git.infradead.org/users/hch/dma-mapping.git
 W:	http://git.infradead.org/users/hch/dma-mapping.git
 S:	Supported
@@ -6441,6 +6454,12 @@ F:	drivers/i2c/busses/i2c-sis96x.c
 F:	drivers/i2c/busses/i2c-via.c
 F:	drivers/i2c/busses/i2c-viapro.c
 
+I2C/SMBUS INTEL CHT WHISKEY COVE PMIC DRIVER
+M:	Hans de Goede <hdegoede@redhat.com>
+L:	linux-i2c@vger.kernel.org
+S:	Maintained
+F:	drivers/i2c/busses/i2c-cht-wc.c
+
 I2C/SMBUS ISMT DRIVER
 M:	Seth Heasley <seth.heasley@intel.com>
 M:	Neil Horman <nhorman@tuxdriver.com>
@@ -7457,6 +7476,13 @@ S:	Maintained
 F:	tools/testing/selftests/
 F:	Documentation/dev-tools/kselftest*
 
+KERNEL USERMODE HELPER
+M:	"Luis R. Rodriguez" <mcgrof@kernel.org>
+L:	linux-kernel@vger.kernel.org
+S:	Maintained
+F:	kernel/umh.c
+F:	include/linux/umh.h
+
 KERNEL VIRTUAL MACHINE (KVM)
 M:	Paolo Bonzini <pbonzini@redhat.com>
 M:	Radim Krčmář <rkrcmar@redhat.com>
@@ -7632,7 +7658,7 @@ F:	include/linux/kmemleak.h
 F:	mm/kmemleak.c
 F:	mm/kmemleak-test.c
 
-KMOD MODULE USERMODE HELPER
+KMOD KERNEL MODULE LOADER - USERMODE HELPER
 M:	"Luis R. Rodriguez" <mcgrof@kernel.org>
 L:	linux-kernel@vger.kernel.org
 S:	Maintained
@@ -7789,6 +7815,13 @@ LIBLOCKDEP
 M:	Sasha Levin <alexander.levin@verizon.com>
 S:	Maintained
 F:	tools/lib/lockdep/
+
+HMM - Heterogeneous Memory Management
+M:	JÃ©rÃ´me Glisse <jglisse@redhat.com>
+L:	linux-mm@kvack.org
+S:	Maintained
+F:	mm/hmm*
+F:	include/linux/hmm*
 
 LIBNVDIMM BLK: MMIO-APERTURE DRIVER
 M:	Ross Zwisler <ross.zwisler@linux.intel.com>
@@ -9173,7 +9206,7 @@ T:	git git://git.infradead.org/linux-mtd.git nand/fixes
 T:	git git://git.infradead.org/l2-mtd.git nand/next
 S:	Maintained
 F:	drivers/mtd/nand/
-F:	include/linux/mtd/nand*.h
+F:	include/linux/mtd/*nand*.h
 
 NATIVE INSTRUMENTS USB SOUND INTERFACE DRIVER
 M:	Daniel Mack <zonque@gmail.com>
@@ -9264,15 +9297,6 @@ F:	net/*/netfilter.c
 F:	net/*/netfilter/
 F:	net/netfilter/
 F:	net/bridge/br_netfilter*.c
-
-NETLABEL
-M:	Paul Moore <paul@paul-moore.com>
-W:	http://netlabel.sf.net
-L:	netdev@vger.kernel.org
-S:	Maintained
-F:	Documentation/netlabel/
-F:	include/net/netlabel.h
-F:	net/netlabel/
 
 NETROM NETWORK LAYER
 M:	Ralf Baechle <ralf@linux-mips.org>
@@ -9401,10 +9425,23 @@ F:	net/ipv6/
 F:	include/net/ip*
 F:	arch/x86/net/*
 
-NETWORKING [LABELED] (NetLabel, CIPSO, Labeled IPsec, SECMARK)
+NETWORKING [LABELED] (NetLabel, Labeled IPsec, SECMARK)
 M:	Paul Moore <paul@paul-moore.com>
+W:	https://github.com/netlabel
 L:	netdev@vger.kernel.org
+L:	linux-security-module@vger.kernel.org
 S:	Maintained
+F:	Documentation/netlabel/
+F:	include/net/calipso.h
+F:	include/net/cipso_ipv4.h
+F:	include/net/netlabel.h
+F:	include/uapi/linux/netfilter/xt_SECMARK.h
+F:	include/uapi/linux/netfilter/xt_CONNSECMARK.h
+F:	net/netlabel/
+F:	net/ipv4/cipso_ipv4.c
+F:	net/ipv6/calipso.c
+F:	net/netfilter/xt_CONNSECMARK.c
+F:	net/netfilter/xt_SECMARK.c
 
 NETWORKING [TLS]
 M:	Ilya Lesokhin <ilyal@mellanox.com>
@@ -10092,7 +10129,7 @@ F:	include/uapi/linux/ppdev.h
 F:	Documentation/parport*.txt
 
 PARAVIRT_OPS INTERFACE
-M:	Jeremy Fitzhardinge <jeremy@goop.org>
+M:	Juergen Gross <jgross@suse.com>
 M:	Chris Wright <chrisw@sous-sol.org>
 M:	Alok Kataria <akataria@vmware.com>
 M:	Rusty Russell <rusty@rustcorp.com.au>
@@ -10100,7 +10137,7 @@ L:	virtualization@lists.linux-foundation.org
 S:	Supported
 F:	Documentation/virtual/paravirt_ops.txt
 F:	arch/*/kernel/paravirt*
-F:	arch/*/include/asm/paravirt.h
+F:	arch/*/include/asm/paravirt*.h
 F:	include/linux/hypervisor.h
 
 PARIDE DRIVERS FOR PARALLEL PORT IDE DEVICES
@@ -10727,8 +10764,11 @@ W:	http://wiki.enneenne.com/index.php/LinuxPPS_support
 L:	linuxpps@ml.enneenne.com (subscribers-only)
 S:	Maintained
 F:	Documentation/pps/
+F:	Documentation/devicetree/bindings/pps/pps-gpio.txt
+F:	Documentation/ABI/testing/sysfs-pps
 F:	drivers/pps/
 F:	include/linux/pps*.h
+F:	include/uapi/linux/pps.h
 
 PPTP DRIVER
 M:	Dmitry Kozlov <xeb@mail.ru>
@@ -11102,6 +11142,13 @@ L:	linux-hexagon@vger.kernel.org
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/rkuo/linux-hexagon-kernel.git
 S:	Supported
 F:	arch/hexagon/
+
+QUALCOMM IOMMU
+M:	Rob Clark <robdclark@gmail.com>
+L:	iommu@lists.linux-foundation.org
+L:	linux-arm-msm@vger.kernel.org
+S:	Maintained
+F:	drivers/iommu/qcom_iommu.c
 
 QUALCOMM VENUS VIDEO ACCELERATOR DRIVER
 M:	Stanimir Varbanov <stanimir.varbanov@linaro.org>
@@ -11980,8 +12027,9 @@ M:	Paul Moore <paul@paul-moore.com>
 M:	Stephen Smalley <sds@tycho.nsa.gov>
 M:	Eric Paris <eparis@parisplace.org>
 L:	selinux@tycho.nsa.gov (moderated for non-subscribers)
-W:	http://selinuxproject.org
-T:	git git://git.infradead.org/users/pcmoore/selinux
+W:	https://selinuxproject.org
+W:	https://github.com/SELinuxProject
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/pcmoore/selinux.git
 S:	Supported
 F:	include/linux/selinux*
 F:	security/selinux/
@@ -12468,6 +12516,7 @@ F:	drivers/tty/serial/sunsab.h
 F:	drivers/tty/serial/sunsu.c
 F:	drivers/tty/serial/sunzilog.c
 F:	drivers/tty/serial/sunzilog.h
+F:	drivers/tty/vcc.c
 
 SPARSE CHECKER
 M:	"Christopher Li" <sparse@chrisli.org>
@@ -12822,6 +12871,13 @@ M:	Jaehoon Chung <jh80.chung@samsung.com>
 L:	linux-mmc@vger.kernel.org
 S:	Maintained
 F:	drivers/mmc/host/dw_mmc*
+
+SYNOPSYS HSDK RESET CONTROLLER DRIVER
+M:	Eugeniy Paltsev <Eugeniy.Paltsev@synopsys.com>
+S:	Supported
+F:	drivers/reset/reset-hsdk-v1.c
+F:	include/dt-bindings/reset/snps,hsdk-v1-reset.h
+F:	Documentation/devicetree/bindings/reset/snps,hsdk-v1-reset.txt
 
 SYSTEM CONFIGURATION (SYSCON)
 M:	Lee Jones <lee.jones@linaro.org>
