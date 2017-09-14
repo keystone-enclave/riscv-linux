@@ -1143,8 +1143,6 @@ again:
 				goto again;
 			}
 			kfree(victim_name);
-			if (ret)
-				return ret;
 next:
 			cur_offset += victim_name_len + sizeof(*extref);
 		}
@@ -2701,34 +2699,36 @@ static void wait_log_commit(struct btrfs_root *root, int transid)
 	 * so we know that if ours is more than 2 older than the
 	 * current transaction, we're done
 	 */
-	do {
+	for (;;) {
 		prepare_to_wait(&root->log_commit_wait[index],
 				&wait, TASK_UNINTERRUPTIBLE);
+
+		if (!(root->log_transid_committed < transid &&
+		      atomic_read(&root->log_commit[index])))
+			break;
+
 		mutex_unlock(&root->log_mutex);
-
-		if (root->log_transid_committed < transid &&
-		    atomic_read(&root->log_commit[index]))
-			schedule();
-
-		finish_wait(&root->log_commit_wait[index], &wait);
+		schedule();
 		mutex_lock(&root->log_mutex);
-	} while (root->log_transid_committed < transid &&
-		 atomic_read(&root->log_commit[index]));
+	}
+	finish_wait(&root->log_commit_wait[index], &wait);
 }
 
 static void wait_for_writer(struct btrfs_root *root)
 {
 	DEFINE_WAIT(wait);
 
-	while (atomic_read(&root->log_writers)) {
-		prepare_to_wait(&root->log_writer_wait,
-				&wait, TASK_UNINTERRUPTIBLE);
+	for (;;) {
+		prepare_to_wait(&root->log_writer_wait, &wait,
+				TASK_UNINTERRUPTIBLE);
+		if (!atomic_read(&root->log_writers))
+			break;
+
 		mutex_unlock(&root->log_mutex);
-		if (atomic_read(&root->log_writers))
-			schedule();
-		finish_wait(&root->log_writer_wait, &wait);
+		schedule();
 		mutex_lock(&root->log_mutex);
 	}
+	finish_wait(&root->log_writer_wait, &wait);
 }
 
 static inline void btrfs_remove_log_ctx(struct btrfs_root *root,
@@ -3690,7 +3690,7 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
 
 		src_offset = btrfs_item_ptr_offset(src, start_slot + i);
 
-		if ((i == (nr - 1)))
+		if (i == nr - 1)
 			last_key = ins_keys[i];
 
 		if (ins_keys[i].type == BTRFS_INODE_ITEM_KEY) {
@@ -4450,7 +4450,10 @@ static int btrfs_log_trailing_hole(struct btrfs_trans_handle *trans,
 			len = btrfs_file_extent_inline_len(leaf,
 							   path->slots[0],
 							   extent);
-			ASSERT(len == i_size);
+			ASSERT(len == i_size ||
+			       (len == fs_info->sectorsize &&
+				btrfs_file_extent_compression(leaf, extent) !=
+				BTRFS_COMPRESS_NONE));
 			return 0;
 		}
 
@@ -4636,7 +4639,6 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
 	struct btrfs_key min_key;
 	struct btrfs_key max_key;
 	struct btrfs_root *log = root->log_root;
-	struct extent_buffer *src = NULL;
 	LIST_HEAD(logged_list);
 	u64 last_extent = 0;
 	int err = 0;
@@ -4879,7 +4881,6 @@ again:
 			goto next_slot;
 		}
 
-		src = path->nodes[0];
 		if (ins_nr && ins_start_slot + ins_nr == path->slots[0]) {
 			ins_nr++;
 			goto next_slot;
