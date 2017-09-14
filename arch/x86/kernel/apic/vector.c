@@ -466,7 +466,6 @@ static bool vector_configure_legacy(unsigned int virq, struct irq_data *irqd,
 
 	apicd->vector = ISA_IRQ_VECTOR(virq);
 	apicd->cpu = 0;
-	apicd->can_reserve = true;
 
 	raw_spin_lock_irqsave(&vector_lock, flags);
 	/*
@@ -478,6 +477,7 @@ static bool vector_configure_legacy(unsigned int virq, struct irq_data *irqd,
 		apic_update_irq_cfg(irqd, apicd->vector, apicd->cpu);
 	} else {
 		/* Release the vector */
+		apicd->can_reserve = true;
 		clear_irq_vector(irqd);
 		realloc = true;
 	}
