@@ -135,6 +135,18 @@ static inline void btrfs_cleanup_ordered_extents(struct inode *inode,
 						 const u64 offset,
 						 const u64 bytes)
 {
+	unsigned long index = offset >> PAGE_SHIFT;
+	unsigned long end_index = (offset + bytes - 1) >> PAGE_SHIFT;
+	struct page *page;
+
+	while (index <= end_index) {
+		page = find_get_page(inode->i_mapping, index);
+		index++;
+		if (!page)
+			continue;
+		ClearPagePrivate2(page);
+		put_page(page);
+	}
 	return __endio_write_update_ordered(inode, offset + PAGE_SIZE,
 					    bytes - PAGE_SIZE, false);
 }
@@ -8384,6 +8396,7 @@ static void __endio_write_update_ordered(struct inode *inode,
 	btrfs_work_func_t func;
 	u64 ordered_offset = offset;
 	u64 ordered_bytes = bytes;
+	u64 last_offset;
 	int ret;
 
 	if (btrfs_is_free_space_inode(BTRFS_I(inode))) {
@@ -8395,6 +8408,7 @@ static void __endio_write_update_ordered(struct inode *inode,
 	}
 
 again:
+	last_offset = ordered_offset;
 	ret = btrfs_dec_test_first_ordered_pending(inode, &ordered,
 						   &ordered_offset,
 						   ordered_bytes,
@@ -8405,6 +8419,12 @@ again:
 	btrfs_init_work(&ordered->work, func, finish_ordered_fn, NULL, NULL);
 	btrfs_queue_work(wq, &ordered->work);
 out_test:
+	/*
+	 * If btrfs_dec_test_ordered_pending does not find any ordered extent
+	 * in the range, we can exit.
+	 */
+	if (ordered_offset == last_offset)
+		return;
 	/*
 	 * our bio might span multiple ordered extents.  If we haven't
 	 * completed the accounting for the whole dio, go back and try again
@@ -8556,7 +8576,7 @@ static inline int __btrfs_submit_dio_bio(struct bio *bio, struct inode *inode,
 			goto err;
 	}
 map:
-	ret = btrfs_map_bio(fs_info, bio, 0, async_submit);
+	ret = btrfs_map_bio(fs_info, bio, 0, 0);
 err:
 	bio_put(bio);
 	return ret;
@@ -8764,7 +8784,6 @@ free_ordered:
 }
 
 static ssize_t check_direct_IO(struct btrfs_fs_info *fs_info,
-			       struct kiocb *iocb,
 			       const struct iov_iter *iter, loff_t offset)
 {
 	int seg;
@@ -8811,7 +8830,7 @@ static ssize_t btrfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	bool relock = false;
 	ssize_t ret;
 
-	if (check_direct_IO(fs_info, iocb, iter, offset))
+	if (check_direct_IO(fs_info, iter, offset))
 		return 0;
 
 	inode_dio_begin(inode);
