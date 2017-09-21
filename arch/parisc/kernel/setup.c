@@ -116,7 +116,6 @@ void __init dma_ops_init(void)
 }
 #endif
 
-extern int init_per_cpu(int cpuid);
 extern void collect_boot_cpu_data(void);
 
 void __init setup_arch(char **cmdline_p)
