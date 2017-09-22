@@ -505,8 +505,7 @@ void resched_cpu(int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
 
-	if (!raw_spin_trylock_irqsave(&rq->lock, flags))
-		return;
+	raw_spin_lock_irqsave(&rq->lock, flags);
 	resched_curr(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }
@@ -2658,6 +2657,12 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	finish_arch_post_lock_switch();
 
 	fire_sched_in_preempt_notifiers(current);
+	/*
+	 * When transitioning from a kernel thread to a userspace
+	 * thread, mmdrop()'s implicit full barrier is required by the
+	 * membarrier system call, because the current active_mm can
+	 * become the current mm without going through switch_mm().
+	 */
 	if (mm)
 		mmdrop(mm);
 	if (unlikely(prev_state == TASK_DEAD)) {
@@ -3299,6 +3304,9 @@ static void __sched notrace __schedule(bool preempt)
 	 * Make sure that signal_pending_state()->signal_pending() below
 	 * can't be reordered with __set_current_state(TASK_INTERRUPTIBLE)
 	 * done by the caller to avoid the race with signal_wake_up().
+	 *
+	 * The membarrier system call requires a full memory barrier
+	 * after coming from user-space, before storing to rq->curr.
 	 */
 	rq_lock(rq, &rf);
 	smp_mb__after_spinlock();
@@ -4842,6 +4850,7 @@ int __sched _cond_resched(void)
 		preempt_schedule_common();
 		return 1;
 	}
+	rcu_all_qs();
 	return 0;
 }
 EXPORT_SYMBOL(_cond_resched);
@@ -5165,6 +5174,7 @@ void sched_show_task(struct task_struct *p)
 	show_stack(p, NULL);
 	put_task_stack(p);
 }
+EXPORT_SYMBOL_GPL(sched_show_task);
 
 void show_state_filter(unsigned long state_filter)
 {
