@@ -46,6 +46,7 @@
 #include <linux/proc_fs.h>
 #include <linux/rcupdate.h>
 #include <linux/interrupt.h>
+#include <linux/moduleparam.h>
 
 #define PFX "IPMI message handler: "
 
@@ -60,6 +61,74 @@ static int handle_one_recv_msg(ipmi_smi_t          intf,
 			       struct ipmi_smi_msg *msg);
 
 static int initialized;
+
+enum ipmi_panic_event_op {
+	IPMI_SEND_PANIC_EVENT_NONE,
+	IPMI_SEND_PANIC_EVENT,
+	IPMI_SEND_PANIC_EVENT_STRING
+};
+#ifdef CONFIG_IPMI_PANIC_STRING
+#define IPMI_PANIC_DEFAULT IPMI_SEND_PANIC_EVENT_STRING
+#elif defined(CONFIG_IPMI_PANIC_EVENT)
+#define IPMI_PANIC_DEFAULT IPMI_SEND_PANIC_EVENT
+#else
+#define IPMI_PANIC_DEFAULT IPMI_SEND_PANIC_EVENT_NONE
+#endif
+static enum ipmi_panic_event_op ipmi_send_panic_event = IPMI_PANIC_DEFAULT;
+
+static int panic_op_write_handler(const char *val,
+				  const struct kernel_param *kp)
+{
+	char valcp[16];
+	char *s;
+
+	strncpy(valcp, val, 16);
+	valcp[15] = '\0';
+
+	s = strstrip(valcp);
+
+	if (strcmp(s, "none") == 0)
+		ipmi_send_panic_event = IPMI_SEND_PANIC_EVENT_NONE;
+	else if (strcmp(s, "event") == 0)
+		ipmi_send_panic_event = IPMI_SEND_PANIC_EVENT;
+	else if (strcmp(s, "string") == 0)
+		ipmi_send_panic_event = IPMI_SEND_PANIC_EVENT_STRING;
+	else
+		return -EINVAL;
+
+	return 0;
+}
+
+static int panic_op_read_handler(char *buffer, const struct kernel_param *kp)
+{
+	switch (ipmi_send_panic_event) {
+	case IPMI_SEND_PANIC_EVENT_NONE:
+		strcpy(buffer, "none");
+		break;
+
+	case IPMI_SEND_PANIC_EVENT:
+		strcpy(buffer, "event");
+		break;
+
+	case IPMI_SEND_PANIC_EVENT_STRING:
+		strcpy(buffer, "string");
+		break;
+
+	default:
+		strcpy(buffer, "???");
+		break;
+	}
+
+	return strlen(buffer);
+}
+
+static const struct kernel_param_ops panic_op_ops = {
+	.set = panic_op_write_handler,
+	.get = panic_op_read_handler
+};
+module_param_cb(panic_op, &panic_op_ops, NULL, 0600);
+MODULE_PARM_DESC(panic_op, "Sets if the IPMI driver will attempt to store panic information in the event log in the event of a panic.  Set to 'none' for no, 'event' for a single event, or 'string' for a generic event and the panic string in IPMI OEM events.");
+
 
 #ifdef CONFIG_PROC_FS
 static struct proc_dir_entry *proc_ipmi_root;
@@ -89,6 +158,9 @@ static struct proc_dir_entry *proc_ipmi_root;
  * the queue and this silliness can go away.
  */
 #define IPMI_REQUEST_EV_TIME	(1000 / (IPMI_TIMEOUT_TIME))
+
+/* How long should we cache dynamic device IDs? */
+#define IPMI_DYN_DEV_ID_EXPIRY	(10 * HZ)
 
 /*
  * The main "user" data structure.
@@ -195,13 +267,20 @@ struct ipmi_proc_entry {
 
 struct bmc_device {
 	struct platform_device pdev;
+	struct list_head       intfs;
 	struct ipmi_device_id  id;
+	struct ipmi_device_id  fetch_id;
+	int                    dyn_id_set;
+	unsigned long          dyn_id_expiry;
+	struct mutex           dyn_mutex; /* protects id & dyn* fields */
 	unsigned char          guid[16];
 	int                    guid_set;
-	char                   name[16];
 	struct kref	       usecount;
 };
 #define to_bmc_device(x) container_of((x), struct bmc_device, pdev.dev)
+
+static int bmc_get_device_id(ipmi_smi_t intf, struct bmc_device *bmc,
+			     struct ipmi_device_id *id);
 
 /*
  * Various statistics for IPMI, these index stats[] in the ipmi_smi
@@ -327,14 +406,19 @@ struct ipmi_smi {
 	 */
 	struct list_head users;
 
-	/* Information to supply to users. */
-	unsigned char ipmi_version_major;
-	unsigned char ipmi_version_minor;
-
 	/* Used for wake ups at startup. */
 	wait_queue_head_t waitq;
 
+	/*
+	 * Prevents the interface from being unregistered when the
+	 * interface is used by being looked up through the BMC
+	 * structure.
+	 */
+	struct mutex bmc_reg_mutex;
+
 	struct bmc_device *bmc;
+	bool bmc_registered;
+	struct list_head bmc_link;
 	char *my_dev_name;
 
 	/*
@@ -421,6 +505,11 @@ struct ipmi_smi {
 	 * interface comes in with a NULL user, call this routine with
 	 * it.  Note that the message will still be freed by the
 	 * caller.  This only works on the system interface.
+	 *
+	 * The only user outside of initialization an panic handling is
+	 * the dynamic device id fetching, so no mutex is currently
+	 * required on this.  If more users come along, some sort of
+	 * mutex will be required.
 	 */
 	void (*null_user_handler)(ipmi_smi_t intf, struct ipmi_recv_msg *msg);
 
@@ -457,6 +546,11 @@ static struct platform_driver ipmidriver = {
 		.bus = &platform_bus_type
 	}
 };
+/*
+ * This mutex protects adding/removing BMCs on the ipmidriver's device
+ * list.  This way we can pull items out of the driver's list and reuse
+ * them.
+ */
 static DEFINE_MUTEX(ipmidriver_mutex);
 
 static LIST_HEAD(ipmi_interfaces);
@@ -1119,12 +1213,21 @@ int ipmi_destroy_user(ipmi_user_t user)
 }
 EXPORT_SYMBOL(ipmi_destroy_user);
 
-void ipmi_get_version(ipmi_user_t   user,
-		      unsigned char *major,
-		      unsigned char *minor)
+int ipmi_get_version(ipmi_user_t   user,
+		     unsigned char *major,
+		     unsigned char *minor)
 {
-	*major = user->intf->ipmi_version_major;
-	*minor = user->intf->ipmi_version_minor;
+	struct ipmi_device_id id;
+	int rv;
+
+	rv = bmc_get_device_id(user->intf, NULL, &id);
+	if (rv)
+		return rv;
+
+	*major = ipmi_version_major(&id);
+	*minor = ipmi_version_minor(&id);
+
+	return 0;
 }
 EXPORT_SYMBOL(ipmi_get_version);
 
@@ -1997,6 +2100,160 @@ int ipmi_request_supply_msgs(ipmi_user_t          user,
 }
 EXPORT_SYMBOL(ipmi_request_supply_msgs);
 
+static void bmc_device_id_handler(ipmi_smi_t intf, struct ipmi_recv_msg *msg)
+{
+	int rv;
+
+	if ((msg->addr.addr_type != IPMI_SYSTEM_INTERFACE_ADDR_TYPE)
+			|| (msg->msg.netfn != IPMI_NETFN_APP_RESPONSE)
+			|| (msg->msg.cmd != IPMI_GET_DEVICE_ID_CMD)) {
+		pr_warn(PFX "invalid device_id msg: addr_type=%d netfn=%x cmd=%x\n",
+			msg->addr.addr_type, msg->msg.netfn, msg->msg.cmd);
+		return;
+	}
+
+	rv = ipmi_demangle_device_id(msg->msg.netfn, msg->msg.cmd,
+			msg->msg.data, msg->msg.data_len, &intf->bmc->fetch_id);
+	if (rv) {
+		pr_warn(PFX "device id demangle failed: %d\n", rv);
+		intf->bmc->dyn_id_set = 0;
+	} else {
+		/*
+		 * Make sure the id data is available before setting
+		 * dyn_id_set.
+		 */
+		smp_wmb();
+		intf->bmc->dyn_id_set = 1;
+	}
+
+	wake_up(&intf->waitq);
+}
+
+static int
+send_get_device_id_cmd(ipmi_smi_t intf)
+{
+	struct ipmi_system_interface_addr si;
+	struct kernel_ipmi_msg msg;
+
+	si.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	si.channel = IPMI_BMC_CHANNEL;
+	si.lun = 0;
+
+	msg.netfn = IPMI_NETFN_APP_REQUEST;
+	msg.cmd = IPMI_GET_DEVICE_ID_CMD;
+	msg.data = NULL;
+	msg.data_len = 0;
+
+	return i_ipmi_request(NULL,
+			      intf,
+			      (struct ipmi_addr *) &si,
+			      0,
+			      &msg,
+			      intf,
+			      NULL,
+			      NULL,
+			      0,
+			      intf->channels[0].address,
+			      intf->channels[0].lun,
+			      -1, 0);
+}
+
+static int __get_device_id(ipmi_smi_t intf, struct bmc_device *bmc)
+{
+	int rv;
+
+	bmc->dyn_id_set = 2;
+
+	intf->null_user_handler = bmc_device_id_handler;
+
+	rv = send_get_device_id_cmd(intf);
+	if (rv)
+		return rv;
+
+	wait_event(intf->waitq, bmc->dyn_id_set != 2);
+
+	if (!bmc->dyn_id_set)
+		rv = -EIO; /* Something went wrong in the fetch. */
+
+	/* dyn_id_set makes the id data available. */
+	smp_rmb();
+
+	intf->null_user_handler = NULL;
+
+	return rv;
+}
+
+/*
+ * Fetch the device id for the bmc/interface.  You must pass in either
+ * bmc or intf, this code will get the other one.  If the data has
+ * been recently fetched, this will just use the cached data.  Otherwise
+ * it will run a new fetch.
+ *
+ * Except for the first time this is called (in ipmi_register_smi()),
+ * this will always return good data;
+ */
+static int bmc_get_device_id(ipmi_smi_t intf, struct bmc_device *bmc,
+			     struct ipmi_device_id *id)
+{
+	int rv = 0;
+	int prev_dyn_id_set;
+
+	if (!intf) {
+		mutex_lock(&bmc->dyn_mutex);
+retry_bmc_lock:
+		if (list_empty(&bmc->intfs)) {
+			mutex_unlock(&bmc->dyn_mutex);
+			return -ENOENT;
+		}
+		intf = list_first_entry(&bmc->intfs, struct ipmi_smi,
+					bmc_link);
+		kref_get(&intf->refcount);
+		mutex_unlock(&bmc->dyn_mutex);
+		mutex_lock(&intf->bmc_reg_mutex);
+		mutex_lock(&bmc->dyn_mutex);
+		if (intf != list_first_entry(&bmc->intfs, struct ipmi_smi,
+					     bmc_link)) {
+			mutex_unlock(&intf->bmc_reg_mutex);
+			kref_put(&intf->refcount, intf_free);
+			goto retry_bmc_lock;
+		}
+	} else {
+		mutex_lock(&intf->bmc_reg_mutex);
+		bmc = intf->bmc;
+		mutex_lock(&bmc->dyn_mutex);
+		kref_get(&intf->refcount);
+	}
+
+	/* If we have a valid and current ID, just return that. */
+	if (bmc->dyn_id_set && time_is_after_jiffies(bmc->dyn_id_expiry))
+		goto out;
+
+	prev_dyn_id_set = bmc->dyn_id_set;
+
+	rv = __get_device_id(intf, bmc);
+	if (rv)
+		goto out;
+
+	memcpy(&bmc->id, &bmc->fetch_id, sizeof(bmc->id));
+
+	bmc->dyn_id_expiry = jiffies + IPMI_DYN_DEV_ID_EXPIRY;
+
+out:
+	if (rv && prev_dyn_id_set) {
+		rv = 0; /* Ignore failures if we have previous data. */
+		bmc->dyn_id_set = prev_dyn_id_set;
+	}
+
+	if (id)
+		*id = bmc->id;
+
+	mutex_unlock(&bmc->dyn_mutex);
+	mutex_unlock(&intf->bmc_reg_mutex);
+
+	kref_put(&intf->refcount, intf_free);
+	return rv;
+}
+
 #ifdef CONFIG_PROC_FS
 static int smi_ipmb_proc_show(struct seq_file *m, void *v)
 {
@@ -2026,10 +2283,16 @@ static const struct file_operations smi_ipmb_proc_ops = {
 static int smi_version_proc_show(struct seq_file *m, void *v)
 {
 	ipmi_smi_t intf = m->private;
+	struct ipmi_device_id id;
+	int rv;
+
+	rv = bmc_get_device_id(intf, NULL, &id);
+	if (rv)
+		return rv;
 
 	seq_printf(m, "%u.%u\n",
-		   ipmi_version_major(&intf->bmc->id),
-		   ipmi_version_minor(&intf->bmc->id));
+		   ipmi_version_major(&id),
+		   ipmi_version_minor(&id));
 
 	return 0;
 }
@@ -2207,63 +2470,19 @@ static void remove_proc_entries(ipmi_smi_t smi)
 #endif /* CONFIG_PROC_FS */
 }
 
-static int __find_bmc_guid(struct device *dev, void *data)
-{
-	unsigned char *id = data;
-	struct bmc_device *bmc = to_bmc_device(dev);
-	return memcmp(bmc->guid, id, 16) == 0;
-}
-
-static struct bmc_device *ipmi_find_bmc_guid(struct device_driver *drv,
-					     unsigned char *guid)
-{
-	struct device *dev;
-
-	dev = driver_find_device(drv, NULL, guid, __find_bmc_guid);
-	if (dev)
-		return to_bmc_device(dev);
-	else
-		return NULL;
-}
-
-struct prod_dev_id {
-	unsigned int  product_id;
-	unsigned char device_id;
-};
-
-static int __find_bmc_prod_dev_id(struct device *dev, void *data)
-{
-	struct prod_dev_id *id = data;
-	struct bmc_device *bmc = to_bmc_device(dev);
-
-	return (bmc->id.product_id == id->product_id
-		&& bmc->id.device_id == id->device_id);
-}
-
-static struct bmc_device *ipmi_find_bmc_prod_dev_id(
-	struct device_driver *drv,
-	unsigned int product_id, unsigned char device_id)
-{
-	struct prod_dev_id id = {
-		.product_id = product_id,
-		.device_id = device_id,
-	};
-	struct device *dev;
-
-	dev = driver_find_device(drv, NULL, &id, __find_bmc_prod_dev_id);
-	if (dev)
-		return to_bmc_device(dev);
-	else
-		return NULL;
-}
-
 static ssize_t device_id_show(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 10, "%u\n", bmc->id.device_id);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 10, "%u\n", id.device_id);
 }
 static DEVICE_ATTR(device_id, S_IRUGO, device_id_show, NULL);
 
@@ -2272,9 +2491,14 @@ static ssize_t provides_device_sdrs_show(struct device *dev,
 					 char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 10, "%u\n",
-			(bmc->id.device_revision & 0x80) >> 7);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 10, "%u\n", (id.device_revision & 0x80) >> 7);
 }
 static DEVICE_ATTR(provides_device_sdrs, S_IRUGO, provides_device_sdrs_show,
 		   NULL);
@@ -2283,9 +2507,14 @@ static ssize_t revision_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 20, "%u\n",
-			bmc->id.device_revision & 0x0F);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 20, "%u\n", id.device_revision & 0x0F);
 }
 static DEVICE_ATTR(revision, S_IRUGO, revision_show, NULL);
 
@@ -2294,9 +2523,15 @@ static ssize_t firmware_revision_show(struct device *dev,
 				      char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 20, "%u.%x\n", bmc->id.firmware_revision_1,
-			bmc->id.firmware_revision_2);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 20, "%u.%x\n", id.firmware_revision_1,
+			id.firmware_revision_2);
 }
 static DEVICE_ATTR(firmware_revision, S_IRUGO, firmware_revision_show, NULL);
 
@@ -2305,10 +2540,16 @@ static ssize_t ipmi_version_show(struct device *dev,
 				 char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
+
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
 
 	return snprintf(buf, 20, "%u.%u\n",
-			ipmi_version_major(&bmc->id),
-			ipmi_version_minor(&bmc->id));
+			ipmi_version_major(&id),
+			ipmi_version_minor(&id));
 }
 static DEVICE_ATTR(ipmi_version, S_IRUGO, ipmi_version_show, NULL);
 
@@ -2317,9 +2558,14 @@ static ssize_t add_dev_support_show(struct device *dev,
 				    char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 10, "0x%02x\n",
-			bmc->id.additional_device_support);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 10, "0x%02x\n", id.additional_device_support);
 }
 static DEVICE_ATTR(additional_device_support, S_IRUGO, add_dev_support_show,
 		   NULL);
@@ -2329,8 +2575,14 @@ static ssize_t manufacturer_id_show(struct device *dev,
 				    char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 20, "0x%6.6x\n", bmc->id.manufacturer_id);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 20, "0x%6.6x\n", id.manufacturer_id);
 }
 static DEVICE_ATTR(manufacturer_id, S_IRUGO, manufacturer_id_show, NULL);
 
@@ -2339,8 +2591,14 @@ static ssize_t product_id_show(struct device *dev,
 			       char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
 
-	return snprintf(buf, 10, "0x%4.4x\n", bmc->id.product_id);
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
+
+	return snprintf(buf, 10, "0x%4.4x\n", id.product_id);
 }
 static DEVICE_ATTR(product_id, S_IRUGO, product_id_show, NULL);
 
@@ -2349,12 +2607,18 @@ static ssize_t aux_firmware_rev_show(struct device *dev,
 				     char *buf)
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
+	struct ipmi_device_id id;
+	int rv;
+
+	rv = bmc_get_device_id(NULL, bmc, &id);
+	if (rv)
+		return rv;
 
 	return snprintf(buf, 21, "0x%02x 0x%02x 0x%02x 0x%02x\n",
-			bmc->id.aux_firmware_revision[3],
-			bmc->id.aux_firmware_revision[2],
-			bmc->id.aux_firmware_revision[1],
-			bmc->id.aux_firmware_revision[0]);
+			id.aux_firmware_revision[3],
+			id.aux_firmware_revision[2],
+			id.aux_firmware_revision[1],
+			id.aux_firmware_revision[0]);
 }
 static DEVICE_ATTR(aux_firmware_revision, S_IRUGO, aux_firmware_rev_show, NULL);
 
@@ -2363,9 +2627,12 @@ static ssize_t guid_show(struct device *dev, struct device_attribute *attr,
 {
 	struct bmc_device *bmc = to_bmc_device(dev);
 
-	return snprintf(buf, 100, "%Lx%Lx\n",
-			(long long) bmc->guid[0],
-			(long long) bmc->guid[8]);
+	return snprintf(buf, 100,
+		"%2.2x%2.2x%2.2x%2.2x-%2.2x%2.2x-%2.2x%2.2x-%2.2x%2.2x-%2.2x%2.2x%2.2x%2.2x%2.2x%2.2x\n",
+		bmc->guid[3], bmc->guid[2], bmc->guid[1], bmc->guid[0],
+		bmc->guid[5], bmc->guid[4], bmc->guid[7], bmc->guid[6],
+		bmc->guid[8], bmc->guid[9], bmc->guid[10], bmc->guid[11],
+		bmc->guid[12], bmc->guid[13], bmc->guid[14], bmc->guid[15]);
 }
 static DEVICE_ATTR(guid, S_IRUGO, guid_show, NULL);
 
@@ -2389,9 +2656,13 @@ static umode_t bmc_dev_attr_is_visible(struct kobject *kobj,
 	struct device *dev = kobj_to_dev(kobj);
 	struct bmc_device *bmc = to_bmc_device(dev);
 	umode_t mode = attr->mode;
+	struct ipmi_device_id id;
+	int rv;
 
-	if (attr == &dev_attr_aux_firmware_revision.attr)
-		return bmc->id.aux_firmware_revision_set ? mode : 0;
+	if (attr == &dev_attr_aux_firmware_revision.attr) {
+		rv = bmc_get_device_id(NULL, bmc, &id);
+		return (!rv && id.aux_firmware_revision_set) ? mode : 0;
+	}
 	if (attr == &dev_attr_guid.attr)
 		return bmc->guid_set ? mode : 0;
 	return mode;
@@ -2411,6 +2682,79 @@ static const struct device_type bmc_device_type = {
 	.groups		= bmc_dev_attr_groups,
 };
 
+static int __find_bmc_guid(struct device *dev, void *data)
+{
+	unsigned char *id = data;
+
+	if (dev->type != &bmc_device_type)
+		return 0;
+
+	return memcmp(to_bmc_device(dev)->guid, id, 16) == 0;
+}
+
+/*
+ * Must be called with ipmidriver_mutex held.  Returns with the
+ * bmc's usecount incremented, if it is non-NULL.
+ */
+static struct bmc_device *ipmi_find_bmc_guid(struct device_driver *drv,
+					     unsigned char *guid)
+{
+	struct device *dev;
+	struct bmc_device *bmc = NULL;
+
+	dev = driver_find_device(drv, NULL, guid, __find_bmc_guid);
+	if (dev) {
+		bmc = to_bmc_device(dev);
+		kref_get(&bmc->usecount);
+		put_device(dev);
+	}
+	return bmc;
+}
+
+struct prod_dev_id {
+	unsigned int  product_id;
+	unsigned char device_id;
+};
+
+static int __find_bmc_prod_dev_id(struct device *dev, void *data)
+{
+	struct prod_dev_id *id = data;
+	struct bmc_device *bmc;
+
+	if (dev->type != &bmc_device_type)
+		return 0;
+
+	bmc = to_bmc_device(dev);
+	return (bmc->id.product_id == id->product_id
+		&& bmc->id.device_id == id->device_id);
+}
+
+/*
+ * Must be called with ipmidriver_mutex held.  Returns with the
+ * bmc's usecount incremented, if it is non-NULL.
+ */
+static struct bmc_device *ipmi_find_bmc_prod_dev_id(
+	struct device_driver *drv,
+	unsigned int product_id, unsigned char device_id)
+{
+	struct prod_dev_id id = {
+		.product_id = product_id,
+		.device_id = device_id,
+	};
+	struct device *dev;
+	struct bmc_device *bmc = NULL;
+
+	dev = driver_find_device(drv, NULL, &id, __find_bmc_prod_dev_id);
+	if (dev) {
+		bmc = to_bmc_device(dev);
+		kref_get(&bmc->usecount);
+		put_device(dev);
+	}
+	return bmc;
+}
+
+static DEFINE_IDA(ipmi_bmc_ida);
+
 static void
 release_bmc_device(struct device *dev)
 {
@@ -2421,25 +2765,36 @@ static void
 cleanup_bmc_device(struct kref *ref)
 {
 	struct bmc_device *bmc = container_of(ref, struct bmc_device, usecount);
+	int id = bmc->pdev.id; /* Unregister overwrites id */
 
 	platform_device_unregister(&bmc->pdev);
+	ida_simple_remove(&ipmi_bmc_ida, id);
 }
 
 static void ipmi_bmc_unregister(ipmi_smi_t intf)
 {
 	struct bmc_device *bmc = intf->bmc;
 
-	sysfs_remove_link(&intf->si_dev->kobj, "bmc");
-	if (intf->my_dev_name) {
-		sysfs_remove_link(&bmc->pdev.dev.kobj, intf->my_dev_name);
-		kfree(intf->my_dev_name);
-		intf->my_dev_name = NULL;
-	}
+	if (!intf->bmc_registered)
+		return;
 
+	mutex_lock(&intf->bmc_reg_mutex);
+
+	sysfs_remove_link(&intf->si_dev->kobj, "bmc");
+	sysfs_remove_link(&bmc->pdev.dev.kobj, intf->my_dev_name);
+	kfree(intf->my_dev_name);
+	intf->my_dev_name = NULL;
+
+	mutex_lock(&bmc->dyn_mutex);
+	list_del(&intf->bmc_link);
+	mutex_unlock(&bmc->dyn_mutex);
+	intf->bmc = NULL;
 	mutex_lock(&ipmidriver_mutex);
 	kref_put(&bmc->usecount, cleanup_bmc_device);
-	intf->bmc = NULL;
 	mutex_unlock(&ipmidriver_mutex);
+	intf->bmc_registered = false;
+
+	mutex_unlock(&intf->bmc_reg_mutex);
 }
 
 static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
@@ -2448,18 +2803,18 @@ static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
 	struct bmc_device *bmc = intf->bmc;
 	struct bmc_device *old_bmc;
 
-	mutex_lock(&ipmidriver_mutex);
-
 	/*
 	 * Try to find if there is an bmc_device struct
 	 * representing the interfaced BMC already
 	 */
+	mutex_lock(&ipmidriver_mutex);
 	if (bmc->guid_set)
 		old_bmc = ipmi_find_bmc_guid(&ipmidriver.driver, bmc->guid);
 	else
 		old_bmc = ipmi_find_bmc_prod_dev_id(&ipmidriver.driver,
 						    bmc->id.product_id,
 						    bmc->id.device_id);
+	mutex_unlock(&ipmidriver_mutex);
 
 	/*
 	 * If there is already an bmc_device, free the new one,
@@ -2467,11 +2822,11 @@ static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
 	 */
 	if (old_bmc) {
 		kfree(bmc);
-		intf->bmc = old_bmc;
 		bmc = old_bmc;
-
-		kref_get(&bmc->usecount);
-		mutex_unlock(&ipmidriver_mutex);
+		intf->bmc = old_bmc;
+		mutex_lock(&bmc->dyn_mutex);
+		list_add_tail(&intf->bmc_link, &bmc->intfs);
+		mutex_unlock(&bmc->dyn_mutex);
 
 		printk(KERN_INFO
 		       "ipmi: interfacing existing BMC (man_id: 0x%6.6x,"
@@ -2480,54 +2835,29 @@ static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
 		       bmc->id.product_id,
 		       bmc->id.device_id);
 	} else {
-		unsigned char orig_dev_id = bmc->id.device_id;
-		int warn_printed = 0;
+		bmc->pdev.name = "ipmi_bmc";
 
-		snprintf(bmc->name, sizeof(bmc->name),
-			 "ipmi_bmc.%4.4x", bmc->id.product_id);
-		bmc->pdev.name = bmc->name;
-
-		while (ipmi_find_bmc_prod_dev_id(&ipmidriver.driver,
-						 bmc->id.product_id,
-						 bmc->id.device_id)) {
-			if (!warn_printed) {
-				printk(KERN_WARNING PFX
-				       "This machine has two different BMCs"
-				       " with the same product id and device"
-				       " id.  This is an error in the"
-				       " firmware, but incrementing the"
-				       " device id to work around the problem."
-				       " Prod ID = 0x%x, Dev ID = 0x%x\n",
-				       bmc->id.product_id, bmc->id.device_id);
-				warn_printed = 1;
-			}
-			bmc->id.device_id++; /* Wraps at 255 */
-			if (bmc->id.device_id == orig_dev_id) {
-				printk(KERN_ERR PFX
-				       "Out of device ids!\n");
-				break;
-			}
-		}
-
+		rv = ida_simple_get(&ipmi_bmc_ida, 0, 0, GFP_KERNEL);
+		if (rv < 0)
+			goto out;
 		bmc->pdev.dev.driver = &ipmidriver.driver;
-		bmc->pdev.id = bmc->id.device_id;
+		bmc->pdev.id = rv;
 		bmc->pdev.dev.release = release_bmc_device;
 		bmc->pdev.dev.type = &bmc_device_type;
 		kref_init(&bmc->usecount);
 
+		intf->bmc = bmc;
+		mutex_lock(&bmc->dyn_mutex);
+		list_add_tail(&intf->bmc_link, &bmc->intfs);
+		mutex_unlock(&bmc->dyn_mutex);
+
 		rv = platform_device_register(&bmc->pdev);
-		mutex_unlock(&ipmidriver_mutex);
 		if (rv) {
-			put_device(&bmc->pdev.dev);
 			printk(KERN_ERR
 			       "ipmi_msghandler:"
 			       " Unable to register bmc device: %d\n",
 			       rv);
-			/*
-			 * Don't go to out_err, you can only do that if
-			 * the device is registered already.
-			 */
-			return rv;
+			goto out_list_del;
 		}
 
 		dev_info(intf->si_dev, "Found new BMC (man_id: 0x%6.6x, "
@@ -2546,7 +2876,7 @@ static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
 		printk(KERN_ERR
 		       "ipmi_msghandler: Unable to create bmc symlink: %d\n",
 		       rv);
-		goto out_err;
+		goto out_put_bmc;
 	}
 
 	intf->my_dev_name = kasprintf(GFP_KERNEL, "ipmi%d", ifnum);
@@ -2555,7 +2885,7 @@ static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
 		printk(KERN_ERR
 		       "ipmi_msghandler: allocate link from BMC: %d\n",
 		       rv);
-		goto out_err;
+		goto out_unlink1;
 	}
 
 	rv = sysfs_create_link(&bmc->pdev.dev.kobj, &intf->si_dev->kobj,
@@ -2567,14 +2897,39 @@ static int ipmi_bmc_register(ipmi_smi_t intf, int ifnum)
 		       "ipmi_msghandler:"
 		       " Unable to create symlink to bmc: %d\n",
 		       rv);
-		goto out_err;
+		goto out_free_my_dev_name;
 	}
 
-	return 0;
+	intf->bmc_registered = true;
 
-out_err:
-	ipmi_bmc_unregister(intf);
+out:
 	return rv;
+
+
+out_free_my_dev_name:
+	kfree(intf->my_dev_name);
+	intf->my_dev_name = NULL;
+
+out_unlink1:
+	sysfs_remove_link(&intf->si_dev->kobj, "bmc");
+
+out_put_bmc:
+	mutex_lock(&bmc->dyn_mutex);
+	list_del(&intf->bmc_link);
+	mutex_unlock(&bmc->dyn_mutex);
+	intf->bmc = NULL;
+	mutex_lock(&ipmidriver_mutex);
+	kref_put(&bmc->usecount, cleanup_bmc_device);
+	mutex_unlock(&ipmidriver_mutex);
+	goto out;
+
+out_list_del:
+	mutex_lock(&bmc->dyn_mutex);
+	list_del(&intf->bmc_link);
+	mutex_unlock(&bmc->dyn_mutex);
+	intf->bmc = NULL;
+	put_device(&bmc->pdev.dev);
+	goto out;
 }
 
 static int
@@ -2630,7 +2985,7 @@ guid_handler(ipmi_smi_t intf, struct ipmi_recv_msg *msg)
 		goto out;
 	}
 
-	memcpy(intf->bmc->guid, msg->msg.data, 16);
+	memcpy(intf->bmc->guid, msg->msg.data + 1, 16);
 	intf->bmc->guid_set = 1;
  out:
 	wake_up(&intf->waitq);
@@ -2757,7 +3112,6 @@ EXPORT_SYMBOL(ipmi_poll_interface);
 
 int ipmi_register_smi(const struct ipmi_smi_handlers *handlers,
 		      void		       *send_info,
-		      struct ipmi_device_id    *device_id,
 		      struct device            *si_dev,
 		      unsigned char            slave_addr)
 {
@@ -2766,6 +3120,7 @@ int ipmi_register_smi(const struct ipmi_smi_handlers *handlers,
 	ipmi_smi_t       intf;
 	ipmi_smi_t       tintf;
 	struct list_head *link;
+	struct ipmi_device_id id;
 
 	/*
 	 * Make sure the driver is actually initialized, this handles
@@ -2787,17 +3142,17 @@ int ipmi_register_smi(const struct ipmi_smi_handlers *handlers,
 	if (!intf)
 		return -ENOMEM;
 
-	intf->ipmi_version_major = ipmi_version_major(device_id);
-	intf->ipmi_version_minor = ipmi_version_minor(device_id);
-
 	intf->bmc = kzalloc(sizeof(*intf->bmc), GFP_KERNEL);
 	if (!intf->bmc) {
 		kfree(intf);
 		return -ENOMEM;
 	}
+	INIT_LIST_HEAD(&intf->bmc->intfs);
+	mutex_init(&intf->bmc->dyn_mutex);
+	INIT_LIST_HEAD(&intf->bmc_link);
+	mutex_init(&intf->bmc_reg_mutex);
 	intf->intf_num = -1; /* Mark it invalid for now. */
 	kref_init(&intf->refcount);
-	intf->bmc->id = *device_id;
 	intf->si_dev = si_dev;
 	for (j = 0; j < IPMI_MAX_CHANNELS; j++) {
 		intf->channels[j].address = IPMI_BMC_SLAVE_ADDR;
@@ -2864,9 +3219,19 @@ int ipmi_register_smi(const struct ipmi_smi_handlers *handlers,
 
 	get_guid(intf);
 
-	if ((intf->ipmi_version_major > 1)
-			|| ((intf->ipmi_version_major == 1)
-			    && (intf->ipmi_version_minor >= 5))) {
+	rv = bmc_get_device_id(intf, NULL, &id);
+	if (rv) {
+		dev_err(si_dev, "Unable to get the device id: %d\n", rv);
+		goto out;
+	}
+
+	rv = ipmi_bmc_register(intf, i);
+	if (rv)
+		goto out;
+
+	if (ipmi_version_major(&id) > 1
+			|| (ipmi_version_major(&id) == 1
+			    && ipmi_version_minor(&id) >= 5)) {
 		/*
 		 * Start scanning the channels to see what is
 		 * available.
@@ -2892,13 +3257,11 @@ int ipmi_register_smi(const struct ipmi_smi_handlers *handlers,
 		intf->curr_channel = IPMI_MAX_CHANNELS;
 	}
 
-	rv = ipmi_bmc_register(intf, i);
-
-	if (rv == 0)
-		rv = add_proc_entries(intf, i);
+	rv = add_proc_entries(intf, i);
 
  out:
 	if (rv) {
+		ipmi_bmc_unregister(intf);
 		if (intf->proc_dir)
 			remove_proc_entries(intf);
 		intf->handlers = NULL;
@@ -4030,7 +4393,8 @@ smi_from_recv_msg(ipmi_smi_t intf, struct ipmi_recv_msg *recv_msg,
 }
 
 static void check_msg_timeout(ipmi_smi_t intf, struct seq_table *ent,
-			      struct list_head *timeouts, long timeout_period,
+			      struct list_head *timeouts,
+			      unsigned long timeout_period,
 			      int slot, unsigned long *flags,
 			      unsigned int *waiting_msgs)
 {
@@ -4043,8 +4407,8 @@ static void check_msg_timeout(ipmi_smi_t intf, struct seq_table *ent,
 	if (!ent->inuse)
 		return;
 
-	ent->timeout -= timeout_period;
-	if (ent->timeout > 0) {
+	if (timeout_period < ent->timeout) {
+		ent->timeout -= timeout_period;
 		(*waiting_msgs)++;
 		return;
 	}
@@ -4110,7 +4474,8 @@ static void check_msg_timeout(ipmi_smi_t intf, struct seq_table *ent,
 	}
 }
 
-static unsigned int ipmi_timeout_handler(ipmi_smi_t intf, long timeout_period)
+static unsigned int ipmi_timeout_handler(ipmi_smi_t intf,
+					 unsigned long timeout_period)
 {
 	struct list_head     timeouts;
 	struct ipmi_recv_msg *msg, *msg2;
@@ -4269,8 +4634,6 @@ void ipmi_free_recv_msg(struct ipmi_recv_msg *msg)
 }
 EXPORT_SYMBOL(ipmi_free_recv_msg);
 
-#ifdef CONFIG_IPMI_PANIC_EVENT
-
 static atomic_t panic_done_count = ATOMIC_INIT(0);
 
 static void dummy_smi_done_handler(struct ipmi_smi_msg *msg)
@@ -4318,7 +4681,6 @@ static void ipmi_panic_request_and_wait(ipmi_smi_t           intf,
 		ipmi_poll(intf);
 }
 
-#ifdef CONFIG_IPMI_PANIC_STRING
 static void event_receiver_fetcher(ipmi_smi_t intf, struct ipmi_recv_msg *msg)
 {
 	if ((msg->addr.addr_type == IPMI_SYSTEM_INTERFACE_ADDR_TYPE)
@@ -4345,7 +4707,6 @@ static void device_id_fetcher(ipmi_smi_t intf, struct ipmi_recv_msg *msg)
 		intf->local_event_generator = (msg->msg.data[6] >> 5) & 1;
 	}
 }
-#endif
 
 static void send_panic_events(char *str)
 {
@@ -4354,6 +4715,9 @@ static void send_panic_events(char *str)
 	unsigned char                     data[16];
 	struct ipmi_system_interface_addr *si;
 	struct ipmi_addr                  addr;
+
+	if (ipmi_send_panic_event == IPMI_SEND_PANIC_EVENT_NONE)
+		return;
 
 	si = (struct ipmi_system_interface_addr *) &addr;
 	si->addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
@@ -4383,20 +4747,19 @@ static void send_panic_events(char *str)
 
 	/* For every registered interface, send the event. */
 	list_for_each_entry_rcu(intf, &ipmi_interfaces, link) {
-		if (!intf->handlers)
-			/* Interface is not ready. */
+		if (!intf->handlers || !intf->handlers->poll)
+			/* Interface is not ready or can't run at panic time. */
 			continue;
 
 		/* Send the event announcing the panic. */
 		ipmi_panic_request_and_wait(intf, &addr, &msg);
 	}
 
-#ifdef CONFIG_IPMI_PANIC_STRING
 	/*
 	 * On every interface, dump a bunch of OEM event holding the
 	 * string.
 	 */
-	if (!str)
+	if (ipmi_send_panic_event != IPMI_SEND_PANIC_EVENT_STRING || !str)
 		return;
 
 	/* For every registered interface, send the event. */
@@ -4505,9 +4868,7 @@ static void send_panic_events(char *str)
 			ipmi_panic_request_and_wait(intf, &addr, &msg);
 		}
 	}
-#endif /* CONFIG_IPMI_PANIC_STRING */
 }
-#endif /* CONFIG_IPMI_PANIC_EVENT */
 
 static int has_panicked;
 
@@ -4545,12 +4906,12 @@ static int panic_event(struct notifier_block *this,
 			spin_unlock(&intf->waiting_rcv_msgs_lock);
 
 		intf->run_to_completion = 1;
-		intf->handlers->set_run_to_completion(intf->send_info, 1);
+		if (intf->handlers->set_run_to_completion)
+			intf->handlers->set_run_to_completion(intf->send_info,
+							      1);
 	}
 
-#ifdef CONFIG_IPMI_PANIC_EVENT
 	send_panic_events(ptr);
-#endif
 
 	return NOTIFY_DONE;
 }
