@@ -373,3 +373,55 @@ Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
 Description:	information about CPUs heterogeneity.
 
 		cpu_capacity: capacity of cpu#.
+
+What:		/sys/devices/system/cpu/cpu#/info/
+Date:		June 2017
+Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+Description:	Various information about the online cpu. Which attributes are
+		available depends on the architecture, kernel configuration and
+		cpu model.
+
+What:		/sys/devices/system/cpu/cpu#/info/
+		/sys/devices/system/cpu/cpu#/info/vendor_id
+		/sys/devices/system/cpu/cpu#/info/cpu_family
+		/sys/devices/system/cpu/cpu#/info/model
+		/sys/devices/system/cpu/cpu#/info/model_name
+		/sys/devices/system/cpu/cpu#/info/stepping
+		/sys/devices/system/cpu/cpu#/info/flags
+		/sys/devices/system/cpu/cpu#/info/bugs
+		/sys/devices/system/cpu/cpu#/info/bogomips
+Date:		June 2017
+Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+Description:	Expose information about x86 cpu information.
+
+		vendor_id,
+		cpu_family,
+		model,
+		model_name,
+		stepping: Cpu identification depending on each vendor
+
+		flags: Extended capabilities supported by the cpu
+		bugs: Known bugs by cpu
+		bogomips: calculated bogomips
+
+
+What:		/sys/devices/system/cpu/cpu#/info/
+		/sys/devices/system/cpu/cpu#/info/implementer
+		/sys/devices/system/cpu/cpu#/info/architecture
+		/sys/devices/system/cpu/cpu#/info/variant
+		/sys/devices/system/cpu/cpu#/info/part
+		/sys/devices/system/cpu/cpu#/info/revision
+		/sys/devices/system/cpu/cpu#/info/flags
+		/sys/devices/system/cpu/cpu#/info/bogomips
+Date:		August 2017
+Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+Description:	Expose information about arm64 cpu.
+
+		implementer,
+		architecture,
+		variant,
+		part,
+		revision: Cpu identification depending on each vendor
+
+		flags: Extended capabilities supported by the cpu
+		bogomips: calculated bogomips
