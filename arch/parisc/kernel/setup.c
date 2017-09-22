@@ -38,6 +38,7 @@
 #include <linux/export.h>
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
+#include <linux/start_kernel.h>
 
 #include <asm/processor.h>
 #include <asm/sections.h>
@@ -115,7 +116,6 @@ void __init dma_ops_init(void)
 }
 #endif
 
-extern int init_per_cpu(int cpuid);
 extern void collect_boot_cpu_data(void);
 
 void __init setup_arch(char **cmdline_p)
@@ -398,15 +398,16 @@ static int __init parisc_init(void)
 }
 arch_initcall(parisc_init);
 
-void start_parisc(void)
+void __init start_parisc(void)
 {
-	extern void start_kernel(void);
 	extern void early_trap_init(void);
 
 	int ret, cpunum;
 	struct pdc_coproc_cfg coproc_cfg;
 
 	cpunum = smp_processor_id();
+
+	init_cpu_topology();
 
 	set_firmware_width_unlocked();
 
