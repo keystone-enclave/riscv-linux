@@ -139,6 +139,8 @@
 /* Accessible over the mini-USB CON9 connector on the main board */
 &uart0 {
 	status = "okay";
+	pinctrl-0 = <&uart0_pins>;
+	pinctrl-names = "default";
 };
 
 
@@ -200,6 +202,11 @@
 	status = "okay";
 };
 
+&cpm_eth0 {
+	status = "okay";
+	phy-mode = "10gbase-kr";
+};
+
 &cpm_eth2 {
 	status = "okay";
 	phy = <&phy1>;
@@ -242,6 +249,11 @@
 
 &cps_ethernet {
 	status = "okay";
+};
+
+&cps_eth0 {
+	status = "okay";
+	phy-mode = "10gbase-kr";
 };
 
 &cps_eth1 {
