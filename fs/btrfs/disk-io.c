@@ -1005,9 +1005,9 @@ static blk_status_t __btree_submit_bio_done(void *private_data, struct bio *bio,
 	return ret;
 }
 
-static int check_async_write(unsigned long bio_flags)
+static int check_async_write(struct btrfs_inode *bi)
 {
-	if (bio_flags & EXTENT_BIO_TREE_LOG)
+	if (atomic_read(&bi->sync_writers))
 		return 0;
 #ifdef CONFIG_X86
 	if (static_cpu_has(X86_FEATURE_XMM4_2))
@@ -1022,7 +1022,7 @@ static blk_status_t btree_submit_bio_hook(void *private_data, struct bio *bio,
 {
 	struct inode *inode = private_data;
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
-	int async = check_async_write(bio_flags);
+	int async = check_async_write(BTRFS_I(inode));
 	blk_status_t ret;
 
 	if (bio_op(bio) != REQ_OP_WRITE) {
@@ -2901,6 +2901,7 @@ int open_ctree(struct super_block *sb,
 
 	sb->s_blocksize = sectorsize;
 	sb->s_blocksize_bits = blksize_bits(sectorsize);
+	memcpy(&sb->s_uuid, fs_info->fsid, BTRFS_FSID_SIZE);
 
 	mutex_lock(&fs_info->chunk_mutex);
 	ret = btrfs_read_sys_array(fs_info);
@@ -3643,7 +3644,14 @@ int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 	u64 flags;
 
 	do_barriers = !btrfs_test_opt(fs_info, NOBARRIER);
-	backup_super_roots(fs_info);
+
+	/*
+	 * max_mirrors == 0 indicates we're from commit_transaction,
+	 * not from fsync where the tree roots in fs_info have not
+	 * been consistent on disk.
+	 */
+	if (max_mirrors == 0)
+		backup_super_roots(fs_info);
 
 	sb = fs_info->super_for_commit;
 	dev_item = &sb->dev_item;

@@ -61,9 +61,6 @@ enum {
 	CHUNK_ALLOC_FORCE = 2,
 };
 
-static int update_block_group(struct btrfs_trans_handle *trans,
-			      struct btrfs_fs_info *fs_info, u64 bytenr,
-			      u64 num_bytes, int alloc);
 static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			       struct btrfs_fs_info *fs_info,
 				struct btrfs_delayed_ref_node *node, u64 parent,
@@ -91,17 +88,8 @@ static int find_next_key(struct btrfs_path *path, int level,
 static void dump_space_info(struct btrfs_fs_info *fs_info,
 			    struct btrfs_space_info *info, u64 bytes,
 			    int dump_block_groups);
-static int btrfs_add_reserved_bytes(struct btrfs_block_group_cache *cache,
-				    u64 ram_bytes, u64 num_bytes, int delalloc);
-static int btrfs_free_reserved_bytes(struct btrfs_block_group_cache *cache,
-				     u64 num_bytes, int delalloc);
 static int block_rsv_use_bytes(struct btrfs_block_rsv *block_rsv,
 			       u64 num_bytes);
-static int __reserve_metadata_bytes(struct btrfs_fs_info *fs_info,
-				    struct btrfs_space_info *space_info,
-				    u64 orig_bytes,
-				    enum btrfs_reserve_flush_enum flush,
-				    bool system_chunk);
 static void space_info_add_new_bytes(struct btrfs_fs_info *fs_info,
 				     struct btrfs_space_info *space_info,
 				     u64 num_bytes);
@@ -652,7 +640,7 @@ static int cache_block_group(struct btrfs_block_group_cache *cache,
 	cache->cached = BTRFS_CACHE_FAST;
 	spin_unlock(&cache->lock);
 
-	if (fs_info->mount_opt & BTRFS_MOUNT_SPACE_CACHE) {
+	if (btrfs_test_opt(fs_info, SPACE_CACHE)) {
 		mutex_lock(&caching_ctl->mutex);
 		ret = load_free_space_cache(fs_info, cache);
 
@@ -9968,9 +9956,9 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
 	return 0;
 }
 
-static void __link_block_group(struct btrfs_space_info *space_info,
-			       struct btrfs_block_group_cache *cache)
+static void link_block_group(struct btrfs_block_group_cache *cache)
 {
+	struct btrfs_space_info *space_info = cache->space_info;
 	int index = get_block_group_index(cache);
 	bool first = false;
 
@@ -10178,7 +10166,7 @@ int btrfs_read_block_groups(struct btrfs_fs_info *info)
 
 		cache->space_info = space_info;
 
-		__link_block_group(space_info, cache);
+		link_block_group(cache);
 
 		set_avail_alloc_bits(info, cache->flags);
 		if (btrfs_chunk_readonly(info, cache->key.objectid)) {
@@ -10337,7 +10325,7 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
 				cache->bytes_super, &cache->space_info);
 	update_global_block_rsv(fs_info);
 
-	__link_block_group(cache->space_info, cache);
+	link_block_group(cache);
 
 	list_add_tail(&cache->bg_list, &trans->new_bgs);
 
