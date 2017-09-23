@@ -256,26 +256,18 @@ EXPORT_SYMBOL_GPL(fpu__activate_curr);
  *
  * If the task has not used the FPU before then initialize its
  * fpstate.
- *
- * If the task has used the FPU before then save it.
  */
 void fpu__activate_fpstate_read(struct fpu *fpu)
 {
-	/*
-	 * If fpregs are active (in the current CPU), then
-	 * copy them to the fpstate:
-	 */
-	if (fpu->fpstate_active) {
-		fpu__save(fpu);
-	} else {
-		if (!fpu->fpstate_active) {
-			fpstate_init(&fpu->state);
-			trace_x86_fpu_init_state(fpu);
+	WARN_ON_FPU(fpu == &current->thread.fpu);
 
-			trace_x86_fpu_activate_state(fpu);
-			/* Safe to do for current and for stopped child tasks: */
-			fpu->fpstate_active = 1;
-		}
+	if (!fpu->fpstate_active) {
+		fpstate_init(&fpu->state);
+		trace_x86_fpu_init_state(fpu);
+
+		trace_x86_fpu_activate_state(fpu);
+		/* Safe to do for current and for stopped child tasks: */
+		fpu->fpstate_active = 1;
 	}
 }
 
