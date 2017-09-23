@@ -245,7 +245,7 @@ EXPORT_SYMBOL_GPL(fpu__initialize);
  * If the task has not used the FPU before then initialize its
  * fpstate.
  */
-void fpu__activate_fpstate_read(struct fpu *fpu)
+void fpu__prepare_read(struct fpu *fpu)
 {
 	WARN_ON_FPU(fpu == &current->thread.fpu);
 
@@ -272,7 +272,7 @@ void fpu__activate_fpstate_read(struct fpu *fpu)
  * state pending on its former CPU could be restored, corrupting
  * the modifications.
  */
-void fpu__activate_fpstate_write(struct fpu *fpu)
+void fpu__prepare_write(struct fpu *fpu)
 {
 	/*
 	 * Only stopped child tasks can be used to modify the FPU
