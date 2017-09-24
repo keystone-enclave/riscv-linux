@@ -310,9 +310,6 @@ static int start_wd_on_cpu(unsigned int cpu)
 	if (!(watchdog_enabled & NMI_WATCHDOG_ENABLED))
 		return 0;
 
-	if (watchdog_suspended)
-		return 0;
-
 	if (!cpumask_test_cpu(cpu, &watchdog_cpumask))
 		return 0;
 
@@ -358,17 +355,20 @@ static void watchdog_calc_timeouts(void)
 	wd_timer_period_ms = watchdog_thresh * 1000 * 2 / 5;
 }
 
-void watchdog_nmi_reconfigure(void)
+void watchdog_nmi_reconfigure(bool run)
 {
 	int cpu;
 
-	watchdog_calc_timeouts();
-
-	for_each_cpu(cpu, &wd_cpus_enabled)
-		stop_wd_on_cpu(cpu);
-
-	for_each_cpu_and(cpu, cpu_online_mask, &watchdog_cpumask)
-		start_wd_on_cpu(cpu);
+	cpus_read_lock();
+	if (!run) {
+		for_each_cpu(cpu, &wd_cpus_enabled)
+			stop_wd_on_cpu(cpu);
+	} else {
+		watchdog_calc_timeouts();
+		for_each_cpu_and(cpu, cpu_online_mask, &watchdog_cpumask)
+			start_wd_on_cpu(cpu);
+	}
+	cpus_read_unlock();
 }
 
 /*
