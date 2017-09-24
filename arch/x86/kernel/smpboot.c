@@ -254,14 +254,14 @@ static void notrace start_secondary(void *unused)
 	check_tsc_sync_target();
 
 	/*
-	 * Lock vector_lock and initialize the vectors on this cpu
-	 * before setting the cpu online. We must set it online with
-	 * vector_lock held to prevent a concurrent setup/teardown
-	 * from seeing a half valid vector space.
+	 * Lock vector_lock, set CPU online and bring the vector
+	 * allocator online. Online must be set with vector_lock held
+	 * to prevent a concurrent irq setup/teardown from seeing a
+	 * half valid vector space.
 	 */
 	lock_vector_lock();
-	setup_vector_irq(smp_processor_id());
 	set_cpu_online(smp_processor_id(), true);
+	lapic_online();
 	unlock_vector_lock();
 	cpu_set_state_online(smp_processor_id());
 	x86_platform.nmi_init();
@@ -1395,7 +1395,6 @@ void __init native_smp_cpus_done(unsigned int max_cpus)
 
 	nmi_selftest();
 	impress_friends();
-	setup_ioapic_dest();
 	mtrr_aps_init();
 }
 
@@ -1554,13 +1553,14 @@ void cpu_disable_common(void)
 	remove_cpu_from_maps(cpu);
 	unlock_vector_lock();
 	fixup_irqs();
+	lapic_offline();
 }
 
 int native_cpu_disable(void)
 {
 	int ret;
 
-	ret = check_irq_vectors_for_cpu_disable();
+	ret = lapic_can_unplug_cpu();
 	if (ret)
 		return ret;
 
