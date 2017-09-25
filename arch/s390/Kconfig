@@ -930,7 +930,7 @@ config S390_GUEST
 	  the KVM hypervisor.
 
 config S390_GUEST_OLD_TRANSPORT
-	def_bool y
+	def_bool n
 	prompt "Guest support for old s390 virtio transport (DEPRECATED)"
 	depends on S390_GUEST
 	help
