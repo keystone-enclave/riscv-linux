@@ -517,12 +517,6 @@ loop_lock:
 					 &device->work);
 			goto done;
 		}
-		/* unplug every 64 requests just for good measure */
-		if (batch_run % 64 == 0) {
-			blk_finish_plug(&plug);
-			blk_start_plug(&plug);
-			sync_pending = 0;
-		}
 	}
 
 	cond_resched();
@@ -547,7 +541,7 @@ static void pending_bios_fn(struct btrfs_work *work)
 }
 
 
-void btrfs_free_stale_device(struct btrfs_device *cur_dev)
+static void btrfs_free_stale_device(struct btrfs_device *cur_dev)
 {
 	struct btrfs_fs_devices *fs_devs;
 	struct btrfs_device *dev;
@@ -1068,14 +1062,15 @@ int btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 	return ret;
 }
 
-void btrfs_release_disk_super(struct page *page)
+static void btrfs_release_disk_super(struct page *page)
 {
 	kunmap(page);
 	put_page(page);
 }
 
-int btrfs_read_disk_super(struct block_device *bdev, u64 bytenr,
-		struct page **page, struct btrfs_super_block **disk_super)
+static int btrfs_read_disk_super(struct block_device *bdev, u64 bytenr,
+				 struct page **page,
+				 struct btrfs_super_block **disk_super)
 {
 	void *p;
 	pgoff_t index;
@@ -1817,8 +1812,8 @@ static int btrfs_check_raid_min_devices(struct btrfs_fs_info *fs_info,
 	return 0;
 }
 
-struct btrfs_device *btrfs_find_next_active_device(struct btrfs_fs_devices *fs_devs,
-					struct btrfs_device *device)
+static struct btrfs_device * btrfs_find_next_active_device(
+		struct btrfs_fs_devices *fs_devs, struct btrfs_device *device)
 {
 	struct btrfs_device *next_device;
 
@@ -2324,7 +2319,7 @@ int btrfs_init_new_device(struct btrfs_fs_info *fs_info, const char *device_path
 	int seeding_dev = 0;
 	int ret = 0;
 
-	if ((sb->s_flags & MS_RDONLY) && !fs_info->fs_devices->seeding)
+	if (sb_rdonly(sb) && !fs_info->fs_devices->seeding)
 		return -EROFS;
 
 	bdev = blkdev_get_by_path(device_path, FMODE_WRITE | FMODE_EXCL,
@@ -4053,7 +4048,7 @@ int btrfs_pause_balance(struct btrfs_fs_info *fs_info)
 
 int btrfs_cancel_balance(struct btrfs_fs_info *fs_info)
 {
-	if (fs_info->sb->s_flags & MS_RDONLY)
+	if (sb_rdonly(fs_info->sb))
 		return -EROFS;
 
 	mutex_lock(&fs_info->balance_mutex);
@@ -4813,15 +4808,15 @@ static int __btrfs_alloc_chunk(struct btrfs_trans_handle *trans,
 	em_tree = &info->mapping_tree.map_tree;
 	write_lock(&em_tree->lock);
 	ret = add_extent_mapping(em_tree, em, 0);
-	if (!ret) {
-		list_add_tail(&em->list, &trans->transaction->pending_chunks);
-		refcount_inc(&em->refs);
-	}
-	write_unlock(&em_tree->lock);
 	if (ret) {
+		write_unlock(&em_tree->lock);
 		free_extent_map(em);
 		goto error;
 	}
+
+	list_add_tail(&em->list, &trans->transaction->pending_chunks);
+	refcount_inc(&em->refs);
+	write_unlock(&em_tree->lock);
 
 	ret = btrfs_make_block_group(trans, info, 0, type, start, num_bytes);
 	if (ret)
@@ -6125,7 +6120,7 @@ static void submit_stripe_bio(struct btrfs_bio *bbio, struct bio *bio,
 		rcu_read_unlock();
 	}
 #endif
-	bio->bi_bdev = dev->bdev;
+	bio_set_dev(bio, dev->bdev);
 
 	btrfs_bio_counter_inc_noblocked(fs_info);
 
@@ -6149,8 +6144,8 @@ static void bbio_error(struct btrfs_bio *bbio, struct bio *bio, u64 logical)
 	}
 }
 
-int btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
-		  int mirror_num, int async_submit)
+blk_status_t btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
+			   int mirror_num, int async_submit)
 {
 	struct btrfs_device *dev;
 	struct bio *first_bio = bio;
@@ -6166,11 +6161,11 @@ int btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
 	map_length = length;
 
 	btrfs_bio_counter_inc_blocked(fs_info);
-	ret = __btrfs_map_block(fs_info, bio_op(bio), logical,
+	ret = __btrfs_map_block(fs_info, btrfs_op(bio), logical,
 				&map_length, &bbio, mirror_num, 1);
 	if (ret) {
 		btrfs_bio_counter_dec(fs_info);
-		return ret;
+		return errno_to_blk_status(ret);
 	}
 
 	total_devs = bbio->num_stripes;
@@ -6193,7 +6188,7 @@ int btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
 		}
 
 		btrfs_bio_counter_dec(fs_info);
-		return ret;
+		return errno_to_blk_status(ret);
 	}
 
 	if (map_length < length) {
@@ -6220,7 +6215,7 @@ int btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
 				  dev_nr, async_submit);
 	}
 	btrfs_bio_counter_dec(fs_info);
-	return 0;
+	return BLK_STS_OK;
 }
 
 struct btrfs_device *btrfs_find_device(struct btrfs_fs_info *fs_info, u64 devid,
