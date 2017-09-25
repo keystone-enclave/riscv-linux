@@ -529,7 +529,7 @@ static int check_tree_block_fsid(struct btrfs_fs_info *fs_info,
 				 struct extent_buffer *eb)
 {
 	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
-	u8 fsid[BTRFS_UUID_SIZE];
+	u8 fsid[BTRFS_FSID_SIZE];
 	int ret = 1;
 
 	read_extent_buffer(eb, fsid, btrfs_header_fsid(), BTRFS_FSID_SIZE);
@@ -549,12 +549,131 @@ static int check_tree_block_fsid(struct btrfs_fs_info *fs_info,
 		   btrfs_header_level(eb) == 0 ? "leaf" : "node",	\
 		   reason, btrfs_header_bytenr(eb), root->objectid, slot)
 
+static int check_extent_data_item(struct btrfs_root *root,
+				  struct extent_buffer *leaf,
+				  struct btrfs_key *key, int slot)
+{
+	struct btrfs_file_extent_item *fi;
+	u32 sectorsize = root->fs_info->sectorsize;
+	u32 item_size = btrfs_item_size_nr(leaf, slot);
+
+	if (!IS_ALIGNED(key->offset, sectorsize)) {
+		CORRUPT("unaligned key offset for file extent",
+			leaf, root, slot);
+		return -EUCLEAN;
+	}
+
+	fi = btrfs_item_ptr(leaf, slot, struct btrfs_file_extent_item);
+
+	if (btrfs_file_extent_type(leaf, fi) > BTRFS_FILE_EXTENT_TYPES) {
+		CORRUPT("invalid file extent type", leaf, root, slot);
+		return -EUCLEAN;
+	}
+
+	/*
+	 * Support for new compression/encrption must introduce incompat flag,
+	 * and must be caught in open_ctree().
+	 */
+	if (btrfs_file_extent_compression(leaf, fi) > BTRFS_COMPRESS_TYPES) {
+		CORRUPT("invalid file extent compression", leaf, root, slot);
+		return -EUCLEAN;
+	}
+	if (btrfs_file_extent_encryption(leaf, fi)) {
+		CORRUPT("invalid file extent encryption", leaf, root, slot);
+		return -EUCLEAN;
+	}
+	if (btrfs_file_extent_type(leaf, fi) == BTRFS_FILE_EXTENT_INLINE) {
+		/* Inline extent must have 0 as key offset */
+		if (key->offset) {
+			CORRUPT("inline extent has non-zero key offset",
+				leaf, root, slot);
+			return -EUCLEAN;
+		}
+
+		/* Compressed inline extent has no on-disk size, skip it */
+		if (btrfs_file_extent_compression(leaf, fi) !=
+		    BTRFS_COMPRESS_NONE)
+			return 0;
+
+		/* Uncompressed inline extent size must match item size */
+		if (item_size != BTRFS_FILE_EXTENT_INLINE_DATA_START +
+		    btrfs_file_extent_ram_bytes(leaf, fi)) {
+			CORRUPT("plaintext inline extent has invalid size",
+				leaf, root, slot);
+			return -EUCLEAN;
+		}
+		return 0;
+	}
+
+	/* Regular or preallocated extent has fixed item size */
+	if (item_size != sizeof(*fi)) {
+		CORRUPT(
+		"regluar or preallocated extent data item size is invalid",
+			leaf, root, slot);
+		return -EUCLEAN;
+	}
+	if (!IS_ALIGNED(btrfs_file_extent_ram_bytes(leaf, fi), sectorsize) ||
+	    !IS_ALIGNED(btrfs_file_extent_disk_bytenr(leaf, fi), sectorsize) ||
+	    !IS_ALIGNED(btrfs_file_extent_disk_num_bytes(leaf, fi), sectorsize) ||
+	    !IS_ALIGNED(btrfs_file_extent_offset(leaf, fi), sectorsize) ||
+	    !IS_ALIGNED(btrfs_file_extent_num_bytes(leaf, fi), sectorsize)) {
+		CORRUPT(
+		"regular or preallocated extent data item has unaligned value",
+			leaf, root, slot);
+		return -EUCLEAN;
+	}
+
+	return 0;
+}
+
+static int check_csum_item(struct btrfs_root *root, struct extent_buffer *leaf,
+			   struct btrfs_key *key, int slot)
+{
+	u32 sectorsize = root->fs_info->sectorsize;
+	u32 csumsize = btrfs_super_csum_size(root->fs_info->super_copy);
+
+	if (key->objectid != BTRFS_EXTENT_CSUM_OBJECTID) {
+		CORRUPT("invalid objectid for csum item", leaf, root, slot);
+		return -EUCLEAN;
+	}
+	if (!IS_ALIGNED(key->offset, sectorsize)) {
+		CORRUPT("unaligned key offset for csum item", leaf, root, slot);
+		return -EUCLEAN;
+	}
+	if (!IS_ALIGNED(btrfs_item_size_nr(leaf, slot), csumsize)) {
+		CORRUPT("unaligned csum item size", leaf, root, slot);
+		return -EUCLEAN;
+	}
+	return 0;
+}
+
+/*
+ * Common point to switch the item-specific validation.
+ */
+static int check_leaf_item(struct btrfs_root *root,
+			   struct extent_buffer *leaf,
+			   struct btrfs_key *key, int slot)
+{
+	int ret = 0;
+
+	switch (key->type) {
+	case BTRFS_EXTENT_DATA_KEY:
+		ret = check_extent_data_item(root, leaf, key, slot);
+		break;
+	case BTRFS_EXTENT_CSUM_KEY:
+		ret = check_csum_item(root, leaf, key, slot);
+		break;
+	}
+	return ret;
+}
+
 static noinline int check_leaf(struct btrfs_root *root,
 			       struct extent_buffer *leaf)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
+	/* No valid key type is 0, so all key should be larger than this key */
+	struct btrfs_key prev_key = {0, 0, 0};
 	struct btrfs_key key;
-	struct btrfs_key leaf_key;
 	u32 nritems = btrfs_header_nritems(leaf);
 	int slot;
 
@@ -587,7 +706,7 @@ static noinline int check_leaf(struct btrfs_root *root,
 				CORRUPT("non-root leaf's nritems is 0",
 					leaf, check_root, 0);
 				free_extent_buffer(eb);
-				return -EIO;
+				return -EUCLEAN;
 			}
 			free_extent_buffer(eb);
 		}
@@ -597,28 +716,27 @@ static noinline int check_leaf(struct btrfs_root *root,
 	if (nritems == 0)
 		return 0;
 
-	/* Check the 0 item */
-	if (btrfs_item_offset_nr(leaf, 0) + btrfs_item_size_nr(leaf, 0) !=
-	    BTRFS_LEAF_DATA_SIZE(fs_info)) {
-		CORRUPT("invalid item offset size pair", leaf, root, 0);
-		return -EIO;
-	}
-
 	/*
-	 * Check to make sure each items keys are in the correct order and their
-	 * offsets make sense.  We only have to loop through nritems-1 because
-	 * we check the current slot against the next slot, which verifies the
-	 * next slot's offset+size makes sense and that the current's slot
-	 * offset is correct.
+	 * Check the following things to make sure this is a good leaf, and
+	 * leaf users won't need to bother with similar sanity checks:
+	 *
+	 * 1) key order
+	 * 2) item offset and size
+	 *    No overlap, no hole, all inside the leaf.
+	 * 3) item content
+	 *    If possible, do comprehensive sanity check.
+	 *    NOTE: All checks must only rely on the item data itself.
 	 */
-	for (slot = 0; slot < nritems - 1; slot++) {
-		btrfs_item_key_to_cpu(leaf, &leaf_key, slot);
-		btrfs_item_key_to_cpu(leaf, &key, slot + 1);
+	for (slot = 0; slot < nritems; slot++) {
+		u32 item_end_expected;
+		int ret;
+
+		btrfs_item_key_to_cpu(leaf, &key, slot);
 
 		/* Make sure the keys are in the right order */
-		if (btrfs_comp_cpu_keys(&leaf_key, &key) >= 0) {
+		if (btrfs_comp_cpu_keys(&prev_key, &key) >= 0) {
 			CORRUPT("bad key order", leaf, root, slot);
-			return -EIO;
+			return -EUCLEAN;
 		}
 
 		/*
@@ -626,10 +744,14 @@ static noinline int check_leaf(struct btrfs_root *root,
 		 * item data starts at the end of the leaf and grows towards the
 		 * front.
 		 */
-		if (btrfs_item_offset_nr(leaf, slot) !=
-			btrfs_item_end_nr(leaf, slot + 1)) {
+		if (slot == 0)
+			item_end_expected = BTRFS_LEAF_DATA_SIZE(fs_info);
+		else
+			item_end_expected = btrfs_item_offset_nr(leaf,
+								 slot - 1);
+		if (btrfs_item_end_nr(leaf, slot) != item_end_expected) {
 			CORRUPT("slot offset bad", leaf, root, slot);
-			return -EIO;
+			return -EUCLEAN;
 		}
 
 		/*
@@ -640,8 +762,24 @@ static noinline int check_leaf(struct btrfs_root *root,
 		if (btrfs_item_end_nr(leaf, slot) >
 		    BTRFS_LEAF_DATA_SIZE(fs_info)) {
 			CORRUPT("slot end outside of leaf", leaf, root, slot);
-			return -EIO;
+			return -EUCLEAN;
 		}
+
+		/* Also check if the item pointer overlaps with btrfs item. */
+		if (btrfs_item_nr_offset(slot) + sizeof(struct btrfs_item) >
+		    btrfs_item_ptr_offset(leaf, slot)) {
+			CORRUPT("slot overlap with its data", leaf, root, slot);
+			return -EUCLEAN;
+		}
+
+		/* Check if the item size and content meet other criteria */
+		ret = check_leaf_item(root, leaf, &key, slot);
+		if (ret < 0)
+			return ret;
+
+		prev_key.objectid = key.objectid;
+		prev_key.type = key.type;
+		prev_key.offset = key.offset;
 	}
 
 	return 0;
@@ -1005,9 +1143,9 @@ static blk_status_t __btree_submit_bio_done(void *private_data, struct bio *bio,
 	return ret;
 }
 
-static int check_async_write(unsigned long bio_flags)
+static int check_async_write(struct btrfs_inode *bi)
 {
-	if (bio_flags & EXTENT_BIO_TREE_LOG)
+	if (atomic_read(&bi->sync_writers))
 		return 0;
 #ifdef CONFIG_X86
 	if (static_cpu_has(X86_FEATURE_XMM4_2))
@@ -1022,7 +1160,7 @@ static blk_status_t btree_submit_bio_hook(void *private_data, struct bio *bio,
 {
 	struct inode *inode = private_data;
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
-	int async = check_async_write(bio_flags);
+	int async = check_async_write(BTRFS_I(inode));
 	blk_status_t ret;
 
 	if (bio_op(bio) != REQ_OP_WRITE) {
@@ -1343,7 +1481,7 @@ static void __setup_root(struct btrfs_root *root, struct btrfs_fs_info *fs_info,
 	atomic_set(&root->log_batch, 0);
 	atomic_set(&root->orphan_inodes, 0);
 	refcount_set(&root->refs, 1);
-	atomic_set(&root->will_be_snapshoted, 0);
+	atomic_set(&root->will_be_snapshotted, 0);
 	atomic64_set(&root->qgroup_meta_rsv, 0);
 	root->log_transid = 0;
 	root->log_transid_committed = -1;
@@ -2478,7 +2616,7 @@ static int btrfs_replay_log(struct btrfs_fs_info *fs_info,
 		return ret;
 	}
 
-	if (fs_info->sb->s_flags & MS_RDONLY) {
+	if (sb_rdonly(fs_info->sb)) {
 		ret = btrfs_commit_super(fs_info);
 		if (ret)
 			return ret;
@@ -2694,8 +2832,8 @@ int open_ctree(struct super_block *sb,
 	btrfs_init_balance(fs_info);
 	btrfs_init_async_reclaim_work(&fs_info->async_reclaim_work);
 
-	sb->s_blocksize = 4096;
-	sb->s_blocksize_bits = blksize_bits(4096);
+	sb->s_blocksize = BTRFS_BDEV_BLOCKSIZE;
+	sb->s_blocksize_bits = blksize_bits(BTRFS_BDEV_BLOCKSIZE);
 
 	btrfs_init_btree_inode(fs_info);
 
@@ -2828,6 +2966,8 @@ int open_ctree(struct super_block *sb,
 	features |= BTRFS_FEATURE_INCOMPAT_MIXED_BACKREF;
 	if (fs_info->compress_type == BTRFS_COMPRESS_LZO)
 		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO;
+	else if (fs_info->compress_type == BTRFS_COMPRESS_ZSTD)
+		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_ZSTD;
 
 	if (features & BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA)
 		btrfs_info(fs_info, "has skinny extents");
@@ -2874,7 +3014,7 @@ int open_ctree(struct super_block *sb,
 
 	features = btrfs_super_compat_ro_flags(disk_super) &
 		~BTRFS_FEATURE_COMPAT_RO_SUPP;
-	if (!(sb->s_flags & MS_RDONLY) && features) {
+	if (!sb_rdonly(sb) && features) {
 		btrfs_err(fs_info,
 	"cannot mount read-write because of unsupported optional features (%llx)",
 		       features);
@@ -2899,6 +3039,7 @@ int open_ctree(struct super_block *sb,
 
 	sb->s_blocksize = sectorsize;
 	sb->s_blocksize_bits = blksize_bits(sectorsize);
+	memcpy(&sb->s_uuid, fs_info->fsid, BTRFS_FSID_SIZE);
 
 	mutex_lock(&fs_info->chunk_mutex);
 	ret = btrfs_read_sys_array(fs_info);
@@ -3035,15 +3176,10 @@ retry_root_backup:
 		btrfs_err(fs_info, "failed to read block groups: %d", ret);
 		goto fail_sysfs;
 	}
-	fs_info->num_tolerated_disk_barrier_failures =
-		btrfs_calc_num_tolerated_disk_barrier_failures(fs_info);
-	if (fs_info->fs_devices->missing_devices >
-	     fs_info->num_tolerated_disk_barrier_failures &&
-	    !(sb->s_flags & MS_RDONLY)) {
+
+	if (!sb_rdonly(sb) && !btrfs_check_rw_degradable(fs_info)) {
 		btrfs_warn(fs_info,
-"missing devices (%llu) exceeds the limit (%d), writeable mount is not allowed",
-			fs_info->fs_devices->missing_devices,
-			fs_info->num_tolerated_disk_barrier_failures);
+		"writeable mount is not allowed due to too many missing devices");
 		goto fail_sysfs;
 	}
 
@@ -3058,11 +3194,9 @@ retry_root_backup:
 	if (IS_ERR(fs_info->transaction_kthread))
 		goto fail_cleaner;
 
-	if (!btrfs_test_opt(fs_info, SSD) &&
-	    !btrfs_test_opt(fs_info, NOSSD) &&
+	if (!btrfs_test_opt(fs_info, NOSSD) &&
 	    !fs_info->fs_devices->rotating) {
-		btrfs_info(fs_info, "detected SSD devices, enabling SSD mode");
-		btrfs_set_opt(fs_info->mount_opt, SSD);
+		btrfs_set_and_info(fs_info, SSD, "enabling ssd optimizations");
 	}
 
 	/*
@@ -3102,7 +3236,7 @@ retry_root_backup:
 	if (ret)
 		goto fail_qgroup;
 
-	if (!(sb->s_flags & MS_RDONLY)) {
+	if (!sb_rdonly(sb)) {
 		ret = btrfs_cleanup_fs_roots(fs_info);
 		if (ret)
 			goto fail_qgroup;
@@ -3128,7 +3262,7 @@ retry_root_backup:
 		goto fail_qgroup;
 	}
 
-	if (sb->s_flags & MS_RDONLY)
+	if (sb_rdonly(sb))
 		return 0;
 
 	if (btrfs_test_opt(fs_info, CLEAR_CACHE) &&
@@ -3321,7 +3455,7 @@ int btrfs_read_dev_one_super(struct block_device *bdev, int copy_num,
 	if (bytenr + BTRFS_SUPER_INFO_SIZE >= i_size_read(bdev->bd_inode))
 		return -EINVAL;
 
-	bh = __bread(bdev, bytenr / 4096, BTRFS_SUPER_INFO_SIZE);
+	bh = __bread(bdev, bytenr / BTRFS_BDEV_BLOCKSIZE, BTRFS_SUPER_INFO_SIZE);
 	/*
 	 * If we fail to read from the underlying devices, as of now
 	 * the best option we have is to mark it EIO.
@@ -3378,19 +3512,17 @@ struct buffer_head *btrfs_read_dev_super(struct block_device *bdev)
 }
 
 /*
- * this should be called twice, once with wait == 0 and
- * once with wait == 1.  When wait == 0 is done, all the buffer heads
- * we write are pinned.
+ * Write superblock @sb to the @device. Do not wait for completion, all the
+ * buffer heads we write are pinned.
  *
- * They are released when wait == 1 is done.
- * max_mirrors must be the same for both runs, and it indicates how
- * many supers on this one device should be written.
+ * Write @max_mirrors copies of the superblock, where 0 means default that fit
+ * the expected device size at commit time. Note that max_mirrors must be
+ * same for write and wait phases.
  *
- * max_mirrors == 0 means to write them all.
+ * Return number of errors when buffer head is not found or submission fails.
  */
 static int write_dev_supers(struct btrfs_device *device,
-			    struct btrfs_super_block *sb,
-			    int wait, int max_mirrors)
+			    struct btrfs_super_block *sb, int max_mirrors)
 {
 	struct buffer_head *bh;
 	int i;
@@ -3408,57 +3540,33 @@ static int write_dev_supers(struct btrfs_device *device,
 		    device->commit_total_bytes)
 			break;
 
-		if (wait) {
-			bh = __find_get_block(device->bdev, bytenr / 4096,
-					      BTRFS_SUPER_INFO_SIZE);
-			if (!bh) {
-				errors++;
-				continue;
-			}
-			wait_on_buffer(bh);
-			if (!buffer_uptodate(bh))
-				errors++;
+		btrfs_set_super_bytenr(sb, bytenr);
 
-			/* drop our reference */
-			brelse(bh);
+		crc = ~(u32)0;
+		crc = btrfs_csum_data((const char *)sb + BTRFS_CSUM_SIZE, crc,
+				      BTRFS_SUPER_INFO_SIZE - BTRFS_CSUM_SIZE);
+		btrfs_csum_final(crc, sb->csum);
 
-			/* drop the reference from the wait == 0 run */
-			brelse(bh);
+		/* One reference for us, and we leave it for the caller */
+		bh = __getblk(device->bdev, bytenr / BTRFS_BDEV_BLOCKSIZE,
+			      BTRFS_SUPER_INFO_SIZE);
+		if (!bh) {
+			btrfs_err(device->fs_info,
+			    "couldn't get super buffer head for bytenr %llu",
+			    bytenr);
+			errors++;
 			continue;
-		} else {
-			btrfs_set_super_bytenr(sb, bytenr);
-
-			crc = ~(u32)0;
-			crc = btrfs_csum_data((const char *)sb +
-					      BTRFS_CSUM_SIZE, crc,
-					      BTRFS_SUPER_INFO_SIZE -
-					      BTRFS_CSUM_SIZE);
-			btrfs_csum_final(crc, sb->csum);
-
-			/*
-			 * one reference for us, and we leave it for the
-			 * caller
-			 */
-			bh = __getblk(device->bdev, bytenr / 4096,
-				      BTRFS_SUPER_INFO_SIZE);
-			if (!bh) {
-				btrfs_err(device->fs_info,
-				    "couldn't get super buffer head for bytenr %llu",
-				    bytenr);
-				errors++;
-				continue;
-			}
-
-			memcpy(bh->b_data, sb, BTRFS_SUPER_INFO_SIZE);
-
-			/* one reference for submit_bh */
-			get_bh(bh);
-
-			set_buffer_uptodate(bh);
-			lock_buffer(bh);
-			bh->b_end_io = btrfs_end_buffer_write_sync;
-			bh->b_private = device;
 		}
+
+		memcpy(bh->b_data, sb, BTRFS_SUPER_INFO_SIZE);
+
+		/* one reference for submit_bh */
+		get_bh(bh);
+
+		set_buffer_uptodate(bh);
+		lock_buffer(bh);
+		bh->b_end_io = btrfs_end_buffer_write_sync;
+		bh->b_private = device;
 
 		/*
 		 * we fua the first super.  The others we allow
@@ -3466,13 +3574,58 @@ static int write_dev_supers(struct btrfs_device *device,
 		 */
 		if (i == 0) {
 			ret = btrfsic_submit_bh(REQ_OP_WRITE,
-						REQ_SYNC | REQ_FUA, bh);
+				REQ_SYNC | REQ_FUA | REQ_META | REQ_PRIO, bh);
 		} else {
-			ret = btrfsic_submit_bh(REQ_OP_WRITE, REQ_SYNC, bh);
+			ret = btrfsic_submit_bh(REQ_OP_WRITE,
+				REQ_SYNC | REQ_META | REQ_PRIO, bh);
 		}
 		if (ret)
 			errors++;
 	}
+	return errors < i ? 0 : -1;
+}
+
+/*
+ * Wait for write completion of superblocks done by write_dev_supers,
+ * @max_mirrors same for write and wait phases.
+ *
+ * Return number of errors when buffer head is not found or not marked up to
+ * date.
+ */
+static int wait_dev_supers(struct btrfs_device *device, int max_mirrors)
+{
+	struct buffer_head *bh;
+	int i;
+	int errors = 0;
+	u64 bytenr;
+
+	if (max_mirrors == 0)
+		max_mirrors = BTRFS_SUPER_MIRROR_MAX;
+
+	for (i = 0; i < max_mirrors; i++) {
+		bytenr = btrfs_sb_offset(i);
+		if (bytenr + BTRFS_SUPER_INFO_SIZE >=
+		    device->commit_total_bytes)
+			break;
+
+		bh = __find_get_block(device->bdev,
+				      bytenr / BTRFS_BDEV_BLOCKSIZE,
+				      BTRFS_SUPER_INFO_SIZE);
+		if (!bh) {
+			errors++;
+			continue;
+		}
+		wait_on_buffer(bh);
+		if (!buffer_uptodate(bh))
+			errors++;
+
+		/* drop our reference */
+		brelse(bh);
+
+		/* drop the reference from the writing run */
+		brelse(bh);
+	}
+
 	return errors < i ? 0 : -1;
 }
 
@@ -3499,12 +3652,12 @@ static void write_dev_flush(struct btrfs_device *device)
 
 	bio_reset(bio);
 	bio->bi_end_io = btrfs_end_empty_barrier;
-	bio->bi_bdev = device->bdev;
+	bio_set_dev(bio, device->bdev);
 	bio->bi_opf = REQ_OP_WRITE | REQ_SYNC | REQ_PREFLUSH;
 	init_completion(&device->flush_wait);
 	bio->bi_private = &device->flush_wait;
 
-	submit_bio(bio);
+	btrfsic_submit_bio(bio);
 	device->flush_bio_sent = 1;
 }
 
@@ -3516,7 +3669,7 @@ static blk_status_t wait_dev_flush(struct btrfs_device *device)
 	struct bio *bio = device->flush_bio;
 
 	if (!device->flush_bio_sent)
-		return 0;
+		return BLK_STS_OK;
 
 	device->flush_bio_sent = 0;
 	wait_for_completion_io(&device->flush_wait);
@@ -3524,20 +3677,10 @@ static blk_status_t wait_dev_flush(struct btrfs_device *device)
 	return bio->bi_status;
 }
 
-static int check_barrier_error(struct btrfs_fs_devices *fsdevs)
+static int check_barrier_error(struct btrfs_fs_info *fs_info)
 {
-	int dev_flush_error = 0;
-	struct btrfs_device *dev;
-
-	list_for_each_entry_rcu(dev, &fsdevs->devices, dev_list) {
-		if (!dev->bdev || dev->last_flush_error)
-			dev_flush_error++;
-	}
-
-	if (dev_flush_error >
-	    fsdevs->fs_info->num_tolerated_disk_barrier_failures)
+	if (!btrfs_check_rw_degradable(fs_info))
 		return -EIO;
-
 	return 0;
 }
 
@@ -3563,7 +3706,7 @@ static int barrier_all_devices(struct btrfs_fs_info *info)
 			continue;
 
 		write_dev_flush(dev);
-		dev->last_flush_error = 0;
+		dev->last_flush_error = BLK_STS_OK;
 	}
 
 	/* wait for all the barriers */
@@ -3592,7 +3735,7 @@ static int barrier_all_devices(struct btrfs_fs_info *info)
 		 * to arrive at the volume status. So error checking
 		 * is being pushed to a separate loop.
 		 */
-		return check_barrier_error(info->fs_devices);
+		return check_barrier_error(info);
 	}
 	return 0;
 }
@@ -3626,60 +3769,6 @@ int btrfs_get_num_tolerated_disk_barrier_failures(u64 flags)
 	return min_tolerated;
 }
 
-int btrfs_calc_num_tolerated_disk_barrier_failures(
-	struct btrfs_fs_info *fs_info)
-{
-	struct btrfs_ioctl_space_info space;
-	struct btrfs_space_info *sinfo;
-	u64 types[] = {BTRFS_BLOCK_GROUP_DATA,
-		       BTRFS_BLOCK_GROUP_SYSTEM,
-		       BTRFS_BLOCK_GROUP_METADATA,
-		       BTRFS_BLOCK_GROUP_DATA | BTRFS_BLOCK_GROUP_METADATA};
-	int i;
-	int c;
-	int num_tolerated_disk_barrier_failures =
-		(int)fs_info->fs_devices->num_devices;
-
-	for (i = 0; i < ARRAY_SIZE(types); i++) {
-		struct btrfs_space_info *tmp;
-
-		sinfo = NULL;
-		rcu_read_lock();
-		list_for_each_entry_rcu(tmp, &fs_info->space_info, list) {
-			if (tmp->flags == types[i]) {
-				sinfo = tmp;
-				break;
-			}
-		}
-		rcu_read_unlock();
-
-		if (!sinfo)
-			continue;
-
-		down_read(&sinfo->groups_sem);
-		for (c = 0; c < BTRFS_NR_RAID_TYPES; c++) {
-			u64 flags;
-
-			if (list_empty(&sinfo->block_groups[c]))
-				continue;
-
-			btrfs_get_block_group_info(&sinfo->block_groups[c],
-						   &space);
-			if (space.total_bytes == 0 || space.used_bytes == 0)
-				continue;
-			flags = space.flags;
-
-			num_tolerated_disk_barrier_failures = min(
-				num_tolerated_disk_barrier_failures,
-				btrfs_get_num_tolerated_disk_barrier_failures(
-					flags));
-		}
-		up_read(&sinfo->groups_sem);
-	}
-
-	return num_tolerated_disk_barrier_failures;
-}
-
 int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 {
 	struct list_head *head;
@@ -3693,7 +3782,14 @@ int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 	u64 flags;
 
 	do_barriers = !btrfs_test_opt(fs_info, NOBARRIER);
-	backup_super_roots(fs_info);
+
+	/*
+	 * max_mirrors == 0 indicates we're from commit_transaction,
+	 * not from fsync where the tree roots in fs_info have not
+	 * been consistent on disk.
+	 */
+	if (max_mirrors == 0)
+		backup_super_roots(fs_info);
 
 	sb = fs_info->super_for_commit;
 	dev_item = &sb->dev_item;
@@ -3732,12 +3828,12 @@ int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 		btrfs_set_stack_device_io_width(dev_item, dev->io_width);
 		btrfs_set_stack_device_sector_size(dev_item, dev->sector_size);
 		memcpy(dev_item->uuid, dev->uuid, BTRFS_UUID_SIZE);
-		memcpy(dev_item->fsid, dev->fs_devices->fsid, BTRFS_UUID_SIZE);
+		memcpy(dev_item->fsid, dev->fs_devices->fsid, BTRFS_FSID_SIZE);
 
 		flags = btrfs_super_flags(sb);
 		btrfs_set_super_flags(sb, flags | BTRFS_HEADER_FLAG_WRITTEN);
 
-		ret = write_dev_supers(dev, sb, 0, max_mirrors);
+		ret = write_dev_supers(dev, sb, max_mirrors);
 		if (ret)
 			total_errors++;
 	}
@@ -3760,7 +3856,7 @@ int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 		if (!dev->in_fs_metadata || !dev->writeable)
 			continue;
 
-		ret = write_dev_supers(dev, sb, 1, max_mirrors);
+		ret = wait_dev_supers(dev, max_mirrors);
 		if (ret)
 			total_errors++;
 	}
@@ -3928,7 +4024,7 @@ void close_ctree(struct btrfs_fs_info *fs_info)
 
 	cancel_work_sync(&fs_info->async_reclaim_work);
 
-	if (!(fs_info->sb->s_flags & MS_RDONLY)) {
+	if (!sb_rdonly(fs_info->sb)) {
 		/*
 		 * If the cleaner thread is stopped and there are
 		 * block groups queued for removal, the deletion will be
@@ -3995,7 +4091,6 @@ void close_ctree(struct btrfs_fs_info *fs_info)
 	__btrfs_free_block_rsv(root->orphan_block_rsv);
 	root->orphan_block_rsv = NULL;
 
-	mutex_lock(&fs_info->chunk_mutex);
 	while (!list_empty(&fs_info->pinned_chunks)) {
 		struct extent_map *em;
 
@@ -4004,7 +4099,6 @@ void close_ctree(struct btrfs_fs_info *fs_info)
 		list_del_init(&em->list);
 		free_extent_map(em);
 	}
-	mutex_unlock(&fs_info->chunk_mutex);
 }
 
 int btrfs_buffer_uptodate(struct extent_buffer *buf, u64 parent_transid,
@@ -4053,7 +4147,7 @@ void btrfs_mark_buffer_dirty(struct extent_buffer *buf)
 					 fs_info->dirty_metadata_batch);
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
 	if (btrfs_header_level(buf) == 0 && check_leaf(root, buf)) {
-		btrfs_print_leaf(fs_info, buf);
+		btrfs_print_leaf(buf);
 		ASSERT(0);
 	}
 #endif
@@ -4173,7 +4267,7 @@ static int btrfs_check_super_valid(struct btrfs_fs_info *fs_info)
 		ret = -EINVAL;
 	}
 
-	if (memcmp(fs_info->fsid, sb->dev_item.fsid, BTRFS_UUID_SIZE) != 0) {
+	if (memcmp(fs_info->fsid, sb->dev_item.fsid, BTRFS_FSID_SIZE) != 0) {
 		btrfs_err(fs_info,
 			   "dev_item UUID does not match fsid: %pU != %pU",
 			   fs_info->fsid, sb->dev_item.fsid);
