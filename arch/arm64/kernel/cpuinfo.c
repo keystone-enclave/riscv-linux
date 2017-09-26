@@ -33,6 +33,7 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/delay.h>
+#include <linux/cpuinfo.h>
 
 /*
  * In case the boot CPU is hotpluggable, we record its initial state and
@@ -41,6 +42,8 @@
  */
 DEFINE_PER_CPU(struct cpuinfo_arm64, cpu_data);
 static struct cpuinfo_arm64 boot_cpu_data;
+
+#define cpu_data(cpu)			per_cpu(cpu_data, cpu)
 
 static char *icache_policy_str[] = {
 	[0 ... ICACHE_POLICY_PIPT]	= "RESERVED/UNKNOWN",
@@ -269,6 +272,58 @@ static int cpuid_cpu_offline(unsigned int cpu)
 
 	return 0;
 }
+
+#ifdef CONFIG_HAVE_CPUINFO_SYSFS
+
+#define cpuinfo_implementer(cpu)	MIDR_IMPLEMENTOR(cpu_data(cpu).reg_midr)
+#define cpuinfo_architecture(cpu)	"8"
+#define cpuinfo_variant(cpu)		MIDR_VARIANT(cpu_data(cpu).reg_midr)
+#define cpuinfo_part(cpu)		MIDR_PARTNUM(cpu_data(cpu).reg_midr)
+#define cpuinfo_revision(cpu)		MIDR_REVISION(cpu_data(cpu).reg_midr)
+
+static ssize_t cpuinfo_flags(unsigned int c, char *buf)
+{
+	unsigned int i;
+	ssize_t len = 0;
+
+	for (i = 0; hwcap_str[i]; i++) {
+		if (elf_hwcap & (1 << i))
+			len += sprintf(buf+len, len == 0 ? "%s" : ",%s",
+				       hwcap_str[i]);
+	}
+	if (!len)
+		return 0;
+	return len + sprintf(buf+len, "\n");
+}
+
+static ssize_t cpuinfo_bogomips(unsigned int c, char *buf)
+{
+	return sprintf(buf, "%lu.%02lu\n", loops_per_jiffy / (500000 / HZ),
+		       (loops_per_jiffy / (5000 / HZ)) % 100);
+
+}
+
+CPUINFO_DEFINE_ATTR(implementer, "0x%02x");
+CPUINFO_DEFINE_ATTR(architecture, "%s");
+CPUINFO_DEFINE_ATTR(variant, "0x%x");
+CPUINFO_DEFINE_ATTR(part, "0x%03x");
+CPUINFO_DEFINE_ATTR(revision, "%d");
+
+CPUINFO_DEFINE_ATTR_FUNC(bogomips);
+CPUINFO_DEFINE_ATTR_FUNC(flags);
+
+struct attribute *cpuinfo_attrs[] = {
+	CPUINFO_ATTR(implementer),
+	CPUINFO_ATTR(architecture),
+	CPUINFO_ATTR(variant),
+	CPUINFO_ATTR(part),
+	CPUINFO_ATTR(revision),
+	CPUINFO_ATTR(bogomips),
+	CPUINFO_ATTR(flags),
+	NULL
+};
+#endif /* CONFIG_HAVE_CPUINFO_SYSFS */
+
 
 static int __init cpuinfo_regs_init(void)
 {

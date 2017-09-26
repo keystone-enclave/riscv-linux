@@ -952,6 +952,9 @@ config ARCH_HAS_REFCOUNT
 	  Catching overflows is the primary security concern for protecting
 	  against bugs in reference counts.
 
+config HAVE_CPUINFO_SYSFS
+	bool
+
 config REFCOUNT_FULL
 	bool "Perform full reference count validation at the expense of speed"
 	help
