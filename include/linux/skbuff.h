@@ -661,8 +661,12 @@ struct sk_buff {
 			struct sk_buff		*prev;
 
 			union {
-				ktime_t		tstamp;
-				u64		skb_mstamp;
+				struct net_device	*dev;
+				/* Some protocols might use this space to store information,
+				 * while device pointer would be NULL.
+				 * UDP receive path is one user.
+				 */
+				unsigned long		dev_scratch;
 			};
 		};
 		struct rb_node	rbnode; /* used in netem & tcp stack */
@@ -670,12 +674,8 @@ struct sk_buff {
 	struct sock		*sk;
 
 	union {
-		struct net_device	*dev;
-		/* Some protocols might use this space to store information,
-		 * while device pointer would be NULL.
-		 * UDP receive path is one user.
-		 */
-		unsigned long		dev_scratch;
+		ktime_t		tstamp;
+		u64		skb_mstamp;
 	};
 	/*
 	 * This is the control buffer. It is free to use for every
@@ -1457,27 +1457,8 @@ static inline int skb_header_unclone(struct sk_buff *skb, gfp_t pri)
 }
 
 /**
- *	skb_header_release - release reference to header
- *	@skb: buffer to operate on
- *
- *	Drop a reference to the header part of the buffer.  This is done
- *	by acquiring a payload reference.  You must not read from the header
- *	part of skb->data after this.
- *	Note : Check if you can use __skb_header_release() instead.
- */
-static inline void skb_header_release(struct sk_buff *skb)
-{
-	BUG_ON(skb->nohdr);
-	skb->nohdr = 1;
-	atomic_add(1 << SKB_DATAREF_SHIFT, &skb_shinfo(skb)->dataref);
-}
-
-/**
  *	__skb_header_release - release reference to header
  *	@skb: buffer to operate on
- *
- *	Variant of skb_header_release() assuming skb is private to caller.
- *	We can avoid one atomic operation.
  */
 static inline void __skb_header_release(struct sk_buff *skb)
 {
