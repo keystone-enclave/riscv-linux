@@ -31,6 +31,8 @@
 
 #include "edac_module.h"
 
+#define EDAC_MOD_STR    "skx_edac"
+
 /*
  * Debug macros
  */
@@ -464,12 +466,16 @@ static int skx_register_mci(struct skx_imc *imc)
 	pvt = mci->pvt_info;
 	pvt->imc = imc;
 
-	mci->ctl_name = kasprintf(GFP_KERNEL, "Skylake Socket#%d IMC#%d",
-				  imc->node_id, imc->lmc);
+	mci->ctl_name = kasprintf(GFP_KERNEL, "Skylake Socket#%d IMC#%d", imc->node_id, imc->lmc);
+	if (!mci->ctl_name) {
+		rc = -ENOMEM;
+		goto fail0;
+	}
+
 	mci->mtype_cap = MEM_FLAG_DDR4;
 	mci->edac_ctl_cap = EDAC_FLAG_NONE;
 	mci->edac_cap = EDAC_FLAG_NONE;
-	mci->mod_name = "skx_edac.c";
+	mci->mod_name = EDAC_MOD_STR;
 	mci->dev_name = pci_name(imc->chan[0].cdev);
 	mci->ctl_page_to_phys = NULL;
 
@@ -491,6 +497,7 @@ static int skx_register_mci(struct skx_imc *imc)
 
 fail:
 	kfree(mci->ctl_name);
+fail0:
 	edac_mc_free(mci);
 	imc->mci = NULL;
 	return rc;
@@ -1039,11 +1046,16 @@ static int __init skx_init(void)
 {
 	const struct x86_cpu_id *id;
 	const struct munit *m;
+	const char *owner;
 	int rc = 0, i;
 	u8 mc = 0, src_id, node_id;
 	struct skx_dev *d;
 
 	edac_dbg(2, "\n");
+
+	owner = edac_get_owner();
+	if (owner && strncmp(owner, EDAC_MOD_STR, sizeof(EDAC_MOD_STR)))
+		return -EBUSY;
 
 	id = x86_match_cpu(skx_cpuids);
 	if (!id)
