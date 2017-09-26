@@ -139,6 +139,8 @@
 /* Accessible over the mini-USB CON9 connector on the main board */
 &uart0 {
 	status = "okay";
+	pinctrl-0 = <&uart0_pins>;
+	pinctrl-names = "default";
 };
 
 
@@ -200,6 +202,11 @@
 	status = "okay";
 };
 
+&cpm_eth0 {
+	status = "okay";
+	phy-mode = "10gbase-kr";
+};
+
 &cpm_eth2 {
 	status = "okay";
 	phy = <&phy1>;
@@ -214,6 +221,37 @@
 &cps_i2c0 {
 	status = "okay";
 	clock-frequency = <100000>;
+};
+
+&cps_spi1 {
+	status = "okay";
+
+	spi-flash@0 {
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		compatible = "jedec,spi-nor";
+		reg = <0x0>;
+		spi-max-frequency = <20000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "Boot";
+				reg = <0x0 0x200000>;
+			};
+			partition@200000 {
+				label = "Filesystem";
+				reg = <0x200000 0xd00000>;
+			};
+			partition@f00000 {
+				label = "Boot_2nd";
+				reg = <0xf00000 0x100000>;
+			};
+		};
+	};
 };
 
 /* CON4 on CP1 expansion */
@@ -242,6 +280,11 @@
 
 &cps_ethernet {
 	status = "okay";
+};
+
+&cps_eth0 {
+	status = "okay";
+	phy-mode = "10gbase-kr";
 };
 
 &cps_eth1 {
