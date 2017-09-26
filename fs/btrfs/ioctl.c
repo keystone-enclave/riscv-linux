@@ -609,23 +609,6 @@ fail_free:
 	return ret;
 }
 
-static void btrfs_wait_for_no_snapshotting_writes(struct btrfs_root *root)
-{
-	s64 writers;
-	DEFINE_WAIT(wait);
-
-	do {
-		prepare_to_wait(&root->subv_writers->wait, &wait,
-				TASK_UNINTERRUPTIBLE);
-
-		writers = percpu_counter_sum(&root->subv_writers->counter);
-		if (writers)
-			schedule();
-
-		finish_wait(&root->subv_writers->wait, &wait);
-	} while (writers);
-}
-
 static int create_snapshot(struct btrfs_root *root, struct inode *dir,
 			   struct dentry *dentry,
 			   u64 *async_transid, bool readonly,
@@ -654,7 +637,9 @@ static int create_snapshot(struct btrfs_root *root, struct inode *dir,
 
 	atomic_inc(&root->will_be_snapshotted);
 	smp_mb__after_atomic();
-	btrfs_wait_for_no_snapshotting_writes(root);
+	/* wait for no snapshot writes */
+	wait_event(root->subv_writers->wait,
+		   percpu_counter_sum(&root->subv_writers->counter) == 0);
 
 	ret = btrfs_start_delalloc_inodes(root, 0);
 	if (ret)
@@ -2179,7 +2164,7 @@ static noinline int btrfs_ioctl_tree_search_v2(struct file *file,
 
 	inode = file_inode(file);
 	ret = search_ioctl(inode, &args.key, &buf_size,
-			   (char *)(&uarg->buf[0]));
+			   (char __user *)(&uarg->buf[0]));
 	if (ret == 0 && copy_to_user(&uarg->key, &args.key, sizeof(args.key)))
 		ret = -EFAULT;
 	else if (ret == -EOVERFLOW &&
@@ -2773,9 +2758,9 @@ static long btrfs_ioctl_fs_info(struct btrfs_fs_info *fs_info,
 	}
 	mutex_unlock(&fs_devices->device_list_mutex);
 
-	fi_args->nodesize = fs_info->super_copy->nodesize;
-	fi_args->sectorsize = fs_info->super_copy->sectorsize;
-	fi_args->clone_alignment = fs_info->super_copy->sectorsize;
+	fi_args->nodesize = fs_info->nodesize;
+	fi_args->sectorsize = fs_info->sectorsize;
+	fi_args->clone_alignment = fs_info->sectorsize;
 
 	if (copy_to_user(arg, fi_args, sizeof(*fi_args)))
 		ret = -EFAULT;
@@ -3032,7 +3017,7 @@ static int btrfs_cmp_data_prepare(struct inode *src, u64 loff,
 out:
 	if (ret)
 		btrfs_cmp_data_free(cmp);
-	return 0;
+	return ret;
 }
 
 static int btrfs_cmp_data(u64 len, struct cmp_pages *cmp)
@@ -4061,6 +4046,10 @@ static long btrfs_ioctl_default_subvol(struct file *file, void __user *argp)
 		ret = PTR_ERR(new_root);
 		goto out;
 	}
+	if (!is_fstree(new_root->objectid)) {
+		ret = -ENOENT;
+		goto out;
+	}
 
 	path = btrfs_alloc_path();
 	if (!path) {
@@ -4125,10 +4114,12 @@ static long btrfs_ioctl_space_info(struct btrfs_fs_info *fs_info,
 	struct btrfs_ioctl_space_info *dest_orig;
 	struct btrfs_ioctl_space_info __user *user_dest;
 	struct btrfs_space_info *info;
-	u64 types[] = {BTRFS_BLOCK_GROUP_DATA,
-		       BTRFS_BLOCK_GROUP_SYSTEM,
-		       BTRFS_BLOCK_GROUP_METADATA,
-		       BTRFS_BLOCK_GROUP_DATA | BTRFS_BLOCK_GROUP_METADATA};
+	static const u64 types[] = {
+		BTRFS_BLOCK_GROUP_DATA,
+		BTRFS_BLOCK_GROUP_SYSTEM,
+		BTRFS_BLOCK_GROUP_METADATA,
+		BTRFS_BLOCK_GROUP_DATA | BTRFS_BLOCK_GROUP_METADATA
+	};
 	int num_types = 4;
 	int alloc_size;
 	int ret = 0;
@@ -4500,8 +4491,8 @@ static long btrfs_ioctl_ino_to_path(struct btrfs_root *root, void __user *arg)
 		ipath->fspath->val[i] = rel_ptr;
 	}
 
-	ret = copy_to_user((void *)(unsigned long)ipa->fspath,
-			   (void *)(unsigned long)ipath->fspath, size);
+	ret = copy_to_user((void __user *)(unsigned long)ipa->fspath,
+			   ipath->fspath, size);
 	if (ret) {
 		ret = -EFAULT;
 		goto out;
@@ -4572,8 +4563,8 @@ static long btrfs_ioctl_logical_to_ino(struct btrfs_fs_info *fs_info,
 	if (ret < 0)
 		goto out;
 
-	ret = copy_to_user((void *)(unsigned long)loi->inodes,
-			   (void *)(unsigned long)inodes, size);
+	ret = copy_to_user((void __user *)(unsigned long)loi->inodes, inodes,
+			   size);
 	if (ret)
 		ret = -EFAULT;
 
