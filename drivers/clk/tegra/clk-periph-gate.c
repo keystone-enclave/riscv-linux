@@ -141,10 +141,8 @@ struct clk *tegra_clk_register_periph_gate(const char *name,
 		return ERR_PTR(-EINVAL);
 
 	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
-	if (!gate) {
-		pr_err("%s: could not allocate periph gate clk\n", __func__);
+	if (!gate)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	init.name = name;
 	init.flags = flags;
