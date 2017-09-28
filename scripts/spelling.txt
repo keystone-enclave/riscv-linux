@@ -492,7 +492,7 @@ failied||failed
 faillure||failure
 failue||failure
 failuer||failure
-failng|failing
+failng||failing
 faireness||fairness
 falied||failed
 faliure||failure
@@ -1118,7 +1118,7 @@ swithced||switched
 swithcing||switching
 swithed||switched
 swithing||switching
-swtich|switch
+swtich||switch
 symetric||symmetric
 synax||syntax
 synchonized||synchronized
