@@ -865,11 +865,13 @@ static int __zram_bvec_read(struct zram *zram, struct page *page, u32 index,
 
 	zram_slot_lock(zram, index);
 	handle = zram_get_handle(zram, index);
-	if (unlikely(!handle || zram_test_flag(zram, index, ZRAM_SAME))) {
+	if (!handle || zram_test_flag(zram, index, ZRAM_SAME)) {
+		unsigned long value;
 		void *mem;
 
+		value = handle ? zram_get_element(zram, index) : 0;
 		mem = kmap_atomic(page);
-		zram_fill_page(mem, PAGE_SIZE, zram_get_element(zram, index));
+		zram_fill_page(mem, PAGE_SIZE, value);
 		kunmap_atomic(mem);
 		zram_slot_unlock(zram, index);
 		return 0;
