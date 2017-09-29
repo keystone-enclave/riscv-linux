@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2016 Hans de Goede <hdegoede@redhat.com>
+ * Copyright (C) 2017 Antony Antony <antony@phenome.org>
+ * Copyright (C) 2016 ARM Ltd.
  *
  * This file is dual-licensed: you can use it either under the terms
  * of the GPL or the X11 license, at your option. Note that this dual
@@ -41,20 +42,18 @@
  */
 
 /dts-v1/;
-#include "sun8i-h3.dtsi"
-#include "sunxi-common-regulators.dtsi"
+#include "sun50i-h5.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/pinctrl/sun4i-a10.h>
 
 / {
-	model = "Xunlong Orange Pi 2";
-	compatible = "xunlong,orangepi-2", "allwinner,sun8i-h3";
+	model = "FriendlyARM NanoPi NEO Plus2";
+	compatible = "friendlyarm,nanopi-neo-plus2", "allwinner,sun50i-h5";
 
 	aliases {
 		serial0 = &uart0;
-		/* ethernet0 is the H3 emac, defined in sun8i-h3.dtsi */
-		ethernet1 = &rtl8189;
 	};
 
 	chosen {
@@ -63,63 +62,74 @@
 
 	leds {
 		compatible = "gpio-leds";
-		pinctrl-names = "default";
-		pinctrl-0 = <&leds_opc>, <&leds_r_opc>;
 
-		status_led {
-			label = "orangepi:red:status";
-			gpios = <&pio 0 15 GPIO_ACTIVE_HIGH>;
-		};
-
-		pwr_led {
-			label = "orangepi:green:pwr";
+		pwr {
+			label = "nanopi:green:pwr";
 			gpios = <&r_pio 0 10 GPIO_ACTIVE_HIGH>;
 			default-state = "on";
 		};
+
+		status {
+			label = "nanopi:red:status";
+			gpios = <&pio 0 20 GPIO_ACTIVE_HIGH>;
+		};
 	};
 
-	r_gpio_keys {
-		compatible = "gpio-keys";
+	reg_gmac_3v3: gmac-3v3 {
+		compatible = "regulator-fixed";
 		pinctrl-names = "default";
-		pinctrl-0 = <&sw_r_opc>;
+		regulator-name = "gmac-3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		startup-delay-us = <100000>;
+		enable-active-high;
+		gpio = <&pio 3 6 GPIO_ACTIVE_HIGH>;
+	};
 
-		sw2 {
-			label = "sw2";
-			linux,code = <BTN_1>;
-			gpios = <&r_pio 0 4 GPIO_ACTIVE_LOW>;
-		};
+	reg_vcc3v3: vcc3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
 
-		sw4 {
-			label = "sw4";
-			linux,code = <BTN_0>;
-			gpios = <&r_pio 0 3 GPIO_ACTIVE_LOW>;
-		};
+	vdd_cpux: gpio-regulator {
+		compatible = "regulator-gpio";
+		pinctrl-names = "default";
+		regulator-name = "vdd-cpux";
+		regulator-type = "voltage";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <1100000>;
+		regulator-max-microvolt = <1300000>;
+		regulator-ramp-delay = <50>; /* 4ms */
+		gpios = <&r_pio 0 6 GPIO_ACTIVE_HIGH>;
+		gpios-states = <0x1>;
+		states = <1100000 0x0
+			  1300000 0x1>;
 	};
 
 	wifi_pwrseq: wifi_pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		pinctrl-names = "default";
-		pinctrl-0 = <&wifi_pwrseq_pin_orangepi>;
-		reset-gpios = <&r_pio 0 7 GPIO_ACTIVE_LOW>; /* PL7 WIFI_EN */
+		reset-gpios = <&r_pio 0 7 GPIO_ACTIVE_LOW>; /* PL7 */
+		post-power-on-delay-ms = <200>;
 	};
 };
 
 &codec {
-	allwinner,pa-gpios = <&pio 0 16 GPIO_ACTIVE_HIGH>; /* PA16 */
 	allwinner,audio-routing =
-		"Speaker", "LINEOUT",
+		"Line Out", "LINEOUT",
 		"MIC1", "Mic",
 		"Mic",  "MBIAS";
 	status = "okay";
 };
 
-&ehci1 {
+&ehci0 {
 	status = "okay";
 };
 
-&ir {
-	pinctrl-names = "default";
-	pinctrl-0 = <&ir_pins_a>;
+&ehci3 {
 	status = "okay";
 };
 
@@ -128,8 +138,7 @@
 	pinctrl-0 = <&mmc0_pins_a>, <&mmc0_cd_pin>;
 	vmmc-supply = <&reg_vcc3v3>;
 	bus-width = <4>;
-	cd-gpios = <&pio 5 6 GPIO_ACTIVE_HIGH>; /* PF6 */
-	cd-inverted;
+	cd-gpios = <&pio 5 6 GPIO_ACTIVE_LOW>; /* PF6 */
 	status = "okay";
 };
 
@@ -137,46 +146,33 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc1_pins_a>;
 	vmmc-supply = <&reg_vcc3v3>;
+	vqmmc-supply = <&reg_vcc3v3>;
 	mmc-pwrseq = <&wifi_pwrseq>;
 	bus-width = <4>;
 	non-removable;
 	status = "okay";
 
-	/*
-	 * Explicitly define the sdio device, so that we can add an ethernet
-	 * alias for it (which e.g. makes u-boot set a mac-address).
-	 */
-	rtl8189: sdio_wifi@1 {
+	brcmf: wifi@1 {
 		reg = <1>;
+		compatible = "brcm,bcm4329-fmac";
 	};
 };
 
-&pio {
-	leds_opc: led_pins {
-		pins = "PA15";
-		function = "gpio_out";
-	};
+&mmc2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc2_8bit_pins>;
+	vmmc-supply = <&reg_vcc3v3>;
+	bus-width = <8>;
+	non-removable;
+	cap-mmc-hw-reset;
+	status = "okay";
 };
 
-&r_pio {
-	leds_r_opc: led_pins {
-		pins = "PL10";
-		function = "gpio_out";
-	};
-
-	sw_r_opc: key_pins {
-		pins = "PL3", "PL4";
-		function = "gpio_in";
-	};
-
-	wifi_pwrseq_pin_orangepi: wifi_pwrseq_pin {
-		pins = "PL7";
-		function = "gpio_out";
-	};
+&ohci0 {
+	status = "okay";
 };
 
-&reg_usb1_vbus {
-	gpio = <&pio 6 13 GPIO_ACTIVE_HIGH>;
+&ohci3 {
 	status = "okay";
 };
 
@@ -186,25 +182,12 @@
 	status = "okay";
 };
 
-&uart1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&uart1_pins>;
-	status = "disabled";
-};
-
-&uart2 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&uart2_pins>;
-	status = "disabled";
-};
-
-&uart3 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&uart3_pins>;
-	status = "disabled";
+&usb_otg {
+	dr_mode = "host";
+	status = "okay";
 };
 
 &usbphy {
-	usb1_vbus-supply = <&reg_usb1_vbus>;
+	/* USB Type-A ports' VBUS is always on */
 	status = "okay";
 };
