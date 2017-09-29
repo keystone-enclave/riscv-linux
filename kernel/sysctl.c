@@ -1370,6 +1370,13 @@ static struct ctl_table vm_table[] = {
 		.mode           = 0644,
 		.proc_handler   = &hugetlb_mempolicy_sysctl_handler,
 	},
+	{
+		.procname	= "numa_stats_mode",
+		.data		= sysctl_vm_numa_stats_mode,
+		.maxlen		= VM_NUMA_STAT_MODE_LEN,
+		.mode		= 0644,
+		.proc_handler	= sysctl_vm_numa_stats_mode_handler,
+	},
 #endif
 	 {
 		.procname	= "hugetlb_shm_group",
@@ -2181,8 +2188,6 @@ static int do_proc_douintvec_conv(unsigned long *lvalp,
 				  int write, void *data)
 {
 	if (write) {
-		if (*lvalp > UINT_MAX)
-			return -EINVAL;
 		if (*lvalp > UINT_MAX)
 			return -EINVAL;
 		*valp = *lvalp;
