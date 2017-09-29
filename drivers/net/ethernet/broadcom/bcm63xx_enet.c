@@ -1857,9 +1857,8 @@ static int bcm_enet_probe(struct platform_device *pdev)
 	spin_lock_init(&priv->rx_lock);
 
 	/* init rx timeout (used for oom) */
-	init_timer(&priv->rx_timeout);
-	priv->rx_timeout.function = bcm_enet_refill_rx_timer;
-	priv->rx_timeout.data = (unsigned long)dev;
+	setup_timer(&priv->rx_timeout, bcm_enet_refill_rx_timer,
+		    (unsigned long)dev);
 
 	/* init the mib update lock&work */
 	mutex_init(&priv->mib_update_lock);
@@ -2332,11 +2331,8 @@ static int bcm_enetsw_open(struct net_device *dev)
 	}
 
 	/* start phy polling timer */
-	init_timer(&priv->swphy_poll);
-	priv->swphy_poll.function = swphy_poll_timer;
-	priv->swphy_poll.data = (unsigned long)priv;
-	priv->swphy_poll.expires = jiffies;
-	add_timer(&priv->swphy_poll);
+	setup_timer(&priv->swphy_poll, swphy_poll_timer, (unsigned long)priv);
+	mod_timer(&priv->swphy_poll, jiffies);
 	return 0;
 
 out:
