@@ -709,7 +709,6 @@ struct btrfs_delayed_root;
 #define BTRFS_FS_OPEN				5
 #define BTRFS_FS_QUOTA_ENABLED			6
 #define BTRFS_FS_QUOTA_ENABLING			7
-#define BTRFS_FS_QUOTA_DISABLING		8
 #define BTRFS_FS_UPDATE_UUID_TREE_GEN		9
 #define BTRFS_FS_CREATING_FREE_SPACE_TREE	10
 #define BTRFS_FS_BTREE_ERR			11
@@ -791,6 +790,7 @@ struct btrfs_fs_info {
 	 */
 	unsigned long pending_changes;
 	unsigned long compress_type:4;
+	unsigned int compress_level;
 	int commit_interval;
 	/*
 	 * It is a suggestive number, the read side is safe even it gets a
@@ -2822,9 +2822,7 @@ enum btrfs_compare_tree_result {
 	BTRFS_COMPARE_TREE_CHANGED,
 	BTRFS_COMPARE_TREE_SAME,
 };
-typedef int (*btrfs_changed_cb_t)(struct btrfs_root *left_root,
-				  struct btrfs_root *right_root,
-				  struct btrfs_path *left_path,
+typedef int (*btrfs_changed_cb_t)(struct btrfs_path *left_path,
 				  struct btrfs_path *right_path,
 				  struct btrfs_key *key,
 				  enum btrfs_compare_tree_result result,
