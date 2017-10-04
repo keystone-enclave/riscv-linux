@@ -21,6 +21,7 @@
  *
  */
 
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -778,15 +779,18 @@ int add_mtd_partitions(struct mtd_info *master,
 {
 	struct mtd_part *slave;
 	uint64_t cur_offset = 0;
-	int i;
+	int ret = 0, i;
+	char *link;
 
 	printk(KERN_NOTICE "Creating %d MTD partitions on \"%s\":\n", nbparts, master->name);
+	link = kasprintf(GFP_KERNEL, "../%s", dev_name(&master->dev));
 
 	for (i = 0; i < nbparts; i++) {
 		slave = allocate_partition(master, parts + i, i, cur_offset);
 		if (IS_ERR(slave)) {
 			del_mtd_partitions(master);
-			return PTR_ERR(slave);
+			ret = PTR_ERR(slave);
+			break;
 		}
 
 		mutex_lock(&mtd_partitions_mutex);
@@ -798,10 +802,13 @@ int add_mtd_partitions(struct mtd_info *master,
 		if (parts[i].types)
 			mtd_parse_part(slave, parts[i].types);
 
+		debugfs_create_symlink("master", slave->mtd.dbg.dfs_dir, link);
 		cur_offset = slave->offset + slave->mtd.size;
 	}
 
-	return 0;
+	kfree(link);
+
+	return ret;
 }
 
 static DEFINE_SPINLOCK(part_parser_lock);
