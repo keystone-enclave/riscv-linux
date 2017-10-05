@@ -44,7 +44,10 @@ struct rsnd_dvc {
 	struct rsnd_kctrl_cfg_s ren;	/* Ramp Enable */
 	struct rsnd_kctrl_cfg_s rup;	/* Ramp Rate Up */
 	struct rsnd_kctrl_cfg_s rdown;	/* Ramp Rate Down */
+	u32 flags;
 };
+
+#define KCTRL_INITIALIZED	(1 << 0)
 
 #define rsnd_dvc_get(priv, id) ((struct rsnd_dvc *)(priv->dvc) + id)
 #define rsnd_dvc_nr(priv) ((priv)->dvc_nr)
@@ -57,33 +60,6 @@ struct rsnd_dvc {
 	     ((i) < rsnd_dvc_nr(priv)) &&			\
 	     ((pos) = (struct rsnd_dvc *)(priv)->dvc + i);	\
 	     i++)
-
-static const char * const dvc_ramp_rate[] = {
-	"128 dB/1 step",	 /* 00000 */
-	"64 dB/1 step",		 /* 00001 */
-	"32 dB/1 step",		 /* 00010 */
-	"16 dB/1 step",		 /* 00011 */
-	"8 dB/1 step",		 /* 00100 */
-	"4 dB/1 step",		 /* 00101 */
-	"2 dB/1 step",		 /* 00110 */
-	"1 dB/1 step",		 /* 00111 */
-	"0.5 dB/1 step",	 /* 01000 */
-	"0.25 dB/1 step",	 /* 01001 */
-	"0.125 dB/1 step",	 /* 01010 */
-	"0.125 dB/2 steps",	 /* 01011 */
-	"0.125 dB/4 steps",	 /* 01100 */
-	"0.125 dB/8 steps",	 /* 01101 */
-	"0.125 dB/16 steps",	 /* 01110 */
-	"0.125 dB/32 steps",	 /* 01111 */
-	"0.125 dB/64 steps",	 /* 10000 */
-	"0.125 dB/128 steps",	 /* 10001 */
-	"0.125 dB/256 steps",	 /* 10010 */
-	"0.125 dB/512 steps",	 /* 10011 */
-	"0.125 dB/1024 steps",	 /* 10100 */
-	"0.125 dB/2048 steps",	 /* 10101 */
-	"0.125 dB/4096 steps",	 /* 10110 */
-	"0.125 dB/8192 steps",	 /* 10111 */
-};
 
 static void rsnd_dvc_activation(struct rsnd_mod *mod)
 {
@@ -254,6 +230,9 @@ static int rsnd_dvc_pcm_new(struct rsnd_mod *mod,
 	int channels = rsnd_rdai_channels_get(rdai);
 	int ret;
 
+	if (rsnd_flags_has(dvc, KCTRL_INITIALIZED))
+		return 0;
+
 	/* Volume */
 	ret = rsnd_kctrl_new_m(mod, io, rtd,
 			is_play ?
@@ -292,7 +271,8 @@ static int rsnd_dvc_pcm_new(struct rsnd_mod *mod,
 			rsnd_kctrl_accept_anytime,
 			rsnd_dvc_volume_update,
 			&dvc->rup,
-			dvc_ramp_rate);
+			volume_ramp_rate,
+			VOLUME_RAMP_MAX_DVC);
 	if (ret < 0)
 		return ret;
 
@@ -302,10 +282,13 @@ static int rsnd_dvc_pcm_new(struct rsnd_mod *mod,
 			rsnd_kctrl_accept_anytime,
 			rsnd_dvc_volume_update,
 			&dvc->rdown,
-			dvc_ramp_rate);
+			volume_ramp_rate,
+			VOLUME_RAMP_MAX_DVC);
 
 	if (ret < 0)
 		return ret;
+
+	rsnd_flags_set(dvc, KCTRL_INITIALIZED);
 
 	return 0;
 }
