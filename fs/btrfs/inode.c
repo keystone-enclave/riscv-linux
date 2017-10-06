@@ -558,7 +558,7 @@ again:
 cont:
 	if (start == 0) {
 		/* lets try to make an inline extent */
-		if (ret || total_in < (actual_end - start)) {
+		if (ret || total_in < actual_end) {
 			/* we didn't compress the entire range, try
 			 * to make an uncompressed inline extent.
 			 */
@@ -8560,7 +8560,7 @@ __btrfs_submit_dio_bio(struct bio *bio, struct inode *inode, u64 file_offset,
 			goto err;
 	}
 map:
-	ret = btrfs_map_bio(fs_info, bio, 0, async_submit);
+	ret = btrfs_map_bio(fs_info, bio, 0, 0);
 err:
 	bio_put(bio);
 	return ret;
@@ -8769,7 +8769,6 @@ free_ordered:
 }
 
 static ssize_t check_direct_IO(struct btrfs_fs_info *fs_info,
-			       struct kiocb *iocb,
 			       const struct iov_iter *iter, loff_t offset)
 {
 	int seg;
@@ -8816,7 +8815,7 @@ static ssize_t btrfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	bool relock = false;
 	ssize_t ret;
 
-	if (check_direct_IO(fs_info, iocb, iter, offset))
+	if (check_direct_IO(fs_info, iter, offset))
 		return 0;
 
 	inode_dio_begin(inode);
