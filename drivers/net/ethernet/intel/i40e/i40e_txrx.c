@@ -960,14 +960,14 @@ static bool i40e_set_new_dynamic_itr(struct i40e_ring_container *rc)
 {
 	enum i40e_latency_range new_latency_range = rc->latency_range;
 	u32 new_itr = rc->itr;
-	int bytes_per_int;
+	int bytes_per_usec;
 	unsigned int usecs, estimated_usecs;
 
 	if (rc->total_packets == 0 || !rc->itr)
 		return false;
 
 	usecs = (rc->itr << 1) * ITR_COUNTDOWN_START;
-	bytes_per_int = rc->total_bytes / usecs;
+	bytes_per_usec = rc->total_bytes / usecs;
 
 	/* The calculations in this algorithm depend on interrupts actually
 	 * firing at the ITR rate. This may not happen if the packet rate is
@@ -993,18 +993,18 @@ static bool i40e_set_new_dynamic_itr(struct i40e_ring_container *rc)
 	 */
 	switch (new_latency_range) {
 	case I40E_LOWEST_LATENCY:
-		if (bytes_per_int > 10)
+		if (bytes_per_usec > 10)
 			new_latency_range = I40E_LOW_LATENCY;
 		break;
 	case I40E_LOW_LATENCY:
-		if (bytes_per_int > 20)
+		if (bytes_per_usec > 20)
 			new_latency_range = I40E_BULK_LATENCY;
-		else if (bytes_per_int <= 10)
+		else if (bytes_per_usec <= 10)
 			new_latency_range = I40E_LOWEST_LATENCY;
 		break;
 	case I40E_BULK_LATENCY:
 	default:
-		if (bytes_per_int <= 20)
+		if (bytes_per_usec <= 20)
 			new_latency_range = I40E_LOW_LATENCY;
 		break;
 	}
@@ -2107,6 +2107,7 @@ static int i40e_clean_rx_irq(struct i40e_ring *rx_ring, int budget)
 		if (!skb) {
 			xdp.data = page_address(rx_buffer->page) +
 				   rx_buffer->page_offset;
+			xdp_set_data_meta_invalid(&xdp);
 			xdp.data_hard_start = xdp.data -
 					      i40e_rx_offset(rx_ring);
 			xdp.data_end = xdp.data + size;
@@ -3166,38 +3167,12 @@ static inline int i40e_tx_map(struct i40e_ring *tx_ring, struct sk_buff *skb,
 	/* write last descriptor with EOP bit */
 	td_cmd |= I40E_TX_DESC_CMD_EOP;
 
-	/* We can OR these values together as they both are checked against
-	 * 4 below and at this point desc_count will be used as a boolean value
-	 * after this if/else block.
+	/* We OR these values together to check both against 4 (WB_STRIDE)
+	 * below. This is safe since we don't re-use desc_count afterwards.
 	 */
 	desc_count |= ++tx_ring->packet_stride;
 
-	/* Algorithm to optimize tail and RS bit setting:
-	 * if queue is stopped
-	 *	mark RS bit
-	 *	reset packet counter
-	 * else if xmit_more is supported and is true
-	 *	advance packet counter to 4
-	 *	reset desc_count to 0
-	 *
-	 * if desc_count >= 4
-	 *	mark RS bit
-	 *	reset packet counter
-	 * if desc_count > 0
-	 *	update tail
-	 *
-	 * Note: If there are less than 4 descriptors
-	 * pending and interrupts were disabled the service task will
-	 * trigger a force WB.
-	 */
-	if (netif_xmit_stopped(txring_txq(tx_ring))) {
-		goto do_rs;
-	} else if (skb->xmit_more) {
-		/* set stride to arm on next packet and reset desc_count */
-		tx_ring->packet_stride = WB_STRIDE;
-		desc_count = 0;
-	} else if (desc_count >= WB_STRIDE) {
-do_rs:
+	if (desc_count >= WB_STRIDE) {
 		/* write last descriptor with RS bit set */
 		td_cmd |= I40E_TX_DESC_CMD_RS;
 		tx_ring->packet_stride = 0;
@@ -3218,7 +3193,7 @@ do_rs:
 	first->next_to_watch = tx_desc;
 
 	/* notify HW of packet */
-	if (desc_count) {
+	if (netif_xmit_stopped(txring_txq(tx_ring)) || !skb->xmit_more) {
 		writel(i, tx_ring->tail);
 
 		/* we need this if more than one processor can write to our tail
