@@ -132,7 +132,7 @@
 			reg-names = "mux", "pull", "gpio";
 			gpio-controller;
 			#gpio-cells = <2>;
-			gpio-ranges = <&pinctrl_aobus 0 120 16>;
+			gpio-ranges = <&pinctrl_aobus 0 0 16>;
 		};
 
 		uart_ao_a_pins: uart_ao_a {
@@ -171,6 +171,11 @@
 		#reset-cells = <1>;
 		compatible = "amlogic,meson8-clkc";
 		reg = <0x8000 0x4>, <0x4000 0x460>;
+	};
+
+	analog_top: analog-top@81a8 {
+		compatible = "amlogic,meson8-analog-top", "syscon";
+		reg = <0x81a8 0x14>;
 	};
 
 	pwm_ef: pwm@86c0 {
