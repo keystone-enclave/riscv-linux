@@ -601,6 +601,10 @@ struct rsnd_priv {
 #define rsnd_is_gen1(priv)	(((priv)->flags & RSND_GEN_MASK) == RSND_GEN1)
 #define rsnd_is_gen2(priv)	(((priv)->flags & RSND_GEN_MASK) == RSND_GEN2)
 
+#define rsnd_flags_has(p, f) ((p)->flags & (f))
+#define rsnd_flags_set(p, f) ((p)->flags |= (f))
+#define rsnd_flags_del(p, f) ((p)->flags &= ~(f))
+
 /*
  *	rsnd_kctrl
  */
@@ -652,9 +656,13 @@ int rsnd_kctrl_new(struct rsnd_mod *mod,
 	rsnd_kctrl_new(mod, io, rtd, name, accept, update, rsnd_kctrl_init_s(cfg), \
 		       NULL, 1, max)
 
-#define rsnd_kctrl_new_e(mod, io, rtd, name, accept, update, cfg, texts)	\
+#define rsnd_kctrl_new_e(mod, io, rtd, name, accept, update, cfg, texts, size) \
 	rsnd_kctrl_new(mod, io, rtd, name, accept, update, rsnd_kctrl_init_s(cfg), \
-		       texts, 1, ARRAY_SIZE(texts))
+		       texts, 1, size)
+
+extern const char * const volume_ramp_rate[];
+#define VOLUME_RAMP_MAX_DVC	(0x17 + 1)
+#define VOLUME_RAMP_MAX_MIX	(0x0a + 1)
 
 /*
  *	R-Car SSI
