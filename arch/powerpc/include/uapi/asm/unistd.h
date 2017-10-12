@@ -396,5 +396,6 @@
 #define __NR_kexec_file_load	382
 #define __NR_statx		383
 #define __NR_rseq		384
+#define __NR_cpu_opv		385
 
 #endif /* _UAPI_ASM_POWERPC_UNISTD_H_ */
