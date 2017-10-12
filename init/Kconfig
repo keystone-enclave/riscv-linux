@@ -1404,6 +1404,7 @@ config RSEQ
 	bool "Enable rseq() system call" if EXPERT
 	default y
 	depends on HAVE_RSEQ
+	select CPU_OPV
 	select MEMBARRIER
 	help
 	  Enable the restartable sequences system call. It provides a
@@ -1411,6 +1412,19 @@ config RSEQ
 	  speeds up getting the current CPU number from user-space,
 	  as well as an ABI to speed up user-space operations on
 	  per-CPU data.
+
+	  If unsure, say Y.
+
+config CPU_OPV
+	bool "Enable cpu_opv() system call" if EXPERT
+	default y
+	help
+	  Enable the CPU preempt-off operation vector system call.
+	  It allows user-space to perform a sequence of operations on
+	  per-cpu data with preemption disabled. Useful as
+	  single-stepping fall-back for restartable sequences, and for
+	  performing more complex operations on per-cpu data that would
+	  not be otherwise possible to do with restartable sequences.
 
 	  If unsure, say Y.
 

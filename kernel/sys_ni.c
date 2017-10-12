@@ -262,3 +262,4 @@ cond_syscall(sys_pkey_free);
 
 /* restartable sequence */
 cond_syscall(sys_rseq);
+cond_syscall(sys_cpu_opv);

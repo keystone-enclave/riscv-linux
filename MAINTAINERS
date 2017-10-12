@@ -3675,6 +3675,13 @@ B:	https://bugzilla.kernel.org
 F:	drivers/cpuidle/*
 F:	include/linux/cpuidle.h
 
+CPU NON-PREEMPTIBLE OPERATION VECTOR SUPPORT
+M:	Mathieu Desnoyers <mathieu.desnoyers@efficios.com>
+L:	linux-kernel@vger.kernel.org
+S:	Supported
+F:	kernel/cpu_opv.c
+F:	include/uapi/linux/cpu_opv.h
+
 CRAMFS FILESYSTEM
 W:	http://sourceforge.net/projects/cramfs/
 S:	Orphan / Obsolete
