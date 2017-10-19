@@ -1,0 +1,64 @@
+next/soc
+	ep93xx/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-integrator tags/ep93xx-for-arm-soc-1
+	renesas/defconfig
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-defconfig-for-v4.15
+	renesas/soc
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-soc-for-v4.15
+	broadcom/soc
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/soc
+	integrator/pciv3-delete
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-integrator tags/integrator-pciv3-delete
+	renesas/arm64-defconfig
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-defconfig-for-v4.15
+	vexpress/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/vexpress-updates-4.15
+	renesas/soc2
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-soc2-for-v4.15
+	patch
+		arm64: Add ThunderX drivers to defconfig
+		arm64: defconfig: Enable QCOM_IOMMU
+	hisi/defconfig
+		git://github.com/hisilicon/linux-hisi tags/hisi-defconfig-for-4.15
+	devinci/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.15/defconfig
+	omap/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/soc-signed
+	samsung/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-defconfig-4.15
+	samsung/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.15
+	zynq/soc
+		https://github.com/Xilinx/linux-xlnx tags/zynq-soc-for-4.15
+	qcom/arm64-defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-arm64-defconfig-for-4.15
+	qcom/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-defconfig-for-4.15
+	patch
+		ARM: defconfig: select the right SX150X driver
+	stm32-defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-defconfig-for-v4.15-1
+
+next/dt
+
+next/drivers
+
+fixes
+	<no branch> (80a86dbd98497ea7ccf77a82458baf0779de87d6)
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.14/devicetree-fixes
+	<no branch> (27d90f46f253ccc7c5447f6fa62505acb1c246fe)
+		git://git.kernel.org/pub/scm/linux/kernel/git/nferre/linux-at91 tags/at91-fixes2
+	<no branch> (2bbbd96357ce76cc45ec722c00f654aa7b189112)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.14-2
+	<no branch> (1c86c9dd82f859b474474a7fee0d5195da2c9c1d)
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.14
+	<no branch> (b521102d935d0501f5d95242ade2988f3f069c77)
+		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.14-rockchip-dts64fixes-2
+	<no branch> (f450f28e70a2378d9d6ded0932fe480055888cfa)
+		git://git.pengutronix.de/git/pza/linux tags/reset-fixes-for-4.14-2
+	patch
+		ARM: dts: fix PCLK name on Gemini and MOXA ART
+		ARM: ux500: Fix regression while init PM domains
+	<no branch> (829e4887b8676255778e162efc57e4a0f18f8bb3)
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-fixes-for-v4.14
+
