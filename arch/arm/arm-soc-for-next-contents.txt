@@ -38,8 +38,52 @@ next/soc
 		ARM: defconfig: select the right SX150X driver
 	stm32-defconfig
 		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-defconfig-for-v4.15-1
+	omap/ti-sysc
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/ti-sysc-signed
 
 next/dt
+	patch
+		arm: boot: dts: artpec6: Remove unnecessary interrupt-parent property from sub-nodes
+		arm: dts: fix unit-address leading 0s
+		arm64: dts: fix unit-address leading 0s
+	integrator/pciv3-dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-integrator tags/integrator-pciv3-dts
+	renesas/arm64-dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-dt-for-v4.15
+	renesas/dt-bindinds
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-dt-bindings-for-v4.15
+	renesas/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-dt-for-v4.15
+	socfpga/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_dts_for_v4.15_part1
+	aspeed/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/joel/aspeed tags/aspeed-4.15-devicetree
+	juno/updates
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/juno-updates-4.15
+	patch
+		ARM: dts: Add TVE200 to the Gemini SoC DTSI
+	hisi/arm64-dt
+		git://github.com/hisilicon/linux-hisi tags/hisi-arm64-dt-for-4.15
+	davinci/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.15/dt
+	samsung/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-4.15
+	zynq/dt
+		https://github.com/Xilinx/linux-xlnx tags/zynq-dt-for-4.15
+	qcom/arm64-dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-arm64-for-4.15
+	qcom/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-dts-for-4.15
+	stm32/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-dt-for-v4.15-1
+	rockchip/dt32
+		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.15-rockchip-dts32-1
+	rockchip/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.15-rockchip-dts64-1
+	omap/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/fixes-dt-signed
+	omap/dt-changes
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/dt-signed
 
 next/drivers
 
@@ -61,4 +105,3 @@ fixes
 		ARM: ux500: Fix regression while init PM domains
 	<no branch> (829e4887b8676255778e162efc57e4a0f18f8bb3)
 		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-fixes-for-v4.14
-
