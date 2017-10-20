@@ -86,6 +86,22 @@ next/dt
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/dt-signed
 
 next/drivers
+	broadcom/drivers
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/drivers
+	renesas/drivers
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-drivers-for-v4.15
+	drivers/scpi
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scpi-updates-4.15
+	samsung/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.15
+	qcom/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-drivers-for-4.15
+	omap/gpmc
+		https://github.com/rogerq/linux tags/gpmc-omap-for-v4.15
+	drivers/reset
+		git://git.pengutronix.de/git/pza/linux tags/reset-for-4.15
+	fsl/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/leo/linux tags/soc-fsl-for-4.14
 
 fixes
 	<no branch> (80a86dbd98497ea7ccf77a82458baf0779de87d6)
@@ -105,3 +121,6 @@ fixes
 		ARM: ux500: Fix regression while init PM domains
 	<no branch> (829e4887b8676255778e162efc57e4a0f18f8bb3)
 		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-fixes-for-v4.14
+	<no branch> (a231d2783c332ef3e3ba238e82dbe599ff41ba14)
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.14
+
