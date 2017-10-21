@@ -33,6 +33,8 @@ extern struct attribute_group dax_attribute_group;
 struct dax_device *dax_get_by_host(const char *host);
 struct dax_device *alloc_dax(void *private, const char *host,
 		const struct dax_operations *ops);
+struct dax_device *alloc_dax_devmap(void *private, const char *host,
+		const struct dax_operations *ops, struct dev_pagemap *pgmap);
 void put_dax(struct dax_device *dax_dev);
 void kill_dax(struct dax_device *dax_dev);
 void dax_write_cache(struct dax_device *dax_dev, bool wc);
@@ -49,6 +51,12 @@ static inline struct dax_device *alloc_dax(void *private, const char *host,
 	 * Callers should check IS_ENABLED(CONFIG_DAX) to know if this
 	 * NULL is an error or expected.
 	 */
+	return NULL;
+}
+static inline struct dax_device *alloc_dax_devmap(void *private,
+		const char *host, const struct dax_operations *ops,
+		struct dev_pagemap *pgmap)
+{
 	return NULL;
 }
 static inline void put_dax(struct dax_device *dax_dev)
@@ -85,7 +93,6 @@ static inline void fs_put_dax(struct dax_device *dax_dev)
 	put_dax(dax_dev);
 }
 
-struct dax_device *fs_dax_get_by_bdev(struct block_device *bdev);
 int dax_writeback_mapping_range(struct address_space *mapping,
 		struct block_device *bdev, struct writeback_control *wbc);
 struct dax_device *fs_dax_claim(struct dax_device *dax_dev, void *owner);
@@ -121,11 +128,6 @@ static inline struct dax_device *fs_dax_get_by_host(const char *host)
 
 static inline void fs_put_dax(struct dax_device *dax_dev)
 {
-}
-
-static inline struct dax_device *fs_dax_get_by_bdev(struct block_device *bdev)
-{
-	return NULL;
 }
 
 static inline int dax_writeback_mapping_range(struct address_space *mapping,
