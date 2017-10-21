@@ -1403,6 +1403,9 @@ config MEMBARRIER
 config ARCH_HAS_MEMBARRIER_HOOKS
 	bool
 
+config ARCH_HAS_MEMBARRIER_SYNC_CORE
+	bool
+
 config RSEQ
 	bool "Enable rseq() system call" if EXPERT
 	default y
