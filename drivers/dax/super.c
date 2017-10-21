@@ -164,7 +164,7 @@ struct dax_device {
 	const struct dax_operations *ops;
 };
 
-#if IS_ENABLED(CONFIG_FS_DAX)
+#if IS_ENABLED(CONFIG_FS_DAX) && IS_ENABLED(CONFIG_DEV_PAGEMAP_OPS)
 static void generic_dax_pagefree(struct page *page, void *data)
 {
 	/* TODO: wakeup page-idle waiters */
@@ -191,6 +191,7 @@ static struct dax_device *__fs_dax_claim(struct dax_device *dax_dev,
 		return NULL;
 	}
 
+	dev_pagemap_get_ops();
 	pgmap->type = MEMORY_DEVICE_FS_DAX;
 	pgmap->page_free = generic_dax_pagefree;
 	pgmap->data = owner;
@@ -223,6 +224,7 @@ static void __fs_dax_release(struct dax_device *dax_dev, void *owner)
 	pgmap->type = MEMORY_DEVICE_HOST;
 	pgmap->page_free = NULL;
 	pgmap->data = NULL;
+	dev_pagemap_put_ops();
 	mutex_unlock(&devmap_lock);
 }
 

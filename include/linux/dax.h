@@ -4,6 +4,7 @@
 
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/genhd.h>
 #include <linux/blkdev.h>
 #include <linux/radix-tree.h>
 #include <asm/pgtable.h>
@@ -95,6 +96,29 @@ static inline void fs_put_dax(struct dax_device *dax_dev)
 
 int dax_writeback_mapping_range(struct address_space *mapping,
 		struct block_device *bdev, struct writeback_control *wbc);
+#else
+static inline int bdev_dax_supported(struct super_block *sb, int blocksize)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline struct dax_device *fs_dax_get_by_host(const char *host)
+{
+	return NULL;
+}
+
+static inline void fs_put_dax(struct dax_device *dax_dev)
+{
+}
+
+static inline int dax_writeback_mapping_range(struct address_space *mapping,
+		struct block_device *bdev, struct writeback_control *wbc)
+{
+	return -EOPNOTSUPP;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_FS_DAX) && IS_ENABLED(CONFIG_DEV_PAGEMAP_OPS)
 struct dax_device *fs_dax_claim(struct dax_device *dax_dev, void *owner);
 #ifdef CONFIG_BLOCK
 static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
@@ -116,32 +140,11 @@ static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
 #endif
 void fs_dax_release(struct dax_device *dax_dev, void *owner);
 #else
-static inline int bdev_dax_supported(struct super_block *sb, int blocksize)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline struct dax_device *fs_dax_get_by_host(const char *host)
-{
-	return NULL;
-}
-
-static inline void fs_put_dax(struct dax_device *dax_dev)
-{
-}
-
-static inline int dax_writeback_mapping_range(struct address_space *mapping,
-		struct block_device *bdev, struct writeback_control *wbc)
-{
-	return -EOPNOTSUPP;
-}
-
 static inline struct dax_device *fs_dax_claim(struct dax_device *dax_dev,
 		void *owner)
 {
-	return NULL;
+	return dax_dev;
 }
-
 #ifdef CONFIG_BLOCK
 static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
 		void *owner)
@@ -157,6 +160,7 @@ static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
 #endif
 static inline void fs_dax_release(struct dax_device *dax_dev, void *owner)
 {
+	fs_put_dax(dax_dev);
 }
 #endif
 
