@@ -243,6 +243,10 @@ static int membarrier_register_private_expedited(int flags)
 		return 0;
 	atomic_or(MEMBARRIER_STATE_PRIVATE_EXPEDITED,
 			&mm->membarrier_state);
+	if (flags & MEMBARRIER_FLAG_SYNC_CORE) {
+		atomic_or(MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE,
+				&mm->membarrier_state);
+	}
 	if (!(atomic_read(&mm->mm_users) == 1 && get_nr_threads(p) == 1)) {
 		/*
 		 * Ensure all future scheduler executions will observe the
