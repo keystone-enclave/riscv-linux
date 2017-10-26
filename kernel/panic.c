@@ -595,6 +595,7 @@ EXPORT_SYMBOL(warn_slowpath_null);
 
 static int clear_warn_once_set(void *data, u64 val)
 {
+	generic_bug_clear_once();
 	memset(__start_once, 0, __end_once - __start_once);
 	return 0;
 }
