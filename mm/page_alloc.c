@@ -1448,7 +1448,7 @@ static inline void __init pgdat_init_report_one_done(void)
  * Helper for deferred_init_range, free the given range, reset the counters, and
  * return number of pages freed.
  */
-static inline unsigned long __def_free(unsigned long *nr_free,
+static unsigned long __init __def_free(unsigned long *nr_free,
 				       unsigned long *free_base_pfn,
 				       struct page **page)
 {
@@ -1462,8 +1462,8 @@ static inline unsigned long __def_free(unsigned long *nr_free,
 	return nr;
 }
 
-static unsigned long deferred_init_range(int nid, int zid, unsigned long pfn,
-					 unsigned long end_pfn)
+static unsigned long __init deferred_init_range(int nid, int zid,
+				unsigned long pfn, unsigned long end_pfn)
 {
 	struct mminit_pfnnid_cache nid_init_state = { };
 	unsigned long nr_pgmask = pageblock_nr_pages - 1;
