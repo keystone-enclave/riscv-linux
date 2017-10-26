@@ -15,6 +15,8 @@
 #include <linux/hardirq.h> /* for in_interrupt() */
 #include <linux/hugetlb_inline.h>
 
+struct pagevec;
+
 /*
  * Bits in mapping->flags.
  */
@@ -615,8 +617,6 @@ static inline int fault_in_pages_readable(const char __user *uaddr, int size)
 	(void)c;
 	return 0;
 }
-
-struct pagevec;
 
 int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
