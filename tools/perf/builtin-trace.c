@@ -1131,7 +1131,7 @@ static int trace__symbols_init(struct trace *trace, struct perf_evlist *evlist)
 
 	err = __machine__synthesize_threads(trace->host, &trace->tool, &trace->opts.target,
 					    evlist->threads, trace__tool_process, false,
-					    trace->opts.proc_map_timeout);
+					    trace->opts.proc_map_timeout, 1);
 	if (err)
 		symbol__exit();
 
@@ -1828,16 +1828,14 @@ out_dump:
 	goto out_put;
 }
 
-static void bpf_output__printer(enum binary_printer_ops op,
-				unsigned int val, void *extra)
+static int bpf_output__printer(enum binary_printer_ops op,
+			       unsigned int val, void *extra __maybe_unused, FILE *fp)
 {
-	FILE *output = extra;
 	unsigned char ch = (unsigned char)val;
 
 	switch (op) {
 	case BINARY_PRINT_CHAR_DATA:
-		fprintf(output, "%c", isprint(ch) ? ch : '.');
-		break;
+		return fprintf(fp, "%c", isprint(ch) ? ch : '.');
 	case BINARY_PRINT_DATA_BEGIN:
 	case BINARY_PRINT_LINE_BEGIN:
 	case BINARY_PRINT_ADDR:
@@ -1850,13 +1848,15 @@ static void bpf_output__printer(enum binary_printer_ops op,
 	default:
 		break;
 	}
+
+	return 0;
 }
 
 static void bpf_output__fprintf(struct trace *trace,
 				struct perf_sample *sample)
 {
-	print_binary(sample->raw_data, sample->raw_size, 8,
-		     bpf_output__printer, trace->output);
+	binary__fprintf(sample->raw_data, sample->raw_size, 8,
+			bpf_output__printer, NULL, trace->output);
 }
 
 static int trace__event_handler(struct trace *trace, struct perf_evsel *evsel,
@@ -2078,6 +2078,7 @@ static int trace__record(struct trace *trace, int argc, const char **argv)
 			rec_argv[j++] = "syscalls:sys_enter,syscalls:sys_exit";
 		else {
 			pr_err("Neither raw_syscalls nor syscalls events exist.\n");
+			free(rec_argv);
 			return -1;
 		}
 	}
@@ -2730,20 +2731,23 @@ DEFINE_RESORT_RB(threads, (thread__nr_events(a->thread->priv) < thread__nr_event
 
 static size_t trace__fprintf_thread_summary(struct trace *trace, FILE *fp)
 {
-	DECLARE_RESORT_RB_MACHINE_THREADS(threads, trace->host);
 	size_t printed = trace__fprintf_threads_header(fp);
 	struct rb_node *nd;
+	int i;
 
-	if (threads == NULL) {
-		fprintf(fp, "%s", "Error sorting output by nr_events!\n");
-		return 0;
+	for (i = 0; i < THREADS__TABLE_SIZE; i++) {
+		DECLARE_RESORT_RB_MACHINE_THREADS(threads, trace->host, i);
+
+		if (threads == NULL) {
+			fprintf(fp, "%s", "Error sorting output by nr_events!\n");
+			return 0;
+		}
+
+		resort_rb__for_each_entry(nd, threads)
+			printed += trace__fprintf_thread(fp, threads_entry->thread, trace);
+
+		resort_rb__delete(threads);
 	}
-
-	resort_rb__for_each_entry(nd, threads)
-		printed += trace__fprintf_thread(fp, threads_entry->thread, trace);
-
-	resort_rb__delete(threads);
-
 	return printed;
 }
 
