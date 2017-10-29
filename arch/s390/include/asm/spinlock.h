@@ -45,6 +45,7 @@ static inline void arch_spin_relax(arch_spinlock_t *lock)
 {
 	arch_lock_relax(lock->lock);
 }
+#define arch_spin_relax		arch_spin_relax
 
 static inline u32 arch_spin_lockval(int cpu)
 {
@@ -80,6 +81,7 @@ static inline void arch_spin_lock_flags(arch_spinlock_t *lp,
 	if (!arch_spin_trylock_once(lp))
 		arch_spin_lock_wait_flags(lp, flags);
 }
+#define arch_spin_lock_flags	arch_spin_lock_flags
 
 static inline int arch_spin_trylock(arch_spinlock_t *lp)
 {
@@ -110,34 +112,19 @@ static inline void arch_spin_unlock(arch_spinlock_t *lp)
  * read-locks.
  */
 
-/**
- * read_can_lock - would read_trylock() succeed?
- * @lock: the rwlock in question.
- */
-#define arch_read_can_lock(x) ((int)(x)->lock >= 0)
-
-/**
- * write_can_lock - would write_trylock() succeed?
- * @lock: the rwlock in question.
- */
-#define arch_write_can_lock(x) ((x)->lock == 0)
-
 extern int _raw_read_trylock_retry(arch_rwlock_t *lp);
 extern int _raw_write_trylock_retry(arch_rwlock_t *lp);
 
-#define arch_read_lock_flags(lock, flags) arch_read_lock(lock)
-#define arch_write_lock_flags(lock, flags) arch_write_lock(lock)
-
 static inline int arch_read_trylock_once(arch_rwlock_t *rw)
 {
-	int old = ACCESS_ONCE(rw->lock);
+	int old = READ_ONCE(rw->lock);
 	return likely(old >= 0 &&
 		      __atomic_cmpxchg_bool(&rw->lock, old, old + 1));
 }
 
 static inline int arch_write_trylock_once(arch_rwlock_t *rw)
 {
-	int old = ACCESS_ONCE(rw->lock);
+	int old = READ_ONCE(rw->lock);
 	return likely(old == 0 &&
 		      __atomic_cmpxchg_bool(&rw->lock, 0, 0x80000000));
 }
@@ -224,7 +211,7 @@ static inline void arch_read_unlock(arch_rwlock_t *rw)
 	int old;
 
 	do {
-		old = ACCESS_ONCE(rw->lock);
+		old = READ_ONCE(rw->lock);
 	} while (!__atomic_cmpxchg_bool(&rw->lock, old, old - 1));
 }
 
@@ -268,10 +255,12 @@ static inline void arch_read_relax(arch_rwlock_t *rw)
 {
 	arch_lock_relax(rw->owner);
 }
+#define arch_read_relax		arch_read_relax
 
 static inline void arch_write_relax(arch_rwlock_t *rw)
 {
 	arch_lock_relax(rw->owner);
 }
+#define arch_write_relax	arch_write_relax
 
 #endif /* __ASM_SPINLOCK_H */
