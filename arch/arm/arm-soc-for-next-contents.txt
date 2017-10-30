@@ -40,6 +40,31 @@ next/soc
 		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-defconfig-for-v4.15-1
 	omap/ti-sysc
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/ti-sysc-signed
+	sunxi/core
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-core-for-4.15
+	tegra/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-arm64-defconfig
+	mvebu/defconfig
+		git://git.infradead.org/linux-mvebu tags/mvebu-arm64-4.15-1
+	imx/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-defconfig-4.15
+	amlogic/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-defconfig
+	keystone/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_config_4.15
+	broadcom/defconfig
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/defconfig
+	broadcom/hr2
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/soc-part2
+	broadcom/maintainer
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/maintainers
+	imx/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-soc-4.15
+	amlogic/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-soc
+	patch
+		arm64: defconfig: enable CONFIG_GPIO_UNIPHIER
+		ARM: multi_v7_defconfig: enable CONFIG_GPIO_UNIPHIER
 
 next/dt
 	patch
@@ -84,6 +109,47 @@ next/dt
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/fixes-dt-signed
 	omap/dt-changes
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/dt-signed
+	sunxi/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt-for-4.15
+	renesas/dt2
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-dt2-for-v4.15
+	tegra/dt-bindings
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-dt-bindings
+	tegra/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-arm-dt
+	broadcom/dt
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/devicetree
+	keystone/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_dts_for_4.15
+	amlogic/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt
+	uniphier/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt-v4.15
+	imx/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt-4.15
+	at91/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.15-dt
+	amlogic/dt-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt-2
+	sunxi/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt64-for-4.15
+	uniphier/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt64-v4.15
+	renesas/dt64
+renesas/dt64-2
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-dt2-for-v4.15
+	tegra/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-arm64-dt
+	mvebu/dt64
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt64-4.15-1
+	amlogic/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64
+	mediatek/dt64
+		https://github.com/mbgg/linux-mediatek tags/v4.14-next-dts64
+	imx/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt64-4.15
+	amlogic/dt64-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64-2
 
 next/drivers
 	broadcom/drivers
@@ -104,23 +170,5 @@ next/drivers
 		git://git.kernel.org/pub/scm/linux/kernel/git/leo/linux tags/soc-fsl-for-4.14
 
 fixes
-	<no branch> (80a86dbd98497ea7ccf77a82458baf0779de87d6)
-		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.14/devicetree-fixes
-	<no branch> (27d90f46f253ccc7c5447f6fa62505acb1c246fe)
-		git://git.kernel.org/pub/scm/linux/kernel/git/nferre/linux-at91 tags/at91-fixes2
-	<no branch> (2bbbd96357ce76cc45ec722c00f654aa7b189112)
-		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.14-2
-	<no branch> (1c86c9dd82f859b474474a7fee0d5195da2c9c1d)
-		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.14
-	<no branch> (b521102d935d0501f5d95242ade2988f3f069c77)
-		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.14-rockchip-dts64fixes-2
-	<no branch> (f450f28e70a2378d9d6ded0932fe480055888cfa)
-		git://git.pengutronix.de/git/pza/linux tags/reset-fixes-for-4.14-2
-	patch
-		ARM: dts: fix PCLK name on Gemini and MOXA ART
-		ARM: ux500: Fix regression while init PM domains
-	<no branch> (829e4887b8676255778e162efc57e4a0f18f8bb3)
-		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-fixes-for-v4.14
-	<no branch> (a231d2783c332ef3e3ba238e82dbe599ff41ba14)
-		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.14
-
+	<no branch> (deaa55196e0cb6eccc3d5374ddd7c47e7ec61da3)
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-fixes-v4.14
