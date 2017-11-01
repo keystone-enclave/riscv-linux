@@ -820,24 +820,14 @@ again:
 	mutex_unlock(&uuid_mutex);
 }
 
-static void __free_device(struct work_struct *work)
-{
-	struct btrfs_device *device;
-
-	device = container_of(work, struct btrfs_device, rcu_work);
-	rcu_string_free(device->name);
-	bio_put(device->flush_bio);
-	kfree(device);
-}
-
 static void free_device(struct rcu_head *head)
 {
 	struct btrfs_device *device;
 
 	device = container_of(head, struct btrfs_device, rcu);
-
-	INIT_WORK(&device->rcu_work, __free_device);
-	schedule_work(&device->rcu_work);
+	rcu_string_free(device->name);
+	bio_put(device->flush_bio);
+	kfree(device);
 }
 
 static void btrfs_close_bdev(struct btrfs_device *device)
@@ -942,12 +932,6 @@ int btrfs_close_devices(struct btrfs_fs_devices *fs_devices)
 		__btrfs_close_devices(fs_devices);
 		free_fs_devices(fs_devices);
 	}
-	/*
-	 * Wait for rcu kworkers under __btrfs_close_devices
-	 * to finish all blkdev_puts so device is really
-	 * free when umount is done.
-	 */
-	rcu_barrier();
 	return ret;
 }
 
@@ -1750,20 +1734,24 @@ static int btrfs_rm_dev_item(struct btrfs_fs_info *fs_info,
 	key.offset = device->devid;
 
 	ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
-	if (ret < 0)
-		goto out;
-
-	if (ret > 0) {
-		ret = -ENOENT;
+	if (ret) {
+		if (ret > 0)
+			ret = -ENOENT;
+		btrfs_abort_transaction(trans, ret);
+		btrfs_end_transaction(trans);
 		goto out;
 	}
 
 	ret = btrfs_del_item(trans, root, path);
-	if (ret)
-		goto out;
+	if (ret) {
+		btrfs_abort_transaction(trans, ret);
+		btrfs_end_transaction(trans);
+	}
+
 out:
 	btrfs_free_path(path);
-	btrfs_commit_transaction(trans);
+	if (!ret)
+		ret = btrfs_commit_transaction(trans);
 	return ret;
 }
 
@@ -5991,15 +5979,14 @@ static void btrfs_end_bio(struct bio *bio)
 			dev = bbio->stripes[stripe_index].dev;
 			if (dev->bdev) {
 				if (bio_op(bio) == REQ_OP_WRITE)
-					btrfs_dev_stat_inc(dev,
+					btrfs_dev_stat_inc_and_print(dev,
 						BTRFS_DEV_STAT_WRITE_ERRS);
 				else
-					btrfs_dev_stat_inc(dev,
+					btrfs_dev_stat_inc_and_print(dev,
 						BTRFS_DEV_STAT_READ_ERRS);
 				if (bio->bi_opf & REQ_PREFLUSH)
-					btrfs_dev_stat_inc(dev,
+					btrfs_dev_stat_inc_and_print(dev,
 						BTRFS_DEV_STAT_FLUSH_ERRS);
-				btrfs_dev_stat_print_on_error(dev);
 			}
 		}
 	}
@@ -7078,10 +7065,24 @@ int btrfs_run_dev_stats(struct btrfs_trans_handle *trans,
 
 	mutex_lock(&fs_devices->device_list_mutex);
 	list_for_each_entry(device, &fs_devices->devices, dev_list) {
-		if (!device->dev_stats_valid || !btrfs_dev_stats_dirty(device))
+		stats_cnt = atomic_read(&device->dev_stats_ccnt);
+		if (!device->dev_stats_valid || stats_cnt == 0)
 			continue;
 
-		stats_cnt = atomic_read(&device->dev_stats_ccnt);
+
+		/*
+		 * There is a LOAD-LOAD control dependency between the value of
+		 * dev_stats_ccnt and updating the on-disk values which requires
+		 * reading the in-memory counters. Such control dependencies
+		 * require explicit read memory barriers.
+		 *
+		 * This memory barriers pairs with smp_mb__before_atomic in
+		 * btrfs_dev_stat_inc/btrfs_dev_stat_set and with the full
+		 * barrier implied by atomic_xchg in
+		 * btrfs_dev_stats_read_and_reset
+		 */
+		smp_rmb();
+
 		ret = update_dev_stat_item(trans, fs_info, device);
 		if (!ret)
 			atomic_sub(stats_cnt, &device->dev_stats_ccnt);
