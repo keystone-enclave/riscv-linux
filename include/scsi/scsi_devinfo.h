@@ -3,7 +3,6 @@
 /*
  * Flags for SCSI devices that need special treatment
  */
-
 /* Only scan LUN 0 */
 #define BLIST_NOLUN		((__force __u32 __bitwise)(1 << 0))
 /* Known to have LUNs, force scanning.
@@ -53,5 +52,7 @@
 #define BLIST_NO_RSOC		((__force __u32 __bitwise)(1 << 29))
 /* maximum 1024 sector cdb length */
 #define BLIST_MAX_1024		((__force __u32 __bitwise)(1 << 30))
+/* Use UNMAP limit for WRITE SAME */
+#define BLIST_UNMAP_LIMIT_WS	((__force __u32 __bitwise)(1 << 31))
 
 #endif
