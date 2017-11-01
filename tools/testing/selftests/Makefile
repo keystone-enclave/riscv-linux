@@ -1,4 +1,5 @@
-TARGETS =  bpf
+TARGETS = android
+TARGETS += bpf
 TARGETS += breakpoints
 TARGETS += capabilities
 TARGETS += cpufreq
