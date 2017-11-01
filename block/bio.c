@@ -400,7 +400,7 @@ static void punt_bios_to_rescuer(struct bio_set *bs)
 
 /**
  * bio_alloc_bioset - allocate a bio for I/O
- * @gfp_mask:   the GFP_ mask given to the slab allocator
+ * @gfp_mask:   the GFP_* mask given to the slab allocator
  * @nr_iovecs:	number of iovecs to pre-allocate
  * @bs:		the bio_set to allocate from.
  *
@@ -1940,11 +1940,8 @@ void bioset_free(struct bio_set *bs)
 	if (bs->rescue_workqueue)
 		destroy_workqueue(bs->rescue_workqueue);
 
-	if (bs->bio_pool)
-		mempool_destroy(bs->bio_pool);
-
-	if (bs->bvec_pool)
-		mempool_destroy(bs->bvec_pool);
+	mempool_destroy(bs->bio_pool);
+	mempool_destroy(bs->bvec_pool);
 
 	bioset_integrity_free(bs);
 	bio_put_slab(bs);
