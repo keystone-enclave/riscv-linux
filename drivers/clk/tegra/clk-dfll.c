@@ -1631,7 +1631,7 @@ int tegra_dfll_register(struct platform_device *pdev,
 		return PTR_ERR(td->vdd_reg);
 	}
 
-	td->dvco_rst = devm_reset_control_get(td->dev, "dvco");
+	td->dvco_rst = devm_reset_control_get_exclusive(td->dev, "dvco");
 	if (IS_ERR(td->dvco_rst)) {
 		dev_err(td->dev, "couldn't get dvco reset\n");
 		return PTR_ERR(td->dvco_rst);
