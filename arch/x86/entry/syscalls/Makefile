@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 out := arch/$(SRCARCH)/include/generated/asm
 uapi := arch/$(SRCARCH)/include/generated/uapi/asm
 
