@@ -69,8 +69,6 @@ typedef struct xfs_ifork {
 						/* very small file extents */
 		char		if_inline_data[XFS_INLINE_DATA];
 						/* very small file data */
-		xfs_dev_t	if_rdev;	/* dev number if special */
-		uuid_t		if_uuid;	/* mount point value */
 	} if_u2;
 } xfs_ifork_t;
 
@@ -185,10 +183,14 @@ void		xfs_iext_irec_update_extoffs(struct xfs_ifork *, int, int);
 bool		xfs_iext_lookup_extent(struct xfs_inode *ip,
 			struct xfs_ifork *ifp, xfs_fileoff_t bno,
 			xfs_extnum_t *idxp, struct xfs_bmbt_irec *gotp);
+bool		xfs_iext_lookup_extent_before(struct xfs_inode *ip,
+			struct xfs_ifork *ifp, xfs_fileoff_t *end,
+			xfs_extnum_t *idxp, struct xfs_bmbt_irec *gotp);
+
 bool		xfs_iext_get_extent(struct xfs_ifork *ifp, xfs_extnum_t idx,
 			struct xfs_bmbt_irec *gotp);
-void		xfs_iext_update_extent(struct xfs_ifork *ifp, xfs_extnum_t idx,
-			struct xfs_bmbt_irec *gotp);
+void		xfs_iext_update_extent(struct xfs_inode *ip, int state,
+			xfs_extnum_t idx, struct xfs_bmbt_irec *gotp);
 
 extern struct kmem_zone	*xfs_ifork_zone;
 
