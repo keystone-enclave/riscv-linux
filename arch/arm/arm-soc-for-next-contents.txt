@@ -65,6 +65,8 @@ next/soc
 	patch
 		arm64: defconfig: enable CONFIG_GPIO_UNIPHIER
 		ARM: multi_v7_defconfig: enable CONFIG_GPIO_UNIPHIER
+	omap/cocci
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/coccinelle-signed
 
 next/dt
 	patch
@@ -150,6 +152,8 @@ renesas/dt64-2
 		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt64-4.15
 	amlogic/dt64-2
 		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64-2
+	socfpga/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_dts_for_v4.15_part2
 
 next/drivers
 	broadcom/drivers
@@ -168,7 +172,32 @@ next/drivers
 		git://git.pengutronix.de/git/pza/linux tags/reset-for-4.15
 	fsl/drivers
 		git://git.kernel.org/pub/scm/linux/kernel/git/leo/linux tags/soc-fsl-for-4.14
+	tegra/firmware
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-firmware
+	tegra/soc-driver
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-soc
+	tegra/thermal
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-thermal
+		contains tegra/dt-bindings
+	broadcom/drivers-2
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/drivers-part2
+	keystone/firmware
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_soc_drivers_4.15
+	qcom/drivers-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-drivers-for-4.15-2
+	amlogic/driver
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-drivers
+	at91/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.15-soc
+	mediatek/soc
+		https://github.com/mbgg/linux-mediatek tags/v4.14-next-soc
+	patch
+		drivers/firmware: psci_checker: Add missing destroy_timer_on_stack()
+	amlogic/drivers-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-drivers-2
 
 fixes
 	<no branch> (deaa55196e0cb6eccc3d5374ddd7c47e7ec61da3)
 		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-fixes-v4.14
+	<no branch> (cda80a82ac3e89309706c027ada6ab232be1d640)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.14-3
