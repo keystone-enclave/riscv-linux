@@ -424,6 +424,7 @@ static ssize_t cxacru_sysfs_store_adsl_state(struct device *dev,
 		case CXPOLL_STOPPING:
 			/* abort stop request */
 			instance->poll_state = CXPOLL_POLLING;
+			/* fall through */
 		case CXPOLL_POLLING:
 		case CXPOLL_SHUTDOWN:
 			/* don't start polling */
@@ -570,10 +571,8 @@ static int cxacru_start_wait_urb(struct urb *urb, struct completion *done,
 {
 	struct timer_list timer;
 
-	init_timer(&timer);
+	setup_timer(&timer, cxacru_timeout_kill, (unsigned long)urb);
 	timer.expires = jiffies + msecs_to_jiffies(CMD_TIMEOUT);
-	timer.data = (unsigned long) urb;
-	timer.function = cxacru_timeout_kill;
 	add_timer(&timer);
 	wait_for_completion(done);
 	del_timer_sync(&timer);
@@ -797,6 +796,7 @@ static int cxacru_atm_start(struct usbatm_data *usbatm_instance,
 	case CXPOLL_STOPPING:
 		/* abort stop request */
 		instance->poll_state = CXPOLL_POLLING;
+		/* fall through */
 	case CXPOLL_POLLING:
 	case CXPOLL_SHUTDOWN:
 		/* don't start polling */
