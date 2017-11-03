@@ -78,12 +78,6 @@
 
 #define SLAB_NOLEAKTRACE	0x00800000UL	/* Avoid kmemleak tracing */
 
-/* Don't track use of uninitialized memory */
-#ifdef CONFIG_KMEMCHECK
-# define SLAB_NOTRACK		0x01000000UL
-#else
-# define SLAB_NOTRACK		0x00000000UL
-#endif
 #ifdef CONFIG_FAILSLAB
 # define SLAB_FAILSLAB		0x02000000UL	/* Fault injection mark */
 #else
@@ -474,9 +468,6 @@ static __always_inline void *kmalloc_large(size_t size, gfp_t flags)
  * Also it is possible to set different flags by OR'ing
  * in one or more of the following additional @flags:
  *
- * %__GFP_COLD - Request cache-cold pages instead of
- *   trying to return cache-warm pages.
- *
  * %__GFP_HIGH - This allocation has high priority and may use emergency pools.
  *
  * %__GFP_NOFAIL - Indicate that this allocation is in no way allowed to fail
@@ -650,6 +641,22 @@ static inline void *kcalloc(size_t n, size_t size, gfp_t flags)
 extern void *__kmalloc_track_caller(size_t, gfp_t, unsigned long);
 #define kmalloc_track_caller(size, flags) \
 	__kmalloc_track_caller(size, flags, _RET_IP_)
+
+static inline void *kmalloc_array_node(size_t n, size_t size, gfp_t flags,
+				       int node)
+{
+	if (size != 0 && n > SIZE_MAX / size)
+		return NULL;
+	if (__builtin_constant_p(n) && __builtin_constant_p(size))
+		return kmalloc_node(n * size, flags, node);
+	return __kmalloc_node(n * size, flags, node);
+}
+
+static inline void *kcalloc_node(size_t n, size_t size, gfp_t flags, int node)
+{
+	return kmalloc_array_node(n, size, flags | __GFP_ZERO, node);
+}
+
 
 #ifdef CONFIG_NUMA
 extern void *__kmalloc_node_track_caller(size_t, gfp_t, int, unsigned long);
