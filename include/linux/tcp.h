@@ -98,7 +98,8 @@ struct tcp_options_received {
 		tstamp_ok : 1,	/* TIMESTAMP seen on SYN packet		*/
 		dsack : 1,	/* D-SACK is scheduled			*/
 		wscale_ok : 1,	/* Wscale seen on SYN packet		*/
-		sack_ok : 4,	/* SACK seen on SYN packet		*/
+		sack_ok : 3,	/* SACK seen on SYN packet		*/
+		smc_ok : 1,	/* SMC seen on SYN packet		*/
 		snd_wscale : 4,	/* Window scaling received from sender	*/
 		rcv_wscale : 4;	/* Window scaling to send to receiver	*/
 	u8	num_sacks;	/* Number of SACK blocks		*/
@@ -110,6 +111,9 @@ static inline void tcp_clear_options(struct tcp_options_received *rx_opt)
 {
 	rx_opt->tstamp_ok = rx_opt->sack_ok = 0;
 	rx_opt->wscale_ok = rx_opt->snd_wscale = 0;
+#if IS_ENABLED(CONFIG_SMC)
+	rx_opt->smc_ok = 0;
+#endif
 }
 
 /* This is the max number of SACKS that we'll generate and process. It's safe
@@ -191,6 +195,7 @@ struct tcp_sock {
 	u32	tsoffset;	/* timestamp offset */
 
 	struct list_head tsq_node; /* anchor in tsq_tasklet.head list */
+	struct list_head tsorted_sent_queue; /* time-sorted sent but un-SACKed skbs */
 
 	u32	snd_wl1;	/* Sequence for window update		*/
 	u32	snd_wnd;	/* The window we expect to receive	*/
@@ -214,7 +219,8 @@ struct tcp_sock {
 	u8	chrono_type:2,	/* current chronograph type */
 		rate_app_limited:1,  /* rate_{delivered,interval_us} limited? */
 		fastopen_connect:1, /* FASTOPEN_CONNECT sockopt */
-		unused:4;
+		fastopen_no_cookie:1, /* Allow send/recv SYN+data without a cookie */
+		unused:3;
 	u8	nonagle     : 4,/* Disable Nagle algorithm?             */
 		thin_lto    : 1,/* Use linear timeouts for thin streams */
 		unused1	    : 1,
@@ -227,7 +233,8 @@ struct tcp_sock {
 		syn_fastopen_ch:1, /* Active TFO re-enabling probe */
 		syn_data_acked:1,/* data in SYN is acked by SYN-ACK */
 		save_syn:1,	/* Save headers of SYN packet */
-		is_cwnd_limited:1;/* forward progress limited by snd_cwnd? */
+		is_cwnd_limited:1,/* forward progress limited by snd_cwnd? */
+		syn_smc:1;	/* SYN includes SMC */
 	u32	tlp_high_seq;	/* snd_nxt at the time of TLP retransmit. */
 
 /* RTT measurement */

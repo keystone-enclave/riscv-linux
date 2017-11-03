@@ -95,7 +95,6 @@ struct Qdisc {
 	unsigned long		state;
 	struct Qdisc            *next_sched;
 	struct sk_buff		*skb_bad_txq;
-	struct rcu_head		rcu_head;
 	int			padded;
 	refcount_t		refcnt;
 
@@ -273,6 +272,9 @@ struct tcf_chain {
 
 struct tcf_block {
 	struct list_head chain_list;
+	struct net *net;
+	struct Qdisc *q;
+	struct list_head cb_list;
 	struct work_struct work;
 };
 
@@ -361,9 +363,6 @@ static inline void sch_tree_unlock(const struct Qdisc *q)
 	spin_unlock_bh(qdisc_root_sleeping_lock(q));
 }
 
-#define tcf_tree_lock(tp)	sch_tree_lock((tp)->q)
-#define tcf_tree_unlock(tp)	sch_tree_unlock((tp)->q)
-
 extern struct Qdisc noop_qdisc;
 extern struct Qdisc_ops noop_qdisc_ops;
 extern struct Qdisc_ops pfifo_fast_ops;
@@ -411,6 +410,13 @@ qdisc_class_find(const struct Qdisc_class_hash *hash, u32 id)
 			return cl;
 	}
 	return NULL;
+}
+
+static inline int tc_classid_to_hwtc(struct net_device *dev, u32 classid)
+{
+	u32 hwtc = TC_H_MIN(classid) - TC_H_MIN_PRIORITY;
+
+	return (hwtc < netdev_get_num_tc(dev)) ? hwtc : -EINVAL;
 }
 
 int qdisc_class_hash_init(struct Qdisc_class_hash *);

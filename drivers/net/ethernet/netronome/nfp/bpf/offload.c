@@ -51,13 +51,12 @@
 #include "../nfp_net_ctrl.h"
 #include "../nfp_net.h"
 
-void nfp_net_filter_stats_timer(unsigned long data)
+void nfp_net_filter_stats_timer(struct timer_list *t)
 {
-	struct nfp_net *nn = (void *)data;
-	struct nfp_net_bpf_priv *priv;
+	struct nfp_net_bpf_priv *priv = from_timer(priv, t,
+						   rx_filter_stats_timer);
+	struct nfp_net *nn = priv->nn;
 	struct nfp_stat_pair latest;
-
-	priv = nn->app_priv;
 
 	spin_lock_bh(&priv->rx_filter_lock);
 
@@ -146,12 +145,10 @@ nfp_net_bpf_offload_prepare(struct nfp_net *nn,
 {
 	unsigned int code_sz = max_instr * sizeof(u64);
 	enum nfp_bpf_action_type act;
+	unsigned int stack_size;
 	u16 start_off, done_off;
 	unsigned int max_mtu;
 	int ret;
-
-	if (!IS_ENABLED(CONFIG_BPF_SYSCALL))
-		return -EOPNOTSUPP;
 
 	ret = nfp_net_bpf_get_act(nn, cls_bpf);
 	if (ret < 0)
@@ -166,6 +163,13 @@ nfp_net_bpf_offload_prepare(struct nfp_net *nn,
 
 	start_off = nn_readw(nn, NFP_NET_CFG_BPF_START);
 	done_off = nn_readw(nn, NFP_NET_CFG_BPF_DONE);
+
+	stack_size = nn_readb(nn, NFP_NET_CFG_BPF_STACK_SZ) * 64;
+	if (cls_bpf->prog->aux->stack_depth > stack_size) {
+		nn_info(nn, "stack too large: program %dB > FW stack %dB\n",
+			cls_bpf->prog->aux->stack_depth, stack_size);
+		return -EOPNOTSUPP;
+	}
 
 	*code = dma_zalloc_coherent(nn->dp.dev, code_sz, dma_addr, GFP_KERNEL);
 	if (!*code)

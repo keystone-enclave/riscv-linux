@@ -2313,17 +2313,16 @@ void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err,
 	 * requests to cap the error message, and get extra error data if
 	 * requested.
 	 */
+	if (nlk_has_extack && extack && extack->_msg)
+		tlvlen += nla_total_size(strlen(extack->_msg) + 1);
+
 	if (err) {
 		if (!(nlk->flags & NETLINK_F_CAP_ACK))
 			payload += nlmsg_len(nlh);
 		else
 			flags |= NLM_F_CAPPED;
-		if (nlk_has_extack && extack) {
-			if (extack->_msg)
-				tlvlen += nla_total_size(strlen(extack->_msg) + 1);
-			if (extack->bad_attr)
-				tlvlen += nla_total_size(sizeof(u32));
-		}
+		if (nlk_has_extack && extack && extack->bad_attr)
+			tlvlen += nla_total_size(sizeof(u32));
 	} else {
 		flags |= NLM_F_CAPPED;
 
@@ -2336,16 +2335,8 @@ void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err,
 
 	skb = nlmsg_new(payload + tlvlen, GFP_KERNEL);
 	if (!skb) {
-		struct sock *sk;
-
-		sk = netlink_lookup(sock_net(in_skb->sk),
-				    in_skb->sk->sk_protocol,
-				    NETLINK_CB(in_skb).portid);
-		if (sk) {
-			sk->sk_err = ENOBUFS;
-			sk->sk_error_report(sk);
-			sock_put(sk);
-		}
+		NETLINK_CB(in_skb).sk->sk_err = ENOBUFS;
+		NETLINK_CB(in_skb).sk->sk_error_report(NETLINK_CB(in_skb).sk);
 		return;
 	}
 
@@ -2356,10 +2347,11 @@ void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err,
 	memcpy(&errmsg->msg, nlh, payload > sizeof(*errmsg) ? nlh->nlmsg_len : sizeof(*nlh));
 
 	if (nlk_has_extack && extack) {
+		if (extack->_msg) {
+			WARN_ON(nla_put_string(skb, NLMSGERR_ATTR_MSG,
+					       extack->_msg));
+		}
 		if (err) {
-			if (extack->_msg)
-				WARN_ON(nla_put_string(skb, NLMSGERR_ATTR_MSG,
-						       extack->_msg));
 			if (extack->bad_attr &&
 			    !WARN_ON((u8 *)extack->bad_attr < in_skb->data ||
 				     (u8 *)extack->bad_attr >= in_skb->data +
