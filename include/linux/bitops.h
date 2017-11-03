@@ -254,6 +254,30 @@ static __always_inline void set_bit32(long nr, volatile u32 *addr)
 	set_bit(nr, (volatile unsigned long *)addr);
 }
 
+/**
+ * assign_bit - Assign value to a bit in memory
+ * @nr: the bit to set
+ * @addr: the address to start counting from
+ * @value: the value to assign
+ */
+static __always_inline void assign_bit(long nr, volatile unsigned long *addr,
+				       bool value)
+{
+	if (value)
+		set_bit(nr, addr);
+	else
+		clear_bit(nr, addr);
+}
+
+static __always_inline void __assign_bit(long nr, volatile unsigned long *addr,
+					 bool value)
+{
+	if (value)
+		__set_bit(nr, addr);
+	else
+		__clear_bit(nr, addr);
+}
+
 #ifdef __KERNEL__
 
 #ifndef set_mask_bits
