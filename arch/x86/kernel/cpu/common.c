@@ -863,8 +863,8 @@ static void identify_cpu_without_cpuid(struct cpuinfo_x86 *c)
  * cache alignment.
  * The others are not touched to avoid unwanted side effects.
  *
- * WARNING: this function is only called on the BP.  Don't add code here
- * that is supposed to run on all CPUs.
+ * WARNING: this function is only called on the boot CPU.  Don't add code
+ * here that is supposed to run on all CPUs.
  */
 static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 {
@@ -1301,18 +1301,16 @@ void print_cpu_info(struct cpuinfo_x86 *c)
 		pr_cont(")\n");
 }
 
-static __init int setup_disablecpuid(char *arg)
+/*
+ * clearcpuid= was already parsed in fpu__init_parse_early_param.
+ * But we need to keep a dummy __setup around otherwise it would
+ * show up as an environment variable for init.
+ */
+static __init int setup_clearcpuid(char *arg)
 {
-	int bit;
-
-	if (get_option(&arg, &bit) && bit >= 0 && bit < NCAPINTS * 32)
-		setup_clear_cpu_cap(bit);
-	else
-		return 0;
-
 	return 1;
 }
-__setup("clearcpuid=", setup_disablecpuid);
+__setup("clearcpuid=", setup_clearcpuid);
 
 #ifdef CONFIG_X86_64
 DEFINE_PER_CPU_FIRST(union irq_stack_union,
