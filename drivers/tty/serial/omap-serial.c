@@ -610,7 +610,7 @@ static irqreturn_t serial_omap_irq(int irq, void *dev_id)
 		default:
 			break;
 		}
-	} while (!(iir & UART_IIR_NO_INT) && max_count--);
+	} while (max_count--);
 
 	spin_unlock(&up->port.lock);
 
@@ -693,7 +693,7 @@ static void serial_omap_set_mctrl(struct uart_port *port, unsigned int mctrl)
 	if ((mctrl & TIOCM_RTS) && (port->status & UPSTAT_AUTORTS))
 		up->efr |= UART_EFR_RTS;
 	else
-		up->efr &= UART_EFR_RTS;
+		up->efr &= ~UART_EFR_RTS;
 	serial_out(up, UART_EFR, up->efr);
 	serial_out(up, UART_LCR, lcr);
 
@@ -1606,7 +1606,6 @@ static int serial_omap_probe_rs485(struct uart_omap_port *up,
 				   struct device_node *np)
 {
 	struct serial_rs485 *rs485conf = &up->port.rs485;
-	u32 rs485_delay[2];
 	enum of_gpio_flags flags;
 	int ret;
 
@@ -1637,17 +1636,7 @@ static int serial_omap_probe_rs485(struct uart_omap_port *up,
 		up->rts_gpio = -EINVAL;
 	}
 
-	if (of_property_read_u32_array(np, "rs485-rts-delay",
-				    rs485_delay, 2) == 0) {
-		rs485conf->delay_rts_before_send = rs485_delay[0];
-		rs485conf->delay_rts_after_send = rs485_delay[1];
-	}
-
-	if (of_property_read_bool(np, "rs485-rx-during-tx"))
-		rs485conf->flags |= SER_RS485_RX_DURING_TX;
-
-	if (of_property_read_bool(np, "linux,rs485-enabled-at-boot-time"))
-		rs485conf->flags |= SER_RS485_ENABLED;
+	of_get_rs485_mode(np, rs485conf);
 
 	return 0;
 }
