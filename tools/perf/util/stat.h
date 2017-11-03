@@ -83,7 +83,7 @@ typedef void (*new_line_t )(void *ctx);
 
 void perf_stat__init_shadow_stats(void);
 void perf_stat__reset_shadow_stats(void);
-void perf_stat__update_shadow_stats(struct perf_evsel *counter, u64 *count,
+void perf_stat__update_shadow_stats(struct perf_evsel *counter, u64 count,
 				    int cpu);
 struct perf_stat_output_ctx {
 	void *ctx;
