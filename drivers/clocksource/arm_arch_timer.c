@@ -300,8 +300,7 @@ static u64 notrace arm64_858921_read_cntvct_el0(void)
 #endif
 
 #ifdef CONFIG_ARM_ARCH_TIMER_OOL_WORKAROUND
-DEFINE_PER_CPU(const struct arch_timer_erratum_workaround *,
-	       timer_unstable_counter_workaround);
+DEFINE_PER_CPU(const struct arch_timer_erratum_workaround *, timer_unstable_counter_workaround);
 EXPORT_SYMBOL_GPL(timer_unstable_counter_workaround);
 
 DEFINE_STATIC_KEY_FALSE(arch_timer_read_ool_enabled);
@@ -1287,10 +1286,6 @@ arch_timer_mem_find_best_frame(struct arch_timer_mem *timer_mem)
 
 	iounmap(cntctlbase);
 
-	if (!best_frame)
-		pr_err("Unable to find a suitable frame in timer @ %pa\n",
-			&timer_mem->cntctlbase);
-
 	return best_frame;
 }
 
@@ -1391,6 +1386,8 @@ static int __init arch_timer_mem_of_init(struct device_node *np)
 
 	frame = arch_timer_mem_find_best_frame(timer_mem);
 	if (!frame) {
+		pr_err("Unable to find a suitable frame in timer @ %pa\n",
+			&timer_mem->cntctlbase);
 		ret = -EINVAL;
 		goto out;
 	}
@@ -1439,7 +1436,7 @@ arch_timer_mem_verify_cntfrq(struct arch_timer_mem *timer_mem)
 static int __init arch_timer_mem_acpi_init(int platform_timer_count)
 {
 	struct arch_timer_mem *timers, *timer;
-	struct arch_timer_mem_frame *frame;
+	struct arch_timer_mem_frame *frame, *best_frame = NULL;
 	int timer_count, i, ret = 0;
 
 	timers = kcalloc(platform_timer_count, sizeof(*timers),
@@ -1451,14 +1448,6 @@ static int __init arch_timer_mem_acpi_init(int platform_timer_count)
 	if (ret || !timer_count)
 		goto out;
 
-	for (i = 0; i < timer_count; i++) {
-		ret = arch_timer_mem_verify_cntfrq(&timers[i]);
-		if (ret) {
-			pr_err("Disabling MMIO timers due to CNTFRQ mismatch\n");
-			goto out;
-		}
-	}
-
 	/*
 	 * While unlikely, it's theoretically possible that none of the frames
 	 * in a timer expose the combination of feature we want.
@@ -1467,12 +1456,26 @@ static int __init arch_timer_mem_acpi_init(int platform_timer_count)
 		timer = &timers[i];
 
 		frame = arch_timer_mem_find_best_frame(timer);
-		if (frame)
-			break;
+		if (!best_frame)
+			best_frame = frame;
+
+		ret = arch_timer_mem_verify_cntfrq(timer);
+		if (ret) {
+			pr_err("Disabling MMIO timers due to CNTFRQ mismatch\n");
+			goto out;
+		}
+
+		if (!best_frame) /* implies !frame */
+			/*
+			 * Only complain about missing suitable frames if we
+			 * haven't already found one in a previous iteration.
+			 */
+			pr_err("Unable to find a suitable frame in timer @ %pa\n",
+				&timer->cntctlbase);
 	}
 
-	if (frame)
-		ret = arch_timer_mem_frame_register(frame);
+	if (best_frame)
+		ret = arch_timer_mem_frame_register(best_frame);
 out:
 	kfree(timers);
 	return ret;
