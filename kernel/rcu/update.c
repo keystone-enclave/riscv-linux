@@ -619,11 +619,11 @@ EXPORT_SYMBOL_GPL(call_rcu_tasks);
  * synchronize_rcu_tasks - wait until an rcu-tasks grace period has elapsed.
  *
  * Control will return to the caller some time after a full rcu-tasks
- * grace period has elapsed, in other words after all currently
- * executing rcu-tasks read-side critical sections have elapsed.  These
- * read-side critical sections are delimited by calls to schedule(),
- * cond_resched_rcu_qs(), idle execution, userspace execution, calls
- * to synchronize_rcu_tasks(), and (in theory, anyway) cond_resched().
+ * grace period has elapsed, in other words after all currently executing
+ * rcu-tasks read-side critical sections have elapsed.  These read-side
+ * critical sections are delimited by calls to schedule(), cond_resched(),
+ * idle execution, userspace execution, calls to synchronize_rcu_tasks(),
+ * and (in theory, anyway) cond_resched().
  *
  * This is a very specialized primitive, intended only for a few uses in
  * tracing and other situations requiring manipulation of function
@@ -696,7 +696,7 @@ static void check_holdout_task(struct task_struct *t,
 		*firstreport = false;
 	}
 	cpu = task_cpu(t);
-	pr_alert("%p: %c%c nvcsw: %lu/%lu holdout: %d idle_cpu: %d/%d\n",
+	pr_alert("%pK: %c%c nvcsw: %lu/%lu holdout: %d idle_cpu: %d/%d\n",
 		 t, ".I"[is_idle_task(t)],
 		 "N."[cpu < 0 || !tick_nohz_full_cpu(cpu)],
 		 t->rcu_tasks_nvcsw, t->nvcsw, t->rcu_tasks_holdout,
@@ -799,6 +799,13 @@ static int __noreturn rcu_tasks_kthread(void *arg)
 			bool needreport;
 			int rtst;
 			struct task_struct *t1;
+
+			/*
+			 * Enable cond_ressched() action on other CPUs
+			 * if needed.  Yes, we invoke synchronize_sched()
+			 * solely for its cond_resched() side-effect...
+			 */
+			synchronize_sched();
 
 			schedule_timeout_interruptible(HZ);
 			rtst = READ_ONCE(rcu_task_stall_timeout);

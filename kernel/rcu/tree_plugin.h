@@ -1606,7 +1606,7 @@ static int rcu_oom_notify(struct notifier_block *self,
 
 	for_each_online_cpu(cpu) {
 		smp_call_function_single(cpu, rcu_oom_notify_cpu, NULL, 1);
-		cond_resched_rcu_qs();
+		cond_resched();
 	}
 
 	/* Unconditionally decrement: no need to wake ourselves up. */
@@ -1687,7 +1687,7 @@ static void print_cpu_stall_info(struct rcu_state *rsp, int cpu)
 	}
 	print_cpu_stall_fast_no_hz(fast_no_hz, cpu);
 	delta = rdp->mynode->gpnum - rdp->rcu_iw_gpnum;
-	pr_err("\t%d-%c%c%c%c: (%lu %s) idle=%03x/%llx/%d softirq=%u/%u fqs=%ld %s\n",
+	pr_err("\t%d-%c%c%c%c: (%lu %s) idle=%03x/%ld/%ld softirq=%u/%u fqs=%ld %s\n",
 	       cpu,
 	       "O."[!!cpu_online(cpu)],
 	       "o."[!!(rdp->grpmask & rdp->mynode->qsmaskinit)],
@@ -1899,7 +1899,7 @@ static bool rcu_nocb_cpu_needs_barrier(struct rcu_state *rsp, int cpu)
 	if (!READ_ONCE(rdp->nocb_kthread) && rhp &&
 	    rcu_scheduler_fully_active) {
 		/* RCU callback enqueued before CPU first came online??? */
-		pr_err("RCU: Never-onlined no-CBs CPU %d has CB %p\n",
+		pr_err("RCU: Never-onlined no-CBs CPU %d has CB %pK\n",
 		       cpu, rhp->func);
 		WARN_ON_ONCE(1);
 	}
@@ -2230,7 +2230,7 @@ static int rcu_nocb_kthread(void *arg)
 				cl++;
 			c++;
 			local_bh_enable();
-			cond_resched_rcu_qs();
+			cond_resched();
 			list = next;
 		}
 		trace_rcu_batch_end(rdp->rsp->name, c, !!list, 0, 0, 1);
