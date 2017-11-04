@@ -39,6 +39,7 @@ char *o2nm_fence_method_desc[O2NM_FENCE_METHODS] = {
 		"reset",	/* O2NM_FENCE_RESET */
 		"panic",	/* O2NM_FENCE_PANIC */
 };
+
 static inline void o2nm_lock_subsystem(void);
 static inline void o2nm_unlock_subsystem(void);
 
@@ -218,6 +219,7 @@ static ssize_t o2nm_node_num_store(struct config_item *item, const char *page,
 	if (!test_bit(O2NM_NODE_ATTR_ADDRESS, &node->nd_set_attributes) ||
 	    !test_bit(O2NM_NODE_ATTR_PORT, &node->nd_set_attributes))
 		return -EINVAL; /* XXX */
+
 	o2nm_lock_subsystem();
 	cluster = to_o2nm_cluster_from_node(node);
 	if (!cluster) {
@@ -238,6 +240,7 @@ static ssize_t o2nm_node_num_store(struct config_item *item, const char *page,
 	}
 	write_unlock(&cluster->cl_nodes_lock);
 	o2nm_unlock_subsystem();
+
 	if (ret)
 		return ret;
 
@@ -297,12 +300,14 @@ static ssize_t o2nm_node_ipv4_address_store(struct config_item *item,
 			return -ERANGE;
 		be32_add_cpu(&ipv4_addr, octets[i] << (i * 8));
 	}
+
 	o2nm_lock_subsystem();
 	cluster = to_o2nm_cluster_from_node(node);
 	if (!cluster) {
 		o2nm_unlock_subsystem();
 		return -EINVAL;
 	}
+
 	ret = 0;
 	write_lock(&cluster->cl_nodes_lock);
 	if (o2nm_node_ip_tree_lookup(cluster, ipv4_addr, &p, &parent))
@@ -316,6 +321,7 @@ static ssize_t o2nm_node_ipv4_address_store(struct config_item *item,
 	}
 	write_unlock(&cluster->cl_nodes_lock);
 	o2nm_unlock_subsystem();
+
 	if (ret)
 		return ret;
 
@@ -357,6 +363,7 @@ static ssize_t o2nm_node_local_store(struct config_item *item, const char *page,
 		ret = -EINVAL;
 		goto out;
 	}
+
 	/* the only failure case is trying to set a new local node
 	 * when a different one is already set */
 	if (tmp && tmp == cluster->cl_has_local &&
@@ -364,6 +371,7 @@ static ssize_t o2nm_node_local_store(struct config_item *item, const char *page,
 		ret = -EBUSY;
 		goto out;
 	}
+
 	/* bring up the rx thread if we're setting the new local node. */
 	if (tmp && !cluster->cl_has_local) {
 		ret = o2net_start_listening(node);
@@ -382,6 +390,7 @@ static ssize_t o2nm_node_local_store(struct config_item *item, const char *page,
 		cluster->cl_has_local = tmp;
 		cluster->cl_local_node = node->nd_num;
 	}
+
 	ret = count;
 
 out:
