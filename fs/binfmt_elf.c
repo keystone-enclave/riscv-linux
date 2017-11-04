@@ -341,6 +341,29 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 
 #ifndef elf_map
 
+static unsigned long elf_vm_mmap(struct file *filep, unsigned long addr,
+		unsigned long size, int prot, int type, unsigned long off)
+{
+	unsigned long map_addr;
+
+	/*
+	 * If caller requests the mapping at a specific place, make sure we fail
+	 * rather than potentially clobber an existing mapping which can have
+	 * security consequences (e.g. smash over the stack area).
+	 */
+	map_addr = vm_mmap(filep, addr, size, prot, type & ~MAP_FIXED, off);
+	if (BAD_ADDR(map_addr))
+		return map_addr;
+
+	if ((type & MAP_FIXED) && map_addr != addr) {
+		pr_info("Uhuuh, elf segement at %p requested but the memory is mapped already\n",
+				(void*)addr);
+		return -EAGAIN;
+	}
+
+	return map_addr;
+}
+
 static unsigned long elf_map(struct file *filep, unsigned long addr,
 		struct elf_phdr *eppnt, int prot, int type,
 		unsigned long total_size)
@@ -366,11 +389,11 @@ static unsigned long elf_map(struct file *filep, unsigned long addr,
 	*/
 	if (total_size) {
 		total_size = ELF_PAGEALIGN(total_size);
-		map_addr = vm_mmap(filep, addr, total_size, prot, type, off);
+		map_addr = elf_vm_mmap(filep, addr, total_size, prot, type, off);
 		if (!BAD_ADDR(map_addr))
 			vm_munmap(map_addr+size, total_size-size);
 	} else
-		map_addr = vm_mmap(filep, addr, size, prot, type, off);
+		map_addr = elf_vm_mmap(filep, addr, size, prot, type, off);
 
 	return(map_addr);
 }
@@ -1218,7 +1241,7 @@ static int load_elf_library(struct file *file)
 		eppnt++;
 
 	/* Now use mmap to map the library into memory. */
-	error = vm_mmap(file,
+	error = elf_vm_mmap(file,
 			ELF_PAGESTART(eppnt->p_vaddr),
 			(eppnt->p_filesz +
 			 ELF_PAGEOFFSET(eppnt->p_vaddr)),
