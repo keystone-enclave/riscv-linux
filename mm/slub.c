@@ -3657,7 +3657,7 @@ error:
 	if (flags & SLAB_PANIC)
 		panic("Cannot create slab %s size=%lu realsize=%u order=%u offset=%u flags=%lx\n",
 		      s->name, (unsigned long)s->size, s->size,
-		      oo_order(s->oo), s->offset, flags);
+		      oo_order(s->oo), s->offset, (unsigned long)flags);
 	return -EINVAL;
 }
 
