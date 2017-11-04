@@ -202,7 +202,7 @@ static void clear_once_table(struct bug_entry *start, struct bug_entry *end)
 	struct bug_entry *bug;
 
 	for (bug = start; bug < end; bug++)
-		bug->flags &= ~BUGFLAG_ONCE;
+		bug->flags &= ~BUGFLAG_DONE;
 }
 
 void generic_bug_clear_once(void)
