@@ -1,4 +1,6 @@
 /*
+ * Cubietech CubieBoard6
+ *
  * Copyright (c) 2017 Andreas Färber
  *
  * SPDX-License-Identifier: (GPL-2.0+ OR MIT)
@@ -6,26 +8,26 @@
 
 /dts-v1/;
 
-#include "s900.dtsi"
+#include "owl-s500.dtsi"
 
 / {
-	compatible = "ucrobotics,bubblegum-96", "actions,s900";
-	model = "Bubblegum-96";
+	compatible = "cubietech,cubieboard6", "actions,s500";
+	model = "CubieBoard6";
 
 	aliases {
-		serial5 = &uart5;
+		serial3 = &uart3;
 	};
 
 	chosen {
-		stdout-path = "serial5:115200n8";
+		stdout-path = "serial3:115200n8";
 	};
 
 	memory@0 {
 		device_type = "memory";
-		reg = <0x0 0x0 0x0 0x80000000>;
+		reg = <0x0 0x80000000>;
 	};
 
-	uart5_clk: uart5-clk {
+	uart3_clk: uart3-clk {
 		compatible = "fixed-clock";
 		clock-frequency = <921600>;
 		#clock-cells = <0>;
@@ -36,7 +38,7 @@
 	clocks = <&hosc>;
 };
 
-&uart5 {
+&uart3 {
 	status = "okay";
-	clocks = <&uart5_clk>;
+	clocks = <&uart3_clk>;
 };
