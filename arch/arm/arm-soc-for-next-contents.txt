@@ -1,0 +1,203 @@
+next/soc
+	ep93xx/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-integrator tags/ep93xx-for-arm-soc-1
+	renesas/defconfig
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-defconfig-for-v4.15
+	renesas/soc
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-soc-for-v4.15
+	broadcom/soc
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/soc
+	integrator/pciv3-delete
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-integrator tags/integrator-pciv3-delete
+	renesas/arm64-defconfig
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-defconfig-for-v4.15
+	vexpress/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/vexpress-updates-4.15
+	renesas/soc2
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-soc2-for-v4.15
+	patch
+		arm64: Add ThunderX drivers to defconfig
+		arm64: defconfig: Enable QCOM_IOMMU
+	hisi/defconfig
+		git://github.com/hisilicon/linux-hisi tags/hisi-defconfig-for-4.15
+	devinci/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.15/defconfig
+	omap/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/soc-signed
+	samsung/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-defconfig-4.15
+	samsung/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.15
+	zynq/soc
+		https://github.com/Xilinx/linux-xlnx tags/zynq-soc-for-4.15
+	qcom/arm64-defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-arm64-defconfig-for-4.15
+	qcom/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-defconfig-for-4.15
+	patch
+		ARM: defconfig: select the right SX150X driver
+	stm32-defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-defconfig-for-v4.15-1
+	omap/ti-sysc
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/ti-sysc-signed
+	sunxi/core
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-core-for-4.15
+	tegra/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-arm64-defconfig
+	mvebu/defconfig
+		git://git.infradead.org/linux-mvebu tags/mvebu-arm64-4.15-1
+	imx/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-defconfig-4.15
+	amlogic/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-defconfig
+	keystone/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_config_4.15
+	broadcom/defconfig
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/defconfig
+	broadcom/hr2
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/soc-part2
+	broadcom/maintainer
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/maintainers
+	imx/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-soc-4.15
+	amlogic/soc
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-soc
+	patch
+		arm64: defconfig: enable CONFIG_GPIO_UNIPHIER
+		ARM: multi_v7_defconfig: enable CONFIG_GPIO_UNIPHIER
+	omap/cocci
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/coccinelle-signed
+
+next/dt
+	patch
+		arm: boot: dts: artpec6: Remove unnecessary interrupt-parent property from sub-nodes
+		arm: dts: fix unit-address leading 0s
+		arm64: dts: fix unit-address leading 0s
+	integrator/pciv3-dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-integrator tags/integrator-pciv3-dts
+	renesas/arm64-dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-dt-for-v4.15
+	renesas/dt-bindinds
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-dt-bindings-for-v4.15
+	renesas/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-dt-for-v4.15
+	socfpga/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_dts_for_v4.15_part1
+	aspeed/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/joel/aspeed tags/aspeed-4.15-devicetree
+	juno/updates
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/juno-updates-4.15
+	patch
+		ARM: dts: Add TVE200 to the Gemini SoC DTSI
+	hisi/arm64-dt
+		git://github.com/hisilicon/linux-hisi tags/hisi-arm64-dt-for-4.15
+	davinci/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.15/dt
+	samsung/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-4.15
+	zynq/dt
+		https://github.com/Xilinx/linux-xlnx tags/zynq-dt-for-4.15
+	qcom/arm64-dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-arm64-for-4.15
+	qcom/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-dts-for-4.15
+	stm32/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-dt-for-v4.15-1
+	rockchip/dt32
+		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.15-rockchip-dts32-1
+	rockchip/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.15-rockchip-dts64-1
+	omap/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/fixes-dt-signed
+	omap/dt-changes
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/dt-signed
+	sunxi/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt-for-4.15
+	renesas/dt2
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-dt2-for-v4.15
+	tegra/dt-bindings
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-dt-bindings
+	tegra/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-arm-dt
+	broadcom/dt
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/devicetree
+	keystone/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_dts_for_4.15
+	amlogic/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt
+	uniphier/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt-v4.15
+	imx/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt-4.15
+	at91/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.15-dt
+	amlogic/dt-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt-2
+	sunxi/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt64-for-4.15
+	uniphier/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt64-v4.15
+	renesas/dt64
+renesas/dt64-2
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-dt2-for-v4.15
+	tegra/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-arm64-dt
+	mvebu/dt64
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt64-4.15-1
+	amlogic/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64
+	mediatek/dt64
+		https://github.com/mbgg/linux-mediatek tags/v4.14-next-dts64
+	imx/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt64-4.15
+	amlogic/dt64-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64-2
+	socfpga/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_dts_for_v4.15_part2
+
+next/drivers
+	broadcom/drivers
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/drivers
+	renesas/drivers
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-drivers-for-v4.15
+	drivers/scpi
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scpi-updates-4.15
+	samsung/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.15
+	qcom/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-drivers-for-4.15
+	omap/gpmc
+		https://github.com/rogerq/linux tags/gpmc-omap-for-v4.15
+	drivers/reset
+		git://git.pengutronix.de/git/pza/linux tags/reset-for-4.15
+	fsl/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/leo/linux tags/soc-fsl-for-4.14
+	tegra/firmware
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-firmware
+	tegra/soc-driver
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-soc
+	tegra/thermal
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.15-thermal
+		contains tegra/dt-bindings
+	broadcom/drivers-2
+		http://github.com/Broadcom/stblinux tags/arm-soc/for-4.15/drivers-part2
+	keystone/firmware
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_soc_drivers_4.15
+	qcom/drivers-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/agross/linux tags/qcom-drivers-for-4.15-2
+	amlogic/driver
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-drivers
+	at91/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.15-soc
+	mediatek/soc
+		https://github.com/mbgg/linux-mediatek tags/v4.14-next-soc
+	patch
+		drivers/firmware: psci_checker: Add missing destroy_timer_on_stack()
+	amlogic/drivers-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-drivers-2
+
+fixes
+	<no branch> (deaa55196e0cb6eccc3d5374ddd7c47e7ec61da3)
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-fixes-v4.14
+	<no branch> (cda80a82ac3e89309706c027ada6ab232be1d640)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.14-3
