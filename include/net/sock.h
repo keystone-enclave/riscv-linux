@@ -60,7 +60,7 @@
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/cgroup-defs.h>
-
+#include <linux/rbtree.h>
 #include <linux/filter.h>
 #include <linux/rculist_nulls.h>
 #include <linux/poll.h>
@@ -397,7 +397,10 @@ struct sock {
 	int			sk_wmem_queued;
 	refcount_t		sk_wmem_alloc;
 	unsigned long		sk_tsq_flags;
-	struct sk_buff		*sk_send_head;
+	union {
+		struct sk_buff	*sk_send_head;
+		struct rb_root	tcp_rtx_queue;
+	};
 	struct sk_buff_head	sk_write_queue;
 	__s32			sk_peek_off;
 	int			sk_write_pending;
@@ -734,10 +737,10 @@ static inline void sk_add_bind_node(struct sock *sk,
  *
  */
 #define sk_for_each_entry_offset_rcu(tpos, pos, head, offset)		       \
-	for (pos = rcu_dereference((head)->first);			       \
+	for (pos = rcu_dereference(hlist_first_rcu(head));		       \
 	     pos != NULL &&						       \
 		({ tpos = (typeof(*tpos) *)((void *)pos - offset); 1;});       \
-	     pos = rcu_dereference(pos->next))
+	     pos = rcu_dereference(hlist_next_rcu(pos)))
 
 static inline struct user_namespace *sk_user_ns(struct sock *sk)
 {
