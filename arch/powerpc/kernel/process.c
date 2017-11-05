@@ -77,6 +77,13 @@
 extern unsigned long _get_SP(void);
 
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+/*
+ * Are we running in "Suspend disabled" mode? If so we have to block any
+ * sigreturn that would get us into suspended state, and we also warn in some
+ * other paths that we should never reach with suspend disabled.
+ */
+bool tm_suspend_disabled __ro_after_init = false;
+
 static void check_if_tm_restore_required(struct task_struct *tsk)
 {
 	/*
@@ -902,6 +909,8 @@ static inline void tm_reclaim_task(struct task_struct *tsk)
 
 	if (!MSR_TM_ACTIVE(thr->regs->msr))
 		goto out_and_saveregs;
+
+	WARN_ON(tm_suspend_disabled);
 
 	TM_DEBUG("--- tm_reclaim on pid %d (NIP=%lx, "
 		 "ccr=%lx, msr=%lx, trap=%lx)\n",
@@ -1898,7 +1907,8 @@ unsigned long get_wchan(struct task_struct *p)
 
 	do {
 		sp = *(unsigned long *)sp;
-		if (!validate_sp(sp, p, STACK_FRAME_OVERHEAD))
+		if (!validate_sp(sp, p, STACK_FRAME_OVERHEAD) ||
+		    p->state == TASK_RUNNING)
 			return 0;
 		if (count > 0) {
 			ip = ((unsigned long *)sp)[STACK_FRAME_LR_SAVE];
