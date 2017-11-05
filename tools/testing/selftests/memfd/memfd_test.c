@@ -514,7 +514,7 @@ static void mfd_assert_grow_write(int fd)
 
 	buf = malloc(mfd_def_size * 8);
 	if (!buf) {
-		printf("malloc(%d) failed: %m\n", mfd_def_size * 8);
+		printf("malloc(%zu) failed: %m\n", mfd_def_size * 8);
 		abort();
 	}
 
@@ -534,7 +534,7 @@ static void mfd_fail_grow_write(int fd)
 
 	buf = malloc(mfd_def_size * 8);
 	if (!buf) {
-		printf("malloc(%d) failed: %m\n", mfd_def_size * 8);
+		printf("malloc(%zu) failed: %m\n", mfd_def_size * 8);
 		abort();
 	}
 
