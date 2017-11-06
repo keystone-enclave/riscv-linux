@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * NOP USB transceiver for all USB transceiver which are either built-in
  * into USB IP or which are mostly autonomous.
@@ -224,7 +225,7 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 	int err = 0;
 
 	u32 clk_rate = 0;
-	bool needs_vcc = false;
+	bool needs_vcc = false, needs_clk = false;
 
 	if (dev->of_node) {
 		struct device_node *node = dev->of_node;
@@ -233,6 +234,7 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 			clk_rate = 0;
 
 		needs_vcc = of_property_read_bool(node, "vcc-supply");
+		needs_clk = of_property_read_bool(node, "clocks");
 		nop->gpiod_reset = devm_gpiod_get_optional(dev, "reset",
 							   GPIOD_ASIS);
 		err = PTR_ERR_OR_ZERO(nop->gpiod_reset);
@@ -275,6 +277,8 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 	if (IS_ERR(nop->clk)) {
 		dev_dbg(dev, "Can't get phy clock: %ld\n",
 					PTR_ERR(nop->clk));
+		if (needs_clk)
+			return PTR_ERR(nop->clk);
 	}
 
 	if (!IS_ERR(nop->clk) && clk_rate) {

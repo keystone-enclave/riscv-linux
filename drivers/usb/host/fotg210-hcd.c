@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /* Faraday FOTG210 EHCI-like driver
  *
  * Copyright (c) 2013 Faraday Technology Corporation
@@ -5449,7 +5450,7 @@ idle_timeout:
 			qh_destroy(fotg210, qh);
 			break;
 		}
-		/* else FALL THROUGH */
+		/* fall through */
 	default:
 		/* caller was supposed to have unlinked any requests;
 		 * that's not our job.  just leak this memory.

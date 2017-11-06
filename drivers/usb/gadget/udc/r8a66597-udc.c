@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * R8A66597 UDC (USB gadget)
  *
@@ -1877,9 +1878,7 @@ static int r8a66597_probe(struct platform_device *pdev)
 	r8a66597->gadget.max_speed = USB_SPEED_HIGH;
 	r8a66597->gadget.name = udc_name;
 
-	init_timer(&r8a66597->timer);
-	r8a66597->timer.function = r8a66597_timer;
-	r8a66597->timer.data = (unsigned long)r8a66597;
+	setup_timer(&r8a66597->timer, r8a66597_timer, (unsigned long)r8a66597);
 	r8a66597->reg = reg;
 
 	if (r8a66597->pdata->on_chip) {

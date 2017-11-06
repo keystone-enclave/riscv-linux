@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Toshiba TC86C001 ("Goku-S") USB Device Controller driver
  *
@@ -127,11 +128,15 @@ goku_ep_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 	mode = 0;
 	max = get_unaligned_le16(&desc->wMaxPacketSize);
 	switch (max) {
-	case 64:	mode++;
-	case 32:	mode++;
-	case 16:	mode++;
-	case 8:		mode <<= 3;
-			break;
+	case 64:
+		mode++; /* fall through */
+	case 32:
+		mode++; /* fall through */
+	case 16:
+		mode++; /* fall through */
+	case 8:
+		mode <<= 3;
+		break;
 	default:
 		return -EINVAL;
 	}

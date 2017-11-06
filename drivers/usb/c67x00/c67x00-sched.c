@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * c67x00-sched.c: Cypress C67X00 USB Host Controller Driver - TD scheduling
  *
@@ -966,13 +967,11 @@ static void c67x00_handle_successful_td(struct c67x00_hcd *c67x00,
 static void c67x00_handle_isoc(struct c67x00_hcd *c67x00, struct c67x00_td *td)
 {
 	struct urb *urb = td->urb;
-	struct c67x00_urb_priv *urbp;
 	int cnt;
 
 	if (!urb)
 		return;
 
-	urbp = urb->hcpriv;
 	cnt = td->privdata;
 
 	if (td->status & TD_ERROR_MASK)

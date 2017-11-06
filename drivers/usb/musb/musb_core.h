@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * MUSB OTG driver defines
  *
@@ -345,6 +346,7 @@ struct musb {
 	struct list_head	pending_list;	/* pending work list */
 
 	struct timer_list	otg_timer;
+	struct timer_list	dev_timer;
 	struct notifier_block	nb;
 
 	struct dma_controller	*dma_controller;

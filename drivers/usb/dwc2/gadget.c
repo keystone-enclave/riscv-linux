@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * Copyright (c) 2011 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
@@ -3202,6 +3203,8 @@ void dwc2_hsotg_disconnect(struct dwc2_hsotg *hsotg)
 
 	call_gadget(hsotg, disconnect);
 	hsotg->lx_state = DWC2_L3;
+
+	usb_gadget_set_state(&hsotg->gadget, USB_STATE_NOTATTACHED);
 }
 
 /**
@@ -4001,6 +4004,11 @@ static int dwc2_hsotg_ep_disable(struct usb_ep *ep)
 
 	if (ep == &hsotg->eps_out[0]->ep) {
 		dev_err(hsotg->dev, "%s: called for ep0\n", __func__);
+		return -EINVAL;
+	}
+
+	if (hsotg->op_state != OTG_STATE_B_PERIPHERAL) {
+		dev_err(hsotg->dev, "%s: called in host mode?\n", __func__);
 		return -EINVAL;
 	}
 

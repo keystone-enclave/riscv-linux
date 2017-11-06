@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * WUSB Wire Adapter
  * Data transfer and URB enqueing
@@ -2156,6 +2157,7 @@ static void wa_complete_remaining_xfer_segs(struct wa_xfer *xfer,
 		 * do not increment RPIPE avail for the WA_SEG_DELAYED case
 		 * since it has not been submitted to the RPIPE.
 		 */
+		/* fall through */
 		case WA_SEG_DELAYED:
 			xfer->segs_done++;
 			current_seg->status = status;
