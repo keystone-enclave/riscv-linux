@@ -1109,8 +1109,7 @@ err_range:
 	regmap_range_exit(map);
 	kfree(map->work_buf);
 err_hwlock:
-	if (IS_ENABLED(REGMAP_HWSPINLOCK) && map->hwlock)
-		hwspin_lock_free(map->hwlock);
+	hwspin_lock_free(map->hwlock);
 err_map:
 	kfree(map);
 err:
