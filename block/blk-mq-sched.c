@@ -68,33 +68,123 @@ static void blk_mq_sched_mark_restart_hctx(struct blk_mq_hw_ctx *hctx)
 		set_bit(BLK_MQ_S_SCHED_RESTART, &hctx->state);
 }
 
-static bool blk_mq_sched_restart_hctx(struct blk_mq_hw_ctx *hctx)
+void blk_mq_sched_restart(struct blk_mq_hw_ctx *hctx)
 {
 	if (!test_bit(BLK_MQ_S_SCHED_RESTART, &hctx->state))
-		return false;
+		return;
 
-	if (hctx->flags & BLK_MQ_F_TAG_SHARED) {
-		struct request_queue *q = hctx->queue;
-
-		if (test_and_clear_bit(BLK_MQ_S_SCHED_RESTART, &hctx->state))
-			atomic_dec(&q->shared_hctx_restart);
-	} else
-		clear_bit(BLK_MQ_S_SCHED_RESTART, &hctx->state);
+	clear_bit(BLK_MQ_S_SCHED_RESTART, &hctx->state);
 
 	if (blk_mq_hctx_has_pending(hctx)) {
 		blk_mq_run_hw_queue(hctx, true);
-		return true;
+		return;
 	}
-
-	return false;
 }
 
+/*
+ * Only SCSI implements .get_budget and .put_budget, and SCSI restarts
+ * its queue by itself in its completion handler, so we don't need to
+ * restart queue if .get_budget() returns BLK_STS_NO_RESOURCE.
+ */
+static void blk_mq_do_dispatch_sched(struct blk_mq_hw_ctx *hctx)
+{
+	struct request_queue *q = hctx->queue;
+	struct elevator_queue *e = q->elevator;
+	LIST_HEAD(rq_list);
+
+	do {
+		struct request *rq;
+		blk_status_t ret;
+
+		if (e->type->ops.mq.has_work &&
+				!e->type->ops.mq.has_work(hctx))
+			break;
+
+		ret = blk_mq_get_dispatch_budget(hctx);
+		if (ret == BLK_STS_RESOURCE)
+			break;
+
+		rq = e->type->ops.mq.dispatch_request(hctx);
+		if (!rq) {
+			blk_mq_put_dispatch_budget(hctx);
+			break;
+		} else if (ret != BLK_STS_OK) {
+			blk_mq_end_request(rq, ret);
+			continue;
+		}
+
+		/*
+		 * Now this rq owns the budget which has to be released
+		 * if this rq won't be queued to driver via .queue_rq()
+		 * in blk_mq_dispatch_rq_list().
+		 */
+		list_add(&rq->queuelist, &rq_list);
+	} while (blk_mq_dispatch_rq_list(q, &rq_list, true));
+}
+
+static struct blk_mq_ctx *blk_mq_next_ctx(struct blk_mq_hw_ctx *hctx,
+					  struct blk_mq_ctx *ctx)
+{
+	unsigned idx = ctx->index_hw;
+
+	if (++idx == hctx->nr_ctx)
+		idx = 0;
+
+	return hctx->ctxs[idx];
+}
+
+/*
+ * Only SCSI implements .get_budget and .put_budget, and SCSI restarts
+ * its queue by itself in its completion handler, so we don't need to
+ * restart queue if .get_budget() returns BLK_STS_NO_RESOURCE.
+ */
+static void blk_mq_do_dispatch_ctx(struct blk_mq_hw_ctx *hctx)
+{
+	struct request_queue *q = hctx->queue;
+	LIST_HEAD(rq_list);
+	struct blk_mq_ctx *ctx = READ_ONCE(hctx->dispatch_from);
+
+	do {
+		struct request *rq;
+		blk_status_t ret;
+
+		if (!sbitmap_any_bit_set(&hctx->ctx_map))
+			break;
+
+		ret = blk_mq_get_dispatch_budget(hctx);
+		if (ret == BLK_STS_RESOURCE)
+			break;
+
+		rq = blk_mq_dequeue_from_ctx(hctx, ctx);
+		if (!rq) {
+			blk_mq_put_dispatch_budget(hctx);
+			break;
+		} else if (ret != BLK_STS_OK) {
+			blk_mq_end_request(rq, ret);
+			continue;
+		}
+
+		/*
+		 * Now this rq owns the budget which has to be released
+		 * if this rq won't be queued to driver via .queue_rq()
+		 * in blk_mq_dispatch_rq_list().
+		 */
+		list_add(&rq->queuelist, &rq_list);
+
+		/* round robin for fair dispatch */
+		ctx = blk_mq_next_ctx(hctx, rq->mq_ctx);
+
+	} while (blk_mq_dispatch_rq_list(q, &rq_list, true));
+
+	WRITE_ONCE(hctx->dispatch_from, ctx);
+}
+
+/* return true if hw queue need to be run again */
 void blk_mq_sched_dispatch_requests(struct blk_mq_hw_ctx *hctx)
 {
 	struct request_queue *q = hctx->queue;
 	struct elevator_queue *e = q->elevator;
 	const bool has_sched_dispatch = e && e->type->ops.mq.dispatch_request;
-	bool did_work = false;
 	LIST_HEAD(rq_list);
 
 	/* RCU or SRCU read lock is needed before checking quiesced flag */
@@ -122,29 +212,34 @@ void blk_mq_sched_dispatch_requests(struct blk_mq_hw_ctx *hctx)
 	 * scheduler, we can no longer merge or sort them. So it's best to
 	 * leave them there for as long as we can. Mark the hw queue as
 	 * needing a restart in that case.
+	 *
+	 * We want to dispatch from the scheduler if there was nothing
+	 * on the dispatch list or we were able to dispatch from the
+	 * dispatch list.
 	 */
 	if (!list_empty(&rq_list)) {
 		blk_mq_sched_mark_restart_hctx(hctx);
-		did_work = blk_mq_dispatch_rq_list(q, &rq_list);
-	} else if (!has_sched_dispatch) {
+		if (blk_mq_dispatch_rq_list(q, &rq_list, false)) {
+			if (has_sched_dispatch)
+				blk_mq_do_dispatch_sched(hctx);
+			else
+				blk_mq_do_dispatch_ctx(hctx);
+		}
+	} else if (has_sched_dispatch) {
+		blk_mq_do_dispatch_sched(hctx);
+	} else if (q->mq_ops->get_budget) {
+		/*
+		 * If we need to get budget before queuing request, we
+		 * dequeue request one by one from sw queue for avoiding
+		 * to mess up I/O merge when dispatch runs out of resource.
+		 *
+		 * TODO: get more budgets, and dequeue more requests in
+		 * one time.
+		 */
+		blk_mq_do_dispatch_ctx(hctx);
+	} else {
 		blk_mq_flush_busy_ctxs(hctx, &rq_list);
-		blk_mq_dispatch_rq_list(q, &rq_list);
-	}
-
-	/*
-	 * We want to dispatch from the scheduler if we had no work left
-	 * on the dispatch list, OR if we did have work but weren't able
-	 * to make progress.
-	 */
-	if (!did_work && has_sched_dispatch) {
-		do {
-			struct request *rq;
-
-			rq = e->type->ops.mq.dispatch_request(hctx);
-			if (!rq)
-				break;
-			list_add(&rq->queuelist, &rq_list);
-		} while (blk_mq_dispatch_rq_list(q, &rq_list));
+		blk_mq_dispatch_rq_list(q, &rq_list, false);
 	}
 }
 
@@ -275,68 +370,6 @@ static bool blk_mq_sched_bypass_insert(struct blk_mq_hw_ctx *hctx,
 	list_add(&rq->queuelist, &hctx->dispatch);
 	spin_unlock(&hctx->lock);
 	return true;
-}
-
-/**
- * list_for_each_entry_rcu_rr - iterate in a round-robin fashion over rcu list
- * @pos:    loop cursor.
- * @skip:   the list element that will not be examined. Iteration starts at
- *          @skip->next.
- * @head:   head of the list to examine. This list must have at least one
- *          element, namely @skip.
- * @member: name of the list_head structure within typeof(*pos).
- */
-#define list_for_each_entry_rcu_rr(pos, skip, head, member)		\
-	for ((pos) = (skip);						\
-	     (pos = (pos)->member.next != (head) ? list_entry_rcu(	\
-			(pos)->member.next, typeof(*pos), member) :	\
-	      list_entry_rcu((pos)->member.next->next, typeof(*pos), member)), \
-	     (pos) != (skip); )
-
-/*
- * Called after a driver tag has been freed to check whether a hctx needs to
- * be restarted. Restarts @hctx if its tag set is not shared. Restarts hardware
- * queues in a round-robin fashion if the tag set of @hctx is shared with other
- * hardware queues.
- */
-void blk_mq_sched_restart(struct blk_mq_hw_ctx *const hctx)
-{
-	struct blk_mq_tags *const tags = hctx->tags;
-	struct blk_mq_tag_set *const set = hctx->queue->tag_set;
-	struct request_queue *const queue = hctx->queue, *q;
-	struct blk_mq_hw_ctx *hctx2;
-	unsigned int i, j;
-
-	if (set->flags & BLK_MQ_F_TAG_SHARED) {
-		/*
-		 * If this is 0, then we know that no hardware queues
-		 * have RESTART marked. We're done.
-		 */
-		if (!atomic_read(&queue->shared_hctx_restart))
-			return;
-
-		rcu_read_lock();
-		list_for_each_entry_rcu_rr(q, queue, &set->tag_list,
-					   tag_set_list) {
-			queue_for_each_hw_ctx(q, hctx2, i)
-				if (hctx2->tags == tags &&
-				    blk_mq_sched_restart_hctx(hctx2))
-					goto done;
-		}
-		j = hctx->queue_num + 1;
-		for (i = 0; i < queue->nr_hw_queues; i++, j++) {
-			if (j == queue->nr_hw_queues)
-				j = 0;
-			hctx2 = queue->queue_hw_ctx[j];
-			if (hctx2->tags == tags &&
-			    blk_mq_sched_restart_hctx(hctx2))
-				break;
-		}
-done:
-		rcu_read_unlock();
-	} else {
-		blk_mq_sched_restart_hctx(hctx);
-	}
 }
 
 /*
