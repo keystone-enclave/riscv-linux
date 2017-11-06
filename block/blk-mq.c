@@ -653,6 +653,8 @@ static void __blk_mq_requeue_request(struct request *rq)
 {
 	struct request_queue *q = rq->q;
 
+	blk_mq_put_driver_tag(rq);
+
 	trace_block_rq_requeue(q, rq);
 	wbt_requeue(q->rq_wb, &rq->issue_stat);
 	blk_mq_sched_requeue_request(rq);
@@ -996,62 +998,6 @@ done:
 	return rq->tag != -1;
 }
 
-static void __blk_mq_put_driver_tag(struct blk_mq_hw_ctx *hctx,
-				    struct request *rq)
-{
-	blk_mq_put_tag(hctx, hctx->tags, rq->mq_ctx, rq->tag);
-	rq->tag = -1;
-
-	if (rq->rq_flags & RQF_MQ_INFLIGHT) {
-		rq->rq_flags &= ~RQF_MQ_INFLIGHT;
-		atomic_dec(&hctx->nr_active);
-	}
-}
-
-static void blk_mq_put_driver_tag_hctx(struct blk_mq_hw_ctx *hctx,
-				       struct request *rq)
-{
-	if (rq->tag == -1 || rq->internal_tag == -1)
-		return;
-
-	__blk_mq_put_driver_tag(hctx, rq);
-}
-
-static void blk_mq_put_driver_tag(struct request *rq)
-{
-	struct blk_mq_hw_ctx *hctx;
-
-	if (rq->tag == -1 || rq->internal_tag == -1)
-		return;
-
-	hctx = blk_mq_map_queue(rq->q, rq->mq_ctx->cpu);
-	__blk_mq_put_driver_tag(hctx, rq);
-}
-
-/*
- * If we fail getting a driver tag because all the driver tags are already
- * assigned and on the dispatch list, BUT the first entry does not have a
- * tag, then we could deadlock. For that case, move entries with assigned
- * driver tags to the front, leaving the set of tagged requests in the
- * same order, and the untagged set in the same order.
- */
-static bool reorder_tags_to_front(struct list_head *list)
-{
-	struct request *rq, *tmp, *first = NULL;
-
-	list_for_each_entry_safe_reverse(rq, tmp, list, queuelist) {
-		if (rq == first)
-			break;
-		if (rq->tag != -1) {
-			list_move(&rq->queuelist, list);
-			if (!first)
-				first = rq;
-		}
-	}
-
-	return first != NULL;
-}
-
 static int blk_mq_dispatch_wake(wait_queue_entry_t *wait, unsigned mode, int flags,
 				void *key)
 {
@@ -1094,7 +1040,7 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 		bool got_budget)
 {
 	struct blk_mq_hw_ctx *hctx;
-	struct request *rq;
+	struct request *rq, *nxt;
 	int errors, queued;
 
 	if (list_empty(list))
@@ -1112,9 +1058,6 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 
 		rq = list_first_entry(list, struct request, queuelist);
 		if (!blk_mq_get_driver_tag(rq, &hctx, false)) {
-			if (!queued && reorder_tags_to_front(list))
-				continue;
-
 			/*
 			 * The initial allocation attempt failed, so we need to
 			 * rerun the hardware queue when a tag is freed.
@@ -1137,13 +1080,8 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 			}
 		}
 
-		if (!got_budget) {
-			ret = blk_mq_get_dispatch_budget(hctx);
-			if (ret == BLK_STS_RESOURCE)
-				break;
-			if (ret != BLK_STS_OK)
-				goto fail_rq;
-		}
+		if (!got_budget && !blk_mq_get_dispatch_budget(hctx))
+			break;
 
 		list_del_init(&rq->queuelist);
 
@@ -1156,21 +1094,25 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 		if (list_empty(list))
 			bd.last = true;
 		else {
-			struct request *nxt;
-
 			nxt = list_first_entry(list, struct request, queuelist);
 			bd.last = !blk_mq_get_driver_tag(nxt, NULL, false);
 		}
 
 		ret = q->mq_ops->queue_rq(hctx, &bd);
 		if (ret == BLK_STS_RESOURCE) {
-			blk_mq_put_driver_tag_hctx(hctx, rq);
+			/*
+			 * If an I/O scheduler has been configured and we got a
+			 * driver tag for the next request already, free it again.
+			 */
+			if (!list_empty(list)) {
+				nxt = list_first_entry(list, struct request, queuelist);
+				blk_mq_put_driver_tag(nxt);
+			}
 			list_add(&rq->queuelist, list);
 			__blk_mq_requeue_request(rq);
 			break;
 		}
 
- fail_rq:
 		if (unlikely(ret != BLK_STS_OK)) {
 			errors++;
 			blk_mq_end_request(rq, BLK_STS_IOERR);
@@ -1187,13 +1129,6 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 	 * that is where we will continue on next queue run.
 	 */
 	if (!list_empty(list)) {
-		/*
-		 * If an I/O scheduler has been configured and we got a driver
-		 * tag for the next request already, free it again.
-		 */
-		rq = list_first_entry(list, struct request, queuelist);
-		blk_mq_put_driver_tag(rq);
-
 		spin_lock(&hctx->lock);
 		list_splice_init(list, &hctx->dispatch);
 		spin_unlock(&hctx->lock);
@@ -1499,7 +1434,7 @@ void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
  * Should only be used carefully, when the caller knows we want to
  * bypass a potential IO scheduler on the target device.
  */
-void blk_mq_request_bypass_insert(struct request *rq)
+void blk_mq_request_bypass_insert(struct request *rq, bool run_queue)
 {
 	struct blk_mq_ctx *ctx = rq->mq_ctx;
 	struct blk_mq_hw_ctx *hctx = blk_mq_map_queue(rq->q, ctx->cpu);
@@ -1508,7 +1443,8 @@ void blk_mq_request_bypass_insert(struct request *rq)
 	list_add_tail(&rq->queuelist, &hctx->dispatch);
 	spin_unlock(&hctx->lock);
 
-	blk_mq_run_hw_queue(hctx, false);
+	if (run_queue)
+		blk_mq_run_hw_queue(hctx, false);
 }
 
 void blk_mq_insert_requests(struct blk_mq_hw_ctx *hctx, struct blk_mq_ctx *ctx,
@@ -1642,12 +1578,10 @@ static void __blk_mq_try_issue_directly(struct blk_mq_hw_ctx *hctx,
 	if (!blk_mq_get_driver_tag(rq, NULL, false))
 		goto insert;
 
-	ret = blk_mq_get_dispatch_budget(hctx);
-	if (ret == BLK_STS_RESOURCE) {
+	if (!blk_mq_get_dispatch_budget(hctx)) {
 		blk_mq_put_driver_tag(rq);
 		goto insert;
-	} else if (ret != BLK_STS_OK)
-		goto fail_rq;
+	}
 
 	new_cookie = request_to_qc_t(hctx, rq);
 
@@ -1665,7 +1599,6 @@ static void __blk_mq_try_issue_directly(struct blk_mq_hw_ctx *hctx,
 		__blk_mq_requeue_request(rq);
 		goto insert;
 	default:
- fail_rq:
 		*cookie = BLK_QC_T_NONE;
 		blk_mq_end_request(rq, ret);
 		return;
@@ -1739,13 +1672,10 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 	if (unlikely(is_flush_fua)) {
 		blk_mq_put_ctx(data.ctx);
 		blk_mq_bio_to_request(rq, bio);
-		if (q->elevator) {
-			blk_mq_sched_insert_request(rq, false, true, true,
-					true);
-		} else {
-			blk_insert_flush(rq);
-			blk_mq_run_hw_queue(data.hctx, true);
-		}
+
+		/* bypass scheduler for flush rq */
+		blk_insert_flush(rq);
+		blk_mq_run_hw_queue(data.hctx, true);
 	} else if (plug && q->nr_hw_queues == 1) {
 		struct request *last = NULL;
 

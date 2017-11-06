@@ -2,6 +2,7 @@
 #define INT_BLK_MQ_H
 
 #include "blk-stat.h"
+#include "blk-mq-tag.h"
 
 struct blk_mq_tag_set;
 
@@ -56,7 +57,7 @@ int blk_mq_alloc_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
  */
 void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 				bool at_head);
-void blk_mq_request_bypass_insert(struct request *rq);
+void blk_mq_request_bypass_insert(struct request *rq, bool run_queue);
 void blk_mq_insert_requests(struct blk_mq_hw_ctx *hctx, struct blk_mq_ctx *ctx,
 				struct list_head *list);
 
@@ -147,14 +148,45 @@ static inline void blk_mq_put_dispatch_budget(struct blk_mq_hw_ctx *hctx)
 		q->mq_ops->put_budget(hctx);
 }
 
-static inline blk_status_t blk_mq_get_dispatch_budget(
-		struct blk_mq_hw_ctx *hctx)
+static inline bool blk_mq_get_dispatch_budget(struct blk_mq_hw_ctx *hctx)
 {
 	struct request_queue *q = hctx->queue;
 
 	if (q->mq_ops->get_budget)
 		return q->mq_ops->get_budget(hctx);
-	return BLK_STS_OK;
+	return true;
+}
+
+static inline void __blk_mq_put_driver_tag(struct blk_mq_hw_ctx *hctx,
+					   struct request *rq)
+{
+	blk_mq_put_tag(hctx, hctx->tags, rq->mq_ctx, rq->tag);
+	rq->tag = -1;
+
+	if (rq->rq_flags & RQF_MQ_INFLIGHT) {
+		rq->rq_flags &= ~RQF_MQ_INFLIGHT;
+		atomic_dec(&hctx->nr_active);
+	}
+}
+
+static inline void blk_mq_put_driver_tag_hctx(struct blk_mq_hw_ctx *hctx,
+				       struct request *rq)
+{
+	if (rq->tag == -1 || rq->internal_tag == -1)
+		return;
+
+	__blk_mq_put_driver_tag(hctx, rq);
+}
+
+static inline void blk_mq_put_driver_tag(struct request *rq)
+{
+	struct blk_mq_hw_ctx *hctx;
+
+	if (rq->tag == -1 || rq->internal_tag == -1)
+		return;
+
+	hctx = blk_mq_map_queue(rq->q, rq->mq_ctx->cpu);
+	__blk_mq_put_driver_tag(hctx, rq);
 }
 
 #endif
