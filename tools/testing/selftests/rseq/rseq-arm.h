@@ -79,12 +79,15 @@ do {									\
 		teardown						\
 		"b %l[" __rseq_str(cmpfail_label) "]\n\t"
 
+#define rseq_workaround_gcc_asm_size_guess()	__asm__ __volatile__("")
+
 static inline __attribute__((always_inline))
 int rseq_cmpeqv_storev(intptr_t *v, intptr_t expect, intptr_t newv,
 		int cpu)
 {
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		RSEQ_ASM_STORE_RSEQ_CS(1, 3f, rseq_cs)
@@ -115,11 +118,14 @@ int rseq_cmpeqv_storev(intptr_t *v, intptr_t expect, intptr_t newv,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
 
@@ -129,6 +135,7 @@ int rseq_cmpnev_storeoffp_load(intptr_t *v, intptr_t expectnot,
 {
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		RSEQ_ASM_STORE_RSEQ_CS(1, 3f, rseq_cs)
@@ -164,11 +171,14 @@ int rseq_cmpnev_storeoffp_load(intptr_t *v, intptr_t expectnot,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
 
@@ -177,6 +187,7 @@ int rseq_addv(intptr_t *v, intptr_t count, int cpu)
 {
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		RSEQ_ASM_STORE_RSEQ_CS(1, 3f, rseq_cs)
@@ -203,8 +214,10 @@ int rseq_addv(intptr_t *v, intptr_t count, int cpu)
 		  RSEQ_INJECT_CLOBBER
 		: abort
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 }
@@ -216,6 +229,7 @@ int rseq_cmpeqv_trystorev_storev(intptr_t *v, intptr_t expect,
 {
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		RSEQ_ASM_STORE_RSEQ_CS(1, 3f, rseq_cs)
@@ -253,11 +267,14 @@ int rseq_cmpeqv_trystorev_storev(intptr_t *v, intptr_t expect,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
 
@@ -268,6 +285,7 @@ int rseq_cmpeqv_trystorev_storev_release(intptr_t *v, intptr_t expect,
 {
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		RSEQ_ASM_STORE_RSEQ_CS(1, 3f, rseq_cs)
@@ -306,11 +324,14 @@ int rseq_cmpeqv_trystorev_storev_release(intptr_t *v, intptr_t expect,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
 
@@ -321,6 +342,7 @@ int rseq_cmpeqv_cmpeqv_storev(intptr_t *v, intptr_t expect,
 {
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		RSEQ_ASM_STORE_RSEQ_CS(1, 3f, rseq_cs)
@@ -359,11 +381,14 @@ int rseq_cmpeqv_cmpeqv_storev(intptr_t *v, intptr_t expect,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
 
@@ -376,6 +401,7 @@ int rseq_cmpeqv_trymemcpy_storev(intptr_t *v, intptr_t expect,
 
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		"str %[src], %[rseq_scratch0]\n\t"
@@ -442,11 +468,14 @@ int rseq_cmpeqv_trymemcpy_storev(intptr_t *v, intptr_t expect,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
 
@@ -459,6 +488,7 @@ int rseq_cmpeqv_trymemcpy_storev_release(intptr_t *v, intptr_t expect,
 
 	RSEQ_INJECT_C(9)
 
+	rseq_workaround_gcc_asm_size_guess();
 	__asm__ __volatile__ goto (
 		RSEQ_ASM_DEFINE_TABLE(__rseq_table, 0x0, 0x0, 1f, 2f-1f, 4f)
 		"str %[src], %[rseq_scratch0]\n\t"
@@ -526,10 +556,13 @@ int rseq_cmpeqv_trymemcpy_storev_release(intptr_t *v, intptr_t expect,
 		  RSEQ_INJECT_CLOBBER
 		: abort, cmpfail
 	);
+	rseq_workaround_gcc_asm_size_guess();
 	return 0;
 abort:
+	rseq_workaround_gcc_asm_size_guess();
 	RSEQ_INJECT_FAILED
 	return -1;
 cmpfail:
+	rseq_workaround_gcc_asm_size_guess();
 	return 1;
 }
