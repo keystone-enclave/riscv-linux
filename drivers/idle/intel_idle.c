@@ -914,13 +914,14 @@ static __cpuidle int intel_idle(struct cpuidle_device *dev,
 	unsigned long eax = flg2MWAIT(state->flags);
 	unsigned int cstate;
 	bool uninitialized_var(tick);
+	int cpu = smp_processor_id();
 
 	/*
-	 * NB: if CPUIDLE_FLAG_TLB_FLUSHED is set, this idle transition
-	 * will probably flush the TLB.  It's not guaranteed to flush
-	 * the TLB, though, so it's not clear that we can do anything
-	 * useful with this knowledge.
+	 * leave_mm() to avoid costly and often unnecessary wakeups
+	 * for flushing the user TLB's associated with the active mm.
 	 */
+	if (state->flags & CPUIDLE_FLAG_TLB_FLUSHED)
+		leave_mm(cpu);
 
 	if (!static_cpu_has(X86_FEATURE_ARAT)) {
 		cstate = (((eax) >> MWAIT_SUBSTATE_SIZE) &
