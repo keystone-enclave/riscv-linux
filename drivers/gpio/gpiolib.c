@@ -365,28 +365,28 @@ static long linehandle_ioctl(struct file *filep, unsigned int cmd,
 	struct linehandle_state *lh = filep->private_data;
 	void __user *ip = (void __user *)arg;
 	struct gpiohandle_data ghd;
+	int vals[GPIOHANDLES_MAX];
 	int i;
 
 	if (cmd == GPIOHANDLE_GET_LINE_VALUES_IOCTL) {
-		int val;
+		/* TODO: check if descriptors are really input */
+		int ret = gpiod_get_array_value_complex(false,
+							true,
+							lh->numdescs,
+							lh->descs,
+							vals);
+		if (ret)
+			return ret;
 
 		memset(&ghd, 0, sizeof(ghd));
-
-		/* TODO: check if descriptors are really input */
-		for (i = 0; i < lh->numdescs; i++) {
-			val = gpiod_get_value_cansleep(lh->descs[i]);
-			if (val < 0)
-				return val;
-			ghd.values[i] = val;
-		}
+		for (i = 0; i < lh->numdescs; i++)
+			ghd.values[i] = vals[i];
 
 		if (copy_to_user(ip, &ghd, sizeof(ghd)))
 			return -EFAULT;
 
 		return 0;
 	} else if (cmd == GPIOHANDLE_SET_LINE_VALUES_IOCTL) {
-		int vals[GPIOHANDLES_MAX];
-
 		/* TODO: check if descriptors are really output */
 		if (copy_from_user(&ghd, ip, sizeof(ghd)))
 			return -EFAULT;
@@ -444,10 +444,23 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 	struct linehandle_state *lh;
 	struct file *file;
 	int fd, i, ret;
+	u32 lflags;
 
 	if (copy_from_user(&handlereq, ip, sizeof(handlereq)))
 		return -EFAULT;
 	if ((handlereq.lines == 0) || (handlereq.lines > GPIOHANDLES_MAX))
+		return -EINVAL;
+
+	lflags = handlereq.flags;
+
+	/* Return an error if an unknown flag is set */
+	if (lflags & ~GPIOHANDLE_REQUEST_VALID_FLAGS)
+		return -EINVAL;
+
+	/* OPEN_DRAIN and OPEN_SOURCE flags only make sense for output mode. */
+	if (!(lflags & GPIOHANDLE_REQUEST_OUTPUT) &&
+	    ((lflags & GPIOHANDLE_REQUEST_OPEN_DRAIN) ||
+	     (lflags & GPIOHANDLE_REQUEST_OPEN_SOURCE)))
 		return -EINVAL;
 
 	lh = kzalloc(sizeof(*lh), GFP_KERNEL);
@@ -470,16 +483,9 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 	/* Request each GPIO */
 	for (i = 0; i < handlereq.lines; i++) {
 		u32 offset = handlereq.lineoffsets[i];
-		u32 lflags = handlereq.flags;
 		struct gpio_desc *desc;
 
 		if (offset >= gdev->ngpio) {
-			ret = -EINVAL;
-			goto out_free_descs;
-		}
-
-		/* Return an error if a unknown flag is set */
-		if (lflags & ~GPIOHANDLE_REQUEST_VALID_FLAGS) {
 			ret = -EINVAL;
 			goto out_free_descs;
 		}
@@ -1718,8 +1724,8 @@ static void gpiochip_irqchip_remove(struct gpio_chip *gpiochip)
 	acpi_gpiochip_free_interrupts(gpiochip);
 
 	if (gpiochip->irq_chained_parent) {
-		irq_set_chained_handler(gpiochip->irq_chained_parent, NULL);
-		irq_set_handler_data(gpiochip->irq_chained_parent, NULL);
+		irq_set_chained_handler_and_data(
+			gpiochip->irq_chained_parent, NULL, NULL);
 	}
 
 	/* Remove all IRQ mappings and delete the domain */
@@ -2013,7 +2019,7 @@ EXPORT_SYMBOL_GPL(gpiochip_remove_pin_ranges);
  * on each other, and help provide better diagnostics in debugfs.
  * They're called even less than the "set direction" calls.
  */
-static int __gpiod_request(struct gpio_desc *desc, const char *label)
+static int gpiod_request_commit(struct gpio_desc *desc, const char *label)
 {
 	struct gpio_chip	*chip = desc->gdev->chip;
 	int			status;
@@ -2106,7 +2112,7 @@ int gpiod_request(struct gpio_desc *desc, const char *label)
 	gdev = desc->gdev;
 
 	if (try_module_get(gdev->owner)) {
-		status = __gpiod_request(desc, label);
+		status = gpiod_request_commit(desc, label);
 		if (status < 0)
 			module_put(gdev->owner);
 		else
@@ -2119,7 +2125,7 @@ int gpiod_request(struct gpio_desc *desc, const char *label)
 	return status;
 }
 
-static bool __gpiod_free(struct gpio_desc *desc)
+static bool gpiod_free_commit(struct gpio_desc *desc)
 {
 	bool			ret = false;
 	unsigned long		flags;
@@ -2154,7 +2160,7 @@ static bool __gpiod_free(struct gpio_desc *desc)
 
 void gpiod_free(struct gpio_desc *desc)
 {
-	if (desc && desc->gdev && __gpiod_free(desc)) {
+	if (desc && desc->gdev && gpiod_free_commit(desc)) {
 		module_put(desc->gdev->owner);
 		put_device(&desc->gdev->dev);
 	} else {
@@ -2217,7 +2223,7 @@ struct gpio_desc *gpiochip_request_own_desc(struct gpio_chip *chip, u16 hwnum,
 		return desc;
 	}
 
-	err = __gpiod_request(desc, label);
+	err = gpiod_request_commit(desc, label);
 	if (err < 0)
 		return ERR_PTR(err);
 
@@ -2235,7 +2241,7 @@ EXPORT_SYMBOL_GPL(gpiochip_request_own_desc);
 void gpiochip_free_own_desc(struct gpio_desc *desc)
 {
 	if (desc)
-		__gpiod_free(desc);
+		gpiod_free_commit(desc);
 }
 EXPORT_SYMBOL_GPL(gpiochip_free_own_desc);
 
@@ -2291,44 +2297,12 @@ static int gpio_set_drive_single_ended(struct gpio_chip *gc, unsigned offset,
 	return gc->set_config ? gc->set_config(gc, offset, config) : -ENOTSUPP;
 }
 
-static int _gpiod_direction_output_raw(struct gpio_desc *desc, int value)
+static int gpiod_direction_output_raw_commit(struct gpio_desc *desc, int value)
 {
 	struct gpio_chip *gc = desc->gdev->chip;
 	int val = !!value;
 	int ret;
 
-	/* GPIOs used for IRQs shall not be set as output */
-	if (test_bit(FLAG_USED_AS_IRQ, &desc->flags)) {
-		gpiod_err(desc,
-			  "%s: tried to set a GPIO tied to an IRQ as output\n",
-			  __func__);
-		return -EIO;
-	}
-
-	if (test_bit(FLAG_OPEN_DRAIN, &desc->flags)) {
-		/* First see if we can enable open drain in hardware */
-		ret = gpio_set_drive_single_ended(gc, gpio_chip_hwgpio(desc),
-						  PIN_CONFIG_DRIVE_OPEN_DRAIN);
-		if (!ret)
-			goto set_output_value;
-		/* Emulate open drain by not actively driving the line high */
-		if (val)
-			return gpiod_direction_input(desc);
-	}
-	else if (test_bit(FLAG_OPEN_SOURCE, &desc->flags)) {
-		ret = gpio_set_drive_single_ended(gc, gpio_chip_hwgpio(desc),
-						  PIN_CONFIG_DRIVE_OPEN_SOURCE);
-		if (!ret)
-			goto set_output_value;
-		/* Emulate open source by not actively driving the line low */
-		if (!val)
-			return gpiod_direction_input(desc);
-	} else {
-		gpio_set_drive_single_ended(gc, gpio_chip_hwgpio(desc),
-					    PIN_CONFIG_DRIVE_PUSH_PULL);
-	}
-
-set_output_value:
 	if (!gc->set || !gc->direction_output) {
 		gpiod_warn(desc,
 		       "%s: missing set() or direction_output() operations\n",
@@ -2358,7 +2332,7 @@ set_output_value:
 int gpiod_direction_output_raw(struct gpio_desc *desc, int value)
 {
 	VALIDATE_DESC(desc);
-	return _gpiod_direction_output_raw(desc, value);
+	return gpiod_direction_output_raw_commit(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_direction_output_raw);
 
@@ -2376,12 +2350,48 @@ EXPORT_SYMBOL_GPL(gpiod_direction_output_raw);
  */
 int gpiod_direction_output(struct gpio_desc *desc, int value)
 {
+	struct gpio_chip *gc = desc->gdev->chip;
+	int ret;
+
 	VALIDATE_DESC(desc);
 	if (test_bit(FLAG_ACTIVE_LOW, &desc->flags))
 		value = !value;
 	else
 		value = !!value;
-	return _gpiod_direction_output_raw(desc, value);
+
+	/* GPIOs used for IRQs shall not be set as output */
+	if (test_bit(FLAG_USED_AS_IRQ, &desc->flags)) {
+		gpiod_err(desc,
+			  "%s: tried to set a GPIO tied to an IRQ as output\n",
+			  __func__);
+		return -EIO;
+	}
+
+	if (test_bit(FLAG_OPEN_DRAIN, &desc->flags)) {
+		/* First see if we can enable open drain in hardware */
+		ret = gpio_set_drive_single_ended(gc, gpio_chip_hwgpio(desc),
+						  PIN_CONFIG_DRIVE_OPEN_DRAIN);
+		if (!ret)
+			goto set_output_value;
+		/* Emulate open drain by not actively driving the line high */
+		if (value)
+			return gpiod_direction_input(desc);
+	}
+	else if (test_bit(FLAG_OPEN_SOURCE, &desc->flags)) {
+		ret = gpio_set_drive_single_ended(gc, gpio_chip_hwgpio(desc),
+						  PIN_CONFIG_DRIVE_OPEN_SOURCE);
+		if (!ret)
+			goto set_output_value;
+		/* Emulate open source by not actively driving the line low */
+		if (!value)
+			return gpiod_direction_input(desc);
+	} else {
+		gpio_set_drive_single_ended(gc, gpio_chip_hwgpio(desc),
+					    PIN_CONFIG_DRIVE_PUSH_PULL);
+	}
+
+set_output_value:
+	return gpiod_direction_output_raw_commit(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_direction_output);
 
@@ -2448,7 +2458,7 @@ EXPORT_SYMBOL_GPL(gpiod_is_active_low);
  * that the GPIO was actually requested.
  */
 
-static int _gpiod_get_raw_value(const struct gpio_desc *desc)
+static int gpiod_get_raw_value_commit(const struct gpio_desc *desc)
 {
 	struct gpio_chip	*chip;
 	int offset;
@@ -2460,6 +2470,71 @@ static int _gpiod_get_raw_value(const struct gpio_desc *desc)
 	value = value < 0 ? value : !!value;
 	trace_gpio_value(desc_to_gpio(desc), 1, value);
 	return value;
+}
+
+static int gpio_chip_get_multiple(struct gpio_chip *chip,
+				  unsigned long *mask, unsigned long *bits)
+{
+	if (chip->get_multiple) {
+		return chip->get_multiple(chip, mask, bits);
+	} else if (chip->get) {
+		int i, value;
+
+		for_each_set_bit(i, mask, chip->ngpio) {
+			value = chip->get(chip, i);
+			if (value < 0)
+				return value;
+			__assign_bit(i, bits, value);
+		}
+		return 0;
+	}
+	return -EIO;
+}
+
+int gpiod_get_array_value_complex(bool raw, bool can_sleep,
+				  unsigned int array_size,
+				  struct gpio_desc **desc_array,
+				  int *value_array)
+{
+	int i = 0;
+
+	while (i < array_size) {
+		struct gpio_chip *chip = desc_array[i]->gdev->chip;
+		unsigned long mask[BITS_TO_LONGS(chip->ngpio)];
+		unsigned long bits[BITS_TO_LONGS(chip->ngpio)];
+		int first, j, ret;
+
+		if (!can_sleep)
+			WARN_ON(chip->can_sleep);
+
+		/* collect all inputs belonging to the same chip */
+		first = i;
+		memset(mask, 0, sizeof(mask));
+		do {
+			const struct gpio_desc *desc = desc_array[i];
+			int hwgpio = gpio_chip_hwgpio(desc);
+
+			__set_bit(hwgpio, mask);
+			i++;
+		} while ((i < array_size) &&
+			 (desc_array[i]->gdev->chip == chip));
+
+		ret = gpio_chip_get_multiple(chip, mask, bits);
+		if (ret)
+			return ret;
+
+		for (j = first; j < i; j++) {
+			const struct gpio_desc *desc = desc_array[j];
+			int hwgpio = gpio_chip_hwgpio(desc);
+			int value = test_bit(hwgpio, bits);
+
+			if (!raw && test_bit(FLAG_ACTIVE_LOW, &desc->flags))
+				value = !value;
+			value_array[j] = value;
+			trace_gpio_value(desc_to_gpio(desc), 1, value);
+		}
+	}
+	return 0;
 }
 
 /**
@@ -2477,7 +2552,7 @@ int gpiod_get_raw_value(const struct gpio_desc *desc)
 	VALIDATE_DESC(desc);
 	/* Should be using gpio_get_value_cansleep() */
 	WARN_ON(desc->gdev->chip->can_sleep);
-	return _gpiod_get_raw_value(desc);
+	return gpiod_get_raw_value_commit(desc);
 }
 EXPORT_SYMBOL_GPL(gpiod_get_raw_value);
 
@@ -2499,7 +2574,7 @@ int gpiod_get_value(const struct gpio_desc *desc)
 	/* Should be using gpio_get_value_cansleep() */
 	WARN_ON(desc->gdev->chip->can_sleep);
 
-	value = _gpiod_get_raw_value(desc);
+	value = gpiod_get_raw_value_commit(desc);
 	if (value < 0)
 		return value;
 
@@ -2510,12 +2585,57 @@ int gpiod_get_value(const struct gpio_desc *desc)
 }
 EXPORT_SYMBOL_GPL(gpiod_get_value);
 
+/**
+ * gpiod_get_raw_array_value() - read raw values from an array of GPIOs
+ * @array_size: number of elements in the descriptor / value arrays
+ * @desc_array: array of GPIO descriptors whose values will be read
+ * @value_array: array to store the read values
+ *
+ * Read the raw values of the GPIOs, i.e. the values of the physical lines
+ * without regard for their ACTIVE_LOW status.  Return 0 in case of success,
+ * else an error code.
+ *
+ * This function should be called from contexts where we cannot sleep,
+ * and it will complain if the GPIO chip functions potentially sleep.
+ */
+int gpiod_get_raw_array_value(unsigned int array_size,
+			      struct gpio_desc **desc_array, int *value_array)
+{
+	if (!desc_array)
+		return -EINVAL;
+	return gpiod_get_array_value_complex(true, false, array_size,
+					     desc_array, value_array);
+}
+EXPORT_SYMBOL_GPL(gpiod_get_raw_array_value);
+
+/**
+ * gpiod_get_array_value() - read values from an array of GPIOs
+ * @array_size: number of elements in the descriptor / value arrays
+ * @desc_array: array of GPIO descriptors whose values will be read
+ * @value_array: array to store the read values
+ *
+ * Read the logical values of the GPIOs, i.e. taking their ACTIVE_LOW status
+ * into account.  Return 0 in case of success, else an error code.
+ *
+ * This function should be called from contexts where we cannot sleep,
+ * and it will complain if the GPIO chip functions potentially sleep.
+ */
+int gpiod_get_array_value(unsigned int array_size,
+			  struct gpio_desc **desc_array, int *value_array)
+{
+	if (!desc_array)
+		return -EINVAL;
+	return gpiod_get_array_value_complex(false, false, array_size,
+					     desc_array, value_array);
+}
+EXPORT_SYMBOL_GPL(gpiod_get_array_value);
+
 /*
- *  _gpio_set_open_drain_value() - Set the open drain gpio's value.
+ *  gpio_set_open_drain_value_commit() - Set the open drain gpio's value.
  * @desc: gpio descriptor whose state need to be set.
  * @value: Non-zero for setting it HIGH otherwise it will set to LOW.
  */
-static void _gpio_set_open_drain_value(struct gpio_desc *desc, bool value)
+static void gpio_set_open_drain_value_commit(struct gpio_desc *desc, bool value)
 {
 	int err = 0;
 	struct gpio_chip *chip = desc->gdev->chip;
@@ -2542,7 +2662,7 @@ static void _gpio_set_open_drain_value(struct gpio_desc *desc, bool value)
  * @desc: gpio descriptor whose state need to be set.
  * @value: Non-zero for setting it HIGH otherwise it will set to LOW.
  */
-static void _gpio_set_open_source_value(struct gpio_desc *desc, bool value)
+static void gpio_set_open_source_value_commit(struct gpio_desc *desc, bool value)
 {
 	int err = 0;
 	struct gpio_chip *chip = desc->gdev->chip;
@@ -2564,18 +2684,13 @@ static void _gpio_set_open_source_value(struct gpio_desc *desc, bool value)
 			  __func__, err);
 }
 
-static void _gpiod_set_raw_value(struct gpio_desc *desc, bool value)
+static void gpiod_set_raw_value_commit(struct gpio_desc *desc, bool value)
 {
 	struct gpio_chip	*chip;
 
 	chip = desc->gdev->chip;
 	trace_gpio_value(desc_to_gpio(desc), 0, value);
-	if (test_bit(FLAG_OPEN_DRAIN, &desc->flags))
-		_gpio_set_open_drain_value(desc, value);
-	else if (test_bit(FLAG_OPEN_SOURCE, &desc->flags))
-		_gpio_set_open_source_value(desc, value);
-	else
-		chip->set(chip, gpio_chip_hwgpio(desc), value);
+	chip->set(chip, gpio_chip_hwgpio(desc), value);
 }
 
 /*
@@ -2630,10 +2745,10 @@ void gpiod_set_array_value_complex(bool raw, bool can_sleep,
 			 * collect all normal outputs belonging to the same chip
 			 * open drain and open source outputs are set individually
 			 */
-			if (test_bit(FLAG_OPEN_DRAIN, &desc->flags)) {
-				_gpio_set_open_drain_value(desc, value);
-			} else if (test_bit(FLAG_OPEN_SOURCE, &desc->flags)) {
-				_gpio_set_open_source_value(desc, value);
+			if (test_bit(FLAG_OPEN_DRAIN, &desc->flags) && !raw) {
+				gpio_set_open_drain_value_commit(desc, value);
+			} else if (test_bit(FLAG_OPEN_SOURCE, &desc->flags) && !raw) {
+				gpio_set_open_source_value_commit(desc, value);
 			} else {
 				__set_bit(hwgpio, mask);
 				if (value)
@@ -2667,7 +2782,7 @@ void gpiod_set_raw_value(struct gpio_desc *desc, int value)
 	VALIDATE_DESC_VOID(desc);
 	/* Should be using gpiod_set_value_cansleep() */
 	WARN_ON(desc->gdev->chip->can_sleep);
-	_gpiod_set_raw_value(desc, value);
+	gpiod_set_raw_value_commit(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_set_raw_value);
 
@@ -2676,8 +2791,8 @@ EXPORT_SYMBOL_GPL(gpiod_set_raw_value);
  * @desc: gpio whose value will be assigned
  * @value: value to assign
  *
- * Set the logical value of the GPIO, i.e. taking its ACTIVE_LOW status into
- * account
+ * Set the logical value of the GPIO, i.e. taking its ACTIVE_LOW,
+ * OPEN_DRAIN and OPEN_SOURCE flags into account.
  *
  * This function should be called from contexts where we cannot sleep, and will
  * complain if the GPIO chip functions potentially sleep.
@@ -2689,7 +2804,12 @@ void gpiod_set_value(struct gpio_desc *desc, int value)
 	WARN_ON(desc->gdev->chip->can_sleep);
 	if (test_bit(FLAG_ACTIVE_LOW, &desc->flags))
 		value = !value;
-	_gpiod_set_raw_value(desc, value);
+	if (test_bit(FLAG_OPEN_DRAIN, &desc->flags))
+		gpio_set_open_drain_value_commit(desc, value);
+	else if (test_bit(FLAG_OPEN_SOURCE, &desc->flags))
+		gpio_set_open_source_value_commit(desc, value);
+	else
+		gpiod_set_raw_value_commit(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_set_value);
 
@@ -2890,7 +3010,7 @@ bool gpiochip_line_is_persistent(struct gpio_chip *chip, unsigned int offset)
 	if (offset >= chip->ngpio)
 		return false;
 
-	return !test_bit(FLAG_SLEEP_MAY_LOOSE_VALUE,
+	return !test_bit(FLAG_SLEEP_MAY_LOSE_VALUE,
 			 &chip->gpiodev->descs[offset].flags);
 }
 EXPORT_SYMBOL_GPL(gpiochip_line_is_persistent);
@@ -2908,7 +3028,7 @@ int gpiod_get_raw_value_cansleep(const struct gpio_desc *desc)
 {
 	might_sleep_if(extra_checks);
 	VALIDATE_DESC(desc);
-	return _gpiod_get_raw_value(desc);
+	return gpiod_get_raw_value_commit(desc);
 }
 EXPORT_SYMBOL_GPL(gpiod_get_raw_value_cansleep);
 
@@ -2927,7 +3047,7 @@ int gpiod_get_value_cansleep(const struct gpio_desc *desc)
 
 	might_sleep_if(extra_checks);
 	VALIDATE_DESC(desc);
-	value = _gpiod_get_raw_value(desc);
+	value = gpiod_get_raw_value_commit(desc);
 	if (value < 0)
 		return value;
 
@@ -2937,6 +3057,53 @@ int gpiod_get_value_cansleep(const struct gpio_desc *desc)
 	return value;
 }
 EXPORT_SYMBOL_GPL(gpiod_get_value_cansleep);
+
+/**
+ * gpiod_get_raw_array_value_cansleep() - read raw values from an array of GPIOs
+ * @array_size: number of elements in the descriptor / value arrays
+ * @desc_array: array of GPIO descriptors whose values will be read
+ * @value_array: array to store the read values
+ *
+ * Read the raw values of the GPIOs, i.e. the values of the physical lines
+ * without regard for their ACTIVE_LOW status.  Return 0 in case of success,
+ * else an error code.
+ *
+ * This function is to be called from contexts that can sleep.
+ */
+int gpiod_get_raw_array_value_cansleep(unsigned int array_size,
+				       struct gpio_desc **desc_array,
+				       int *value_array)
+{
+	might_sleep_if(extra_checks);
+	if (!desc_array)
+		return -EINVAL;
+	return gpiod_get_array_value_complex(true, true, array_size,
+					     desc_array, value_array);
+}
+EXPORT_SYMBOL_GPL(gpiod_get_raw_array_value_cansleep);
+
+/**
+ * gpiod_get_array_value_cansleep() - read values from an array of GPIOs
+ * @array_size: number of elements in the descriptor / value arrays
+ * @desc_array: array of GPIO descriptors whose values will be read
+ * @value_array: array to store the read values
+ *
+ * Read the logical values of the GPIOs, i.e. taking their ACTIVE_LOW status
+ * into account.  Return 0 in case of success, else an error code.
+ *
+ * This function is to be called from contexts that can sleep.
+ */
+int gpiod_get_array_value_cansleep(unsigned int array_size,
+				   struct gpio_desc **desc_array,
+				   int *value_array)
+{
+	might_sleep_if(extra_checks);
+	if (!desc_array)
+		return -EINVAL;
+	return gpiod_get_array_value_complex(false, true, array_size,
+					     desc_array, value_array);
+}
+EXPORT_SYMBOL_GPL(gpiod_get_array_value_cansleep);
 
 /**
  * gpiod_set_raw_value_cansleep() - assign a gpio's raw value
@@ -2952,7 +3119,7 @@ void gpiod_set_raw_value_cansleep(struct gpio_desc *desc, int value)
 {
 	might_sleep_if(extra_checks);
 	VALIDATE_DESC_VOID(desc);
-	_gpiod_set_raw_value(desc, value);
+	gpiod_set_raw_value_commit(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_set_raw_value_cansleep);
 
@@ -2972,7 +3139,7 @@ void gpiod_set_value_cansleep(struct gpio_desc *desc, int value)
 	VALIDATE_DESC_VOID(desc);
 	if (test_bit(FLAG_ACTIVE_LOW, &desc->flags))
 		value = !value;
-	_gpiod_set_raw_value(desc, value);
+	gpiod_set_raw_value_commit(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_set_value_cansleep);
 
@@ -3281,8 +3448,8 @@ int gpiod_configure_flags(struct gpio_desc *desc, const char *con_id,
 
 	if (lflags & GPIO_OPEN_SOURCE)
 		set_bit(FLAG_OPEN_SOURCE, &desc->flags);
-	if (lflags & GPIO_SLEEP_MAY_LOOSE_VALUE)
-		set_bit(FLAG_SLEEP_MAY_LOOSE_VALUE, &desc->flags);
+	if (lflags & GPIO_SLEEP_MAY_LOSE_VALUE)
+		set_bit(FLAG_SLEEP_MAY_LOSE_VALUE, &desc->flags);
 
 	/* No particular flag request, return here... */
 	if (!(dflags & GPIOD_FLAGS_BIT_DIR_SET)) {
