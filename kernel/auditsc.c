@@ -75,6 +75,7 @@
 #include <linux/uaccess.h>
 #include <linux/fsnotify_backend.h>
 #include <uapi/linux/limits.h>
+#include <linux/dcache.h>
 
 #include "audit.h"
 
@@ -882,6 +883,8 @@ static inline void audit_free_names(struct audit_context *context)
 		list_del(&n->list);
 		if (n->name)
 			putname(n->name);
+		if (n->dentry)
+			dput(n->dentry);
 		if (n->should_free)
 			kfree(n);
 	}
@@ -1862,16 +1865,39 @@ void __audit_file(const struct file *file)
  * unsuccessful attempts.
  */
 void __audit_inode_child(struct inode *parent,
-			 const struct dentry *dentry,
+			 struct dentry *dentry,
 			 const unsigned char type)
 {
 	struct audit_context *context = current->audit_context;
 	struct inode *inode = d_backing_inode(dentry);
 	const char *dname = dentry->d_name.name;
 	struct audit_names *n, *found_parent = NULL, *found_child = NULL;
+	struct audit_entry *e;
+	struct list_head *list = &audit_filter_list[AUDIT_FILTER_FS];
+	int i;
 
 	if (!context->in_syscall)
 		return;
+
+	rcu_read_lock();
+	if (!list_empty(list)) {
+		list_for_each_entry_rcu(e, list, list) {
+			for (i = 0; i < e->rule.field_count; i++) {
+				struct audit_field *f = &e->rule.fields[i];
+
+				if (f->type == AUDIT_FSTYPE) {
+					if (audit_comparator(parent->i_sb->s_magic,
+					    f->op, f->val)) {
+						if (e->rule.action == AUDIT_NEVER) {
+							rcu_read_unlock();
+							return;
+						}
+					}
+				}
+			}
+		}
+	}
+	rcu_read_unlock();
 
 	if (inode)
 		handle_one(inode);
@@ -1918,6 +1944,7 @@ void __audit_inode_child(struct inode *parent,
 		if (!n)
 			return;
 		audit_copy_inode(n, NULL, parent);
+		n->dentry = dget_parent(dentry);
 	}
 
 	if (!found_child) {
@@ -1939,6 +1966,8 @@ void __audit_inode_child(struct inode *parent,
 		audit_copy_inode(found_child, dentry, inode);
 	else
 		found_child->ino = AUDIT_INO_UNSET;
+	if (!found_parent)
+		found_child->dentry = dget(dentry);
 }
 EXPORT_SYMBOL_GPL(__audit_inode_child);
 
