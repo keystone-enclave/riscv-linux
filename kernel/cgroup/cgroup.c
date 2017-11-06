@@ -142,12 +142,14 @@ static struct static_key_true *cgroup_subsys_on_dfl_key[] = {
 };
 #undef SUBSYS
 
+static DEFINE_PER_CPU(struct cgroup_cpu_stat, cgrp_dfl_root_cpu_stat);
+
 /*
  * The default hierarchy, reserved for the subsystems that are otherwise
  * unattached - it never has more than a single cgroup, and all tasks are
  * part of that cgroup.
  */
-struct cgroup_root cgrp_dfl_root;
+struct cgroup_root cgrp_dfl_root = { .cgrp.cpu_stat = &cgrp_dfl_root_cpu_stat };
 EXPORT_SYMBOL_GPL(cgrp_dfl_root);
 
 /*
@@ -462,6 +464,28 @@ static struct cgroup_subsys_state *cgroup_css(struct cgroup *cgrp,
 }
 
 /**
+ * cgroup_tryget_css - try to get a cgroup's css for the specified subsystem
+ * @cgrp: the cgroup of interest
+ * @ss: the subsystem of interest
+ *
+ * Find and get @cgrp's css assocaited with @ss.  If the css doesn't exist
+ * or is offline, %NULL is returned.
+ */
+static struct cgroup_subsys_state *cgroup_tryget_css(struct cgroup *cgrp,
+						     struct cgroup_subsys *ss)
+{
+	struct cgroup_subsys_state *css;
+
+	rcu_read_lock();
+	css = cgroup_css(cgrp, ss);
+	if (!css || !css_tryget_online(css))
+		css = NULL;
+	rcu_read_unlock();
+
+	return css;
+}
+
+/**
  * cgroup_e_css - obtain a cgroup's effective css for the specified subsystem
  * @cgrp: the cgroup of interest
  * @ss: the subsystem of interest (%NULL returns @cgrp->self)
@@ -647,6 +671,14 @@ struct css_set init_css_set = {
 	.cgrp_links		= LIST_HEAD_INIT(init_css_set.cgrp_links),
 	.mg_preload_node	= LIST_HEAD_INIT(init_css_set.mg_preload_node),
 	.mg_node		= LIST_HEAD_INIT(init_css_set.mg_node),
+
+	/*
+	 * The following field is re-initialized when this cset gets linked
+	 * in cgroup_init().  However, let's initialize the field
+	 * statically too so that the default cgroup can be accessed safely
+	 * early during boot.
+	 */
+	.dfl_cgrp		= &cgrp_dfl_root.cgrp,
 };
 
 static int css_set_count	= 1;	/* 1 for init_css_set */
@@ -3315,6 +3347,37 @@ static int cgroup_stat_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
+static int __maybe_unused cgroup_extra_stat_show(struct seq_file *seq,
+						 struct cgroup *cgrp, int ssid)
+{
+	struct cgroup_subsys *ss = cgroup_subsys[ssid];
+	struct cgroup_subsys_state *css;
+	int ret;
+
+	if (!ss->css_extra_stat_show)
+		return 0;
+
+	css = cgroup_tryget_css(cgrp, ss);
+	if (!css)
+		return 0;
+
+	ret = ss->css_extra_stat_show(seq, css);
+	css_put(css);
+	return ret;
+}
+
+static int cpu_stat_show(struct seq_file *seq, void *v)
+{
+	struct cgroup __maybe_unused *cgrp = seq_css(seq)->cgroup;
+	int ret = 0;
+
+	cgroup_stat_show_cputime(seq);
+#ifdef CONFIG_CGROUP_SCHED
+	ret = cgroup_extra_stat_show(seq, cgrp, cpu_cgrp_id);
+#endif
+	return ret;
+}
+
 static int cgroup_file_open(struct kernfs_open_file *of)
 {
 	struct cftype *cft = of->kn->priv;
@@ -4422,6 +4485,11 @@ static struct cftype cgroup_base_files[] = {
 		.name = "cgroup.stat",
 		.seq_show = cgroup_stat_show,
 	},
+	{
+		.name = "cpu.stat",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_stat_show,
+	},
 	{ }	/* terminate */
 };
 
@@ -4482,6 +4550,8 @@ static void css_free_work_fn(struct work_struct *work)
 			 */
 			cgroup_put(cgroup_parent(cgrp));
 			kernfs_put(cgrp->kn);
+			if (cgroup_on_dfl(cgrp))
+				cgroup_stat_exit(cgrp);
 			kfree(cgrp);
 		} else {
 			/*
@@ -4525,6 +4595,9 @@ static void css_release_work_fn(struct work_struct *work)
 
 		/* cgroup release path */
 		trace_cgroup_release(cgrp);
+
+		if (cgroup_on_dfl(cgrp))
+			cgroup_stat_flush(cgrp);
 
 		for (tcgrp = cgroup_parent(cgrp); tcgrp;
 		     tcgrp = cgroup_parent(tcgrp))
@@ -4709,6 +4782,12 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	if (ret)
 		goto out_free_cgrp;
 
+	if (cgroup_on_dfl(parent)) {
+		ret = cgroup_stat_init(cgrp);
+		if (ret)
+			goto out_cancel_ref;
+	}
+
 	/*
 	 * Temporarily set the pointer to NULL, so idr_find() won't return
 	 * a half-baked cgroup.
@@ -4716,7 +4795,7 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	cgrp->id = cgroup_idr_alloc(&root->cgroup_idr, NULL, 2, 0, GFP_KERNEL);
 	if (cgrp->id < 0) {
 		ret = -ENOMEM;
-		goto out_cancel_ref;
+		goto out_stat_exit;
 	}
 
 	init_cgroup_housekeeping(cgrp);
@@ -4767,6 +4846,9 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 
 out_idr_free:
 	cgroup_idr_remove(&root->cgroup_idr, cgrp->id);
+out_stat_exit:
+	if (cgroup_on_dfl(parent))
+		cgroup_stat_exit(cgrp);
 out_cancel_ref:
 	percpu_ref_exit(&cgrp->self.refcnt);
 out_free_cgrp:
@@ -5160,6 +5242,8 @@ int __init cgroup_init(void)
 	BUG_ON(percpu_init_rwsem(&cgroup_threadgroup_rwsem));
 	BUG_ON(cgroup_init_cftypes(NULL, cgroup_base_files));
 	BUG_ON(cgroup_init_cftypes(NULL, cgroup1_base_files));
+
+	cgroup_stat_boot();
 
 	/*
 	 * The latency of the synchronize_sched() is too high for cgroups,
