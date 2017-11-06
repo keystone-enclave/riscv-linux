@@ -157,8 +157,6 @@ struct regmap {
 
 	struct rb_root range_tree;
 	void *selector_work_buf;	/* Scratch buffer used for selector */
-
-	struct hwspinlock *hwlock;
 };
 
 struct regcache_ops {
