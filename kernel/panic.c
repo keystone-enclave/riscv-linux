@@ -608,7 +608,7 @@ DEFINE_SIMPLE_ATTRIBUTE(clear_warn_once_fops,
 static __init int register_warn_debugfs(void)
 {
 	/* Don't care about failure */
-	debugfs_create_file("clear_warn_once", 0644, NULL,
+	debugfs_create_file("clear_warn_once", 0200, NULL,
 			    NULL, &clear_warn_once_fops);
 	return 0;
 }
