@@ -77,6 +77,7 @@
 #include <asm/i8259.h>
 #include <asm/realmode.h>
 #include <asm/misc.h>
+#include <asm/qspinlock.h>
 
 /* Number of siblings per CPU package */
 int smp_num_siblings = 1;
@@ -1356,6 +1357,8 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 
 	pr_info("CPU0: ");
 	print_cpu_info(&cpu_data(0));
+
+	native_pv_lock_init();
 
 	uv_system_init();
 
