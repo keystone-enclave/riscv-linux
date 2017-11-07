@@ -278,6 +278,7 @@ Commands:\n\
 #elif defined(CONFIG_44x) || defined(CONFIG_PPC_BOOK3E)
 "  u	dump TLB\n"
 #endif
+"  U	show uptime information\n"
 "  ?	help\n"
 "  # n	limit output to n lines per page (for dp, dpa, dl)\n"
 "  zr	reboot\n\
@@ -530,14 +531,19 @@ static int xmon_core(struct pt_regs *regs, int fromipi)
 
  waiting:
 	secondary = 1;
+	spin_begin();
 	while (secondary && !xmon_gate) {
 		if (in_xmon == 0) {
-			if (fromipi)
+			if (fromipi) {
+				spin_end();
 				goto leave;
+			}
 			secondary = test_and_set_bit(0, &in_xmon);
 		}
-		barrier();
+		spin_cpu_relax();
+		touch_nmi_watchdog();
 	}
+	spin_end();
 
 	if (!secondary && !xmon_gate) {
 		/* we are the first cpu to come in */
@@ -568,21 +574,25 @@ static int xmon_core(struct pt_regs *regs, int fromipi)
 		mb();
 		xmon_gate = 1;
 		barrier();
+		touch_nmi_watchdog();
 	}
 
  cmdloop:
 	while (in_xmon) {
 		if (secondary) {
+			spin_begin();
 			if (cpu == xmon_owner) {
 				if (!test_and_set_bit(0, &xmon_taken)) {
 					secondary = 0;
+					spin_end();
 					continue;
 				}
 				/* missed it */
 				while (cpu == xmon_owner)
-					barrier();
+					spin_cpu_relax();
 			}
-			barrier();
+			spin_cpu_relax();
+			touch_nmi_watchdog();
 		} else {
 			cmd = cmds(regs);
 			if (cmd != 0) {
@@ -896,6 +906,26 @@ static void remove_cpu_bpts(void)
 	write_ciabr(0);
 }
 
+/* Based on uptime_proc_show(). */
+static void
+show_uptime(void)
+{
+	struct timespec uptime;
+
+	if (setjmp(bus_error_jmp) == 0) {
+		catch_memory_errors = 1;
+		sync();
+
+		get_monotonic_boottime(&uptime);
+		printf("Uptime: %lu.%.2lu seconds\n", (unsigned long)uptime.tv_sec,
+			((unsigned long)uptime.tv_nsec / (NSEC_PER_SEC/100)));
+
+		sync();
+		__delay(200);						\
+	}
+	catch_memory_errors = 0;
+}
+
 static void set_lpp_cmd(void)
 {
 	unsigned long lpp;
@@ -1031,6 +1061,9 @@ cmds(struct pt_regs *excp)
 			dump_tlb_book3e();
 			break;
 #endif
+		case 'U':
+			show_uptime();
+			break;
 		default:
 			printf("Unrecognized command: ");
 			do {
@@ -2279,7 +2312,7 @@ static void dump_tracing(void)
 static void dump_one_paca(int cpu)
 {
 	struct paca_struct *p;
-#ifdef CONFIG_PPC_STD_MMU_64
+#ifdef CONFIG_PPC_BOOK3S_64
 	int i = 0;
 #endif
 
@@ -2320,7 +2353,7 @@ static void dump_one_paca(int cpu)
 	DUMP(p, hw_cpu_id, "x");
 	DUMP(p, cpu_start, "x");
 	DUMP(p, kexec_state, "x");
-#ifdef CONFIG_PPC_STD_MMU_64
+#ifdef CONFIG_PPC_BOOK3S_64
 	for (i = 0; i < SLB_NUM_BOLTED; i++) {
 		u64 esid, vsid;
 
@@ -2351,6 +2384,7 @@ static void dump_one_paca(int cpu)
 #endif
 	DUMP(p, __current, "p");
 	DUMP(p, kstack, "lx");
+	printf(" kstack_base          = 0x%016lx\n", p->kstack & ~(THREAD_SIZE - 1));
 	DUMP(p, stab_rr, "lx");
 	DUMP(p, saved_r1, "lx");
 	DUMP(p, trap_save, "x");
@@ -2474,6 +2508,11 @@ static void dump_xives(void)
 {
 	unsigned long num;
 	int c;
+
+	if (!xive_enabled()) {
+		printf("Xive disabled on this system\n");
+		return;
+	}
 
 	c = inchar();
 	if (c == 'a') {
@@ -3224,7 +3263,7 @@ static void xmon_print_symbol(unsigned long address, const char *mid,
 	printf("%s", after);
 }
 
-#ifdef CONFIG_PPC_STD_MMU_64
+#ifdef CONFIG_PPC_BOOK3S_64
 void dump_segments(void)
 {
 	int i;
