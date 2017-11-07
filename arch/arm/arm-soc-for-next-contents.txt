@@ -67,6 +67,10 @@ next/soc
 		ARM: multi_v7_defconfig: enable CONFIG_GPIO_UNIPHIER
 	omap/cocci
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.15/coccinelle-signed
+	patch
+		ARM: multi_v7_defconfig: Select RPMSG_VIRTIO as module
+	actions/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/afaerber/linux-actions tags/actions-arm-soc-for-4.15
 
 next/dt
 	patch
@@ -154,6 +158,26 @@ renesas/dt64-2
 		git://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64-2
 	socfpga/dt-2
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_dts_for_v4.15_part2
+	actions/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/afaerber/linux-actions tags/actions-arm-dt-for-4.15
+	actions/dt64-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/afaerber/linux-actions tags/actions-arm64-dt-for-4.15
+	realtek/dt64
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/afaerber/linux-realtek tags/realtek-arm64-dt-for-4.15
+	<no branch> (eb54a522f164f89587381d665307d53acf75f114)
+		https://github.com/mbgg/linux-mediatek tags/v4.14-next-dts32-2
+	sunxi/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt-for-4.15-2
+	mvebu/dt64-2
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt64-4.15-2
+	<no branch> (16416084e06e1ebff51a9e7721a8cc4ccc186f28)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-dt64-for-4.15-2
+	rockchip/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.15-rockchip-dts32-2
+	rockchip/dt64-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.15-rockchip-dts64-2
+	patch
+		dt-bindings: bus: Add documentation for the Technologic Systems NBUS
 
 next/drivers
 	broadcom/drivers
@@ -195,9 +219,10 @@ next/drivers
 		drivers/firmware: psci_checker: Add missing destroy_timer_on_stack()
 	amlogic/drivers-2
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-drivers-2
+	patch
+		soc: amlogic: gx pm domain: add PM and OF dependencies
+		soc: qcom: remove unused label
+		bus: add driver for the Technologic Systems NBUS
+	omap/gpmc-2
+		https://github.com/rogerq/linux tags/gpmc-omap-for-v4.15-pt2
 
-fixes
-	<no branch> (deaa55196e0cb6eccc3d5374ddd7c47e7ec61da3)
-		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-fixes-v4.14
-	<no branch> (cda80a82ac3e89309706c027ada6ab232be1d640)
-		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.14-3
