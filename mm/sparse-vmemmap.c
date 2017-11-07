@@ -63,7 +63,7 @@ void * __meminit vmemmap_alloc_block(unsigned long size, int node)
 			return page_address(page);
 
 		if (!warned) {
-			warn_alloc(gfp_mask, NULL,
+			warn_alloc(gfp_mask & ~__GFP_NOWARN, NULL,
 				   "vmemmap alloc failure: order:%u", order);
 			warned = true;
 		}
