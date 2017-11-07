@@ -73,7 +73,7 @@ struct compressed_bio {
 	u32 sums;
 };
 
-void btrfs_init_compress(void);
+void __init btrfs_init_compress(void);
 void btrfs_exit_compress(void);
 
 int btrfs_compress_pages(unsigned int type_level, struct address_space *mapping,
@@ -91,7 +91,8 @@ blk_status_t btrfs_submit_compressed_write(struct inode *inode, u64 start,
 				  unsigned long len, u64 disk_start,
 				  unsigned long compressed_len,
 				  struct page **compressed_pages,
-				  unsigned long nr_pages);
+				  unsigned long nr_pages,
+				  unsigned int write_flags);
 blk_status_t btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 				 int mirror_num, unsigned long bio_flags);
 
