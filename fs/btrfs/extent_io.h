@@ -33,7 +33,6 @@
  * type for this bio
  */
 #define EXTENT_BIO_COMPRESSED 1
-#define EXTENT_BIO_TREE_LOG 2
 #define EXTENT_BIO_FLAG_SHIFT 16
 
 /* these are bit numbers for test/set bit */
@@ -116,7 +115,8 @@ struct extent_io_ops {
 	 */
 	int (*fill_delalloc)(void *private_data, struct page *locked_page,
 			     u64 start, u64 end, int *page_started,
-			     unsigned long *nr_written);
+			     unsigned long *nr_written,
+			     struct writeback_control *wbc);
 
 	int (*writepage_start_hook)(struct page *page, u64 start, u64 end);
 	void (*writepage_end_io_hook)(struct page *page, u64 start, u64 end,
