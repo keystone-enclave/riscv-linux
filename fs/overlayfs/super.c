@@ -38,15 +38,20 @@ module_param_named(index, ovl_index_def, bool, 0644);
 MODULE_PARM_DESC(ovl_index_def,
 		 "Default to on or off for the inodes index feature");
 
+static void ovl_entry_stack_free(struct ovl_entry *oe)
+{
+	unsigned int i;
+
+	for (i = 0; i < oe->numlower; i++)
+		dput(oe->lowerstack[i].dentry);
+}
+
 static void ovl_dentry_release(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 
 	if (oe) {
-		unsigned int i;
-
-		for (i = 0; i < oe->numlower; i++)
-			dput(oe->lowerstack[i].dentry);
+		ovl_entry_stack_free(oe);
 		kfree_rcu(oe, rcu);
 	}
 }
@@ -1056,35 +1061,36 @@ out:
 	return err;
 }
 
-static int ovl_get_lowerstack(struct super_block *sb, struct ovl_fs *ufs,
-			      struct path **stackp, unsigned int *stacklenp)
+static struct ovl_entry *ovl_get_lowerstack(struct super_block *sb,
+					    struct ovl_fs *ufs)
 {
 	int err;
 	char *lowertmp, *lower;
 	struct path *stack;
 	unsigned int stacklen, numlower, i;
 	bool remote = false;
+	struct ovl_entry *oe;
 
 	err = -ENOMEM;
 	lowertmp = kstrdup(ufs->config.lowerdir, GFP_KERNEL);
 	if (!lowertmp)
-		goto out;
+		goto out_err;
 
 	err = -EINVAL;
 	stacklen = ovl_split_lowerdirs(lowertmp);
 	if (stacklen > OVL_MAX_STACK) {
 		pr_err("overlayfs: too many lower directories, limit is %d\n",
 		       OVL_MAX_STACK);
-		goto out;
+		goto out_err;
 	} else if (!ufs->config.upperdir && stacklen == 1) {
 		pr_err("overlayfs: at least 2 lowerdir are needed while upperdir nonexistent\n");
-		goto out;
+		goto out_err;
 	}
 
 	err = -ENOMEM;
 	stack = kcalloc(stacklen, sizeof(struct path), GFP_KERNEL);
 	if (!stack)
-		goto out;
+		goto out_err;
 
 	err = -EINVAL;
 	lower = lowertmp;
@@ -1092,7 +1098,7 @@ static int ovl_get_lowerstack(struct super_block *sb, struct ovl_fs *ufs,
 		err = ovl_lower_dir(lower, &stack[numlower], ufs,
 				    &sb->s_stack_depth, &remote);
 		if (err)
-			goto out_free_stack;
+			goto out_err;
 
 		lower = strchr(lower, '\0') + 1;
 	}
@@ -1101,27 +1107,38 @@ static int ovl_get_lowerstack(struct super_block *sb, struct ovl_fs *ufs,
 	sb->s_stack_depth++;
 	if (sb->s_stack_depth > FILESYSTEM_MAX_STACK_DEPTH) {
 		pr_err("overlayfs: maximum fs stacking depth exceeded\n");
-		goto out_free_stack;
+		goto out_err;
 	}
 
-	*stackp = stack;
-	*stacklenp = numlower;
+	err = ovl_get_lower_layers(ufs, stack, numlower);
+	if (err)
+		goto out_err;
+
+	err = -ENOMEM;
+	oe = ovl_alloc_entry(numlower);
+	if (!oe)
+		goto out_err;
+
+	for (i = 0; i < numlower; i++) {
+		oe->lowerstack[i].dentry = dget(stack[i].dentry);
+		oe->lowerstack[i].layer = &ufs->lower_layers[i];
+	}
 
 	if (remote)
 		sb->s_d_op = &ovl_reval_dentry_operations;
 	else
 		sb->s_d_op = &ovl_dentry_operations;
 
-	err = 0;
-
 out:
-	kfree(lowertmp);
-	return err;
-
-out_free_stack:
 	for (i = 0; i < numlower; i++)
 		path_put(&stack[i]);
 	kfree(stack);
+	kfree(lowertmp);
+
+	return oe;
+
+out_err:
+	oe = ERR_PTR(err);
 	goto out;
 }
 
@@ -1131,9 +1148,6 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	struct dentry *root_dentry;
 	struct ovl_entry *oe = NULL;
 	struct ovl_fs *ufs;
-	struct path *stack = NULL;
-	unsigned int numlower = 0;
-	unsigned int i;
 	struct cred *cred;
 	int err;
 
@@ -1182,11 +1196,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_time_gran = ufs->upper_mnt->mnt_sb->s_time_gran;
 
 	}
-	err = ovl_get_lowerstack(sb, ufs, &stack, &numlower);
-	if (err)
-		goto out_err;
-
-	err = ovl_get_lower_layers(ufs, stack, numlower);
+	oe = ovl_get_lowerstack(sb, ufs);
 	if (err)
 		goto out_err;
 
@@ -1195,16 +1205,6 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_flags |= MS_RDONLY;
 	else if (ufs->upper_mnt->mnt_sb != ufs->same_sb)
 		ufs->same_sb = NULL;
-
-	err = -ENOMEM;
-	oe = ovl_alloc_entry(numlower);
-	if (!oe)
-		goto out_err;
-
-	for (i = 0; i < numlower; i++) {
-		oe->lowerstack[i].dentry = stack[i].dentry;
-		oe->lowerstack[i].layer = &(ufs->lower_layers[i]);
-	}
 
 	if (!(ovl_force_readonly(ufs)) && ufs->config.index) {
 		err = ovl_get_indexdir(ufs, oe, &upperpath);
@@ -1233,10 +1233,6 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_err;
 
 	mntput(upperpath.mnt);
-	for (i = 0; i < numlower; i++)
-		mntput(stack[i].mnt);
-	kfree(stack);
-
 	if (upperpath.dentry) {
 		oe->has_upper = true;
 		if (ovl_is_impuredir(upperpath.dentry))
@@ -1255,10 +1251,10 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 out_err:
-	kfree(oe);
-	for (i = 0; i < numlower; i++)
-		path_put(&stack[i]);
-	kfree(stack);
+	if (oe) {
+		ovl_entry_stack_free(oe);
+		kfree(oe);
+	}
 	path_put(&upperpath);
 	ovl_free_fs(ufs);
 
