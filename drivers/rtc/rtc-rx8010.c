@@ -24,7 +24,6 @@
 #define RX8010_MDAY    0x14
 #define RX8010_MONTH   0x15
 #define RX8010_YEAR    0x16
-#define RX8010_YEAR    0x16
 #define RX8010_RESV17  0x17
 #define RX8010_ALMIN   0x18
 #define RX8010_ALHOUR  0x19
@@ -36,7 +35,7 @@
 #define RX8010_CTRL    0x1F
 /* 0x20 to 0x2F are user registers */
 #define RX8010_RESV30  0x30
-#define RX8010_RESV31  0x32
+#define RX8010_RESV31  0x31
 #define RX8010_IRQ     0x32
 
 #define RX8010_EXT_WADA  BIT(3)
