@@ -1148,6 +1148,10 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	if (!ufs)
 		goto out_err;
 
+	ufs->creator_cred = cred = prepare_creds();
+	if (!cred)
+		goto out_err;
+
 	ufs->config.redirect_dir = ovl_redirect_dir_def;
 	ufs->config.index = ovl_index_def;
 	err = ovl_parse_opt((char *) data, &ufs->config);
@@ -1173,27 +1177,25 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		if (err)
 			goto out_err;
 
-		err = ovl_get_workpath(ufs, &upperpath, &workpath);
-		if (err)
-			goto out_err;
-
-		sb->s_stack_depth = upperpath.mnt->mnt_sb->s_stack_depth;
-	}
-	err = ovl_get_lowerstack(sb, ufs, &stack, &numlower);
-	if (err)
-		goto out_err;
-
-	if (ufs->config.upperdir) {
 		err = ovl_get_upper(ufs, &upperpath);
 		if (err)
 			goto out_err;
 
-		sb->s_time_gran = ufs->upper_mnt->mnt_sb->s_time_gran;
+		err = ovl_get_workpath(ufs, &upperpath, &workpath);
+		if (err)
+			goto out_err;
 
 		err = ovl_get_workdir(sb, ufs, &workpath);
 		if (err)
 			goto out_err;
+
+		sb->s_stack_depth = ufs->upper_mnt->mnt_sb->s_stack_depth;
+		sb->s_time_gran = ufs->upper_mnt->mnt_sb->s_time_gran;
+
 	}
+	err = ovl_get_lowerstack(sb, ufs, &stack, &numlower);
+	if (err)
+		goto out_err;
 
 	err = ovl_get_lower_layers(ufs, stack, numlower);
 	if (err)
@@ -1224,11 +1226,6 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	/* Show index=off/on in /proc/mounts for any of the reasons above */
 	if (!ufs->indexdir)
 		ufs->config.index = false;
-
-	err = -ENOMEM;
-	ufs->creator_cred = cred = prepare_creds();
-	if (!cred)
-		goto out_err;
 
 	/* Never override disk quota limits or use reserved space */
 	cap_lower(cred->cap_effective, CAP_SYS_RESOURCE);
