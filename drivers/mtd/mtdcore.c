@@ -79,6 +79,10 @@ static struct class mtd_class = {
 	.pm = MTD_CLS_PM_OPS,
 };
 
+#define MTD_MAX_IDS		0x10000
+#define MTD_ID_START		0x0
+#define MTD_HIDDEN_ID_START	(MTD_ID_START + MTD_MAX_IDS)
+
 static DEFINE_IDR(mtd_idr);
 
 /* These are exported solely for the purpose of mtd_blkdevs.c. You
@@ -88,7 +92,13 @@ EXPORT_SYMBOL_GPL(mtd_table_mutex);
 
 struct mtd_info *__mtd_next_device(int i)
 {
-	return idr_get_next(&mtd_idr, &i);
+	struct mtd_info *mtd;
+
+	mtd = idr_get_next(&mtd_idr, &i);
+	if (!mtd || i >= MTD_MAX_IDS)
+		return NULL;
+
+	return mtd;
 }
 EXPORT_SYMBOL_GPL(__mtd_next_device);
 
@@ -505,7 +515,13 @@ int add_mtd_device(struct mtd_info *mtd)
 	BUG_ON(mtd->writesize == 0);
 	mutex_lock(&mtd_table_mutex);
 
-	i = idr_alloc(&mtd_idr, mtd, 0, 0, GFP_KERNEL);
+	if (!mtd->hidden)
+		i = idr_alloc(&mtd_idr, mtd, MTD_ID_START, MTD_MAX_IDS,
+			      GFP_KERNEL);
+	else
+		i = idr_alloc(&mtd_idr, mtd, MTD_HIDDEN_ID_START,
+			      MTD_HIDDEN_ID_START + MTD_MAX_IDS,
+			      GFP_KERNEL);
 	if (i < 0) {
 		error = i;
 		goto fail_locked;
@@ -545,15 +561,20 @@ int add_mtd_device(struct mtd_info *mtd)
 	/* Caller should have set dev.parent to match the
 	 * physical device, if appropriate.
 	 */
-	mtd->dev.type = &mtd_devtype;
-	mtd->dev.class = &mtd_class;
-	mtd->dev.devt = MTD_DEVT(i);
-	dev_set_name(&mtd->dev, "mtd%d", i);
 	dev_set_drvdata(&mtd->dev, mtd);
 	of_node_get(mtd_get_of_node(mtd));
-	error = device_register(&mtd->dev);
-	if (error)
-		goto fail_added;
+	if (!mtd->hidden) {
+		mtd->dev.type = &mtd_devtype;
+		mtd->dev.class = &mtd_class;
+		mtd->dev.devt = MTD_DEVT(i);
+		dev_set_name(&mtd->dev, "mtd%d", i);
+		error = device_register(&mtd->dev);
+		if (error)
+			goto fail_added;
+	} else {
+		dev_set_name(&mtd->dev, "mtdmaster%d",
+			     i - MTD_HIDDEN_ID_START);
+	}
 
 	if (!IS_ERR_OR_NULL(dfs_dir_mtd)) {
 		mtd->dbg.dfs_dir = debugfs_create_dir(dev_name(&mtd->dev), dfs_dir_mtd);
@@ -563,14 +584,16 @@ int add_mtd_device(struct mtd_info *mtd)
 		}
 	}
 
-	device_create(&mtd_class, mtd->dev.parent, MTD_DEVT(i) + 1, NULL,
-		      "mtd%dro", i);
+	if (!mtd->hidden) {
+		device_create(&mtd_class, mtd->dev.parent, MTD_DEVT(i) + 1,
+			      NULL, "mtd%dro", i);
 
-	pr_debug("mtd: Giving out device %d to %s\n", i, mtd->name);
-	/* No need to get a refcount on the module containing
-	   the notifier, since we hold the mtd_table_mutex */
-	list_for_each_entry(not, &mtd_notifiers, list)
-		not->add(mtd);
+		pr_debug("mtd: Giving out device %d to %s\n", i, mtd->name);
+		/* No need to get a refcount on the module containing
+		   the notifier, since we hold the mtd_table_mutex */
+		list_for_each_entry(not, &mtd_notifiers, list)
+			not->add(mtd);
+	}
 
 	mutex_unlock(&mtd_table_mutex);
 	/* We _know_ we aren't being removed, because
@@ -612,17 +635,20 @@ int del_mtd_device(struct mtd_info *mtd)
 		goto out_error;
 	}
 
-	/* No need to get a refcount on the module containing
-		the notifier, since we hold the mtd_table_mutex */
-	list_for_each_entry(not, &mtd_notifiers, list)
-		not->remove(mtd);
+	if (!mtd->hidden) {
+		/* No need to get a refcount on the module containing
+		   the notifier, since we hold the mtd_table_mutex */
+		list_for_each_entry(not, &mtd_notifiers, list)
+			not->remove(mtd);
+	}
 
 	if (mtd->usecount) {
 		printk(KERN_NOTICE "Removing MTD device #%d (%s) with use count %d\n",
 		       mtd->index, mtd->name, mtd->usecount);
 		ret = -EBUSY;
 	} else {
-		device_unregister(&mtd->dev);
+		if (!mtd->hidden)
+			device_unregister(&mtd->dev);
 
 		idr_remove(&mtd_idr, mtd->index);
 		of_node_put(mtd_get_of_node(mtd));
@@ -643,15 +669,16 @@ static int mtd_add_device_partitions(struct mtd_info *mtd,
 	int nbparts = parts->nr_parts;
 	int ret;
 
-	if (nbparts == 0 || IS_ENABLED(CONFIG_MTD_PARTITIONED_MASTER)) {
-		ret = add_mtd_device(mtd);
-		if (ret)
-			return ret;
-	}
+	if (nbparts && !IS_ENABLED(CONFIG_MTD_PARTITIONED_MASTER))
+		mtd->hidden = true;
+
+	ret = add_mtd_device(mtd);
+	if (ret)
+		return ret;
 
 	if (nbparts > 0) {
 		ret = add_mtd_partitions(mtd, real_parts, nbparts);
-		if (ret && IS_ENABLED(CONFIG_MTD_PARTITIONED_MASTER))
+		if (ret)
 			del_mtd_device(mtd);
 		return ret;
 	}
@@ -857,7 +884,7 @@ struct mtd_info *get_mtd_device(struct mtd_info *mtd, int num)
 				break;
 			}
 		}
-	} else if (num >= 0) {
+	} else if (num >= MTD_ID_START && num < MTD_MAX_IDS) {
 		ret = idr_find(&mtd_idr, num);
 		if (mtd && mtd != ret)
 			ret = NULL;
@@ -1022,11 +1049,18 @@ EXPORT_SYMBOL_GPL(mtd_unpoint);
 unsigned long mtd_get_unmapped_area(struct mtd_info *mtd, unsigned long len,
 				    unsigned long offset, unsigned long flags)
 {
-	if (!mtd->_get_unmapped_area)
-		return -EOPNOTSUPP;
-	if (offset >= mtd->size || len > mtd->size - offset)
-		return -EINVAL;
-	return mtd->_get_unmapped_area(mtd, len, offset, flags);
+	size_t retlen;
+	void *virt;
+	int ret;
+
+	ret = mtd_point(mtd, offset, len, &retlen, &virt, NULL);
+	if (ret)
+		return ret;
+	if (retlen != len) {
+		mtd_unpoint(mtd, offset, retlen);
+		return -ENOSYS;
+	}
+	return (unsigned long)virt;
 }
 EXPORT_SYMBOL_GPL(mtd_get_unmapped_area);
 
@@ -1093,12 +1127,49 @@ int mtd_panic_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 }
 EXPORT_SYMBOL_GPL(mtd_panic_write);
 
+static int mtd_check_oob_ops(struct mtd_info *mtd, loff_t offs,
+			     struct mtd_oob_ops *ops)
+{
+	/*
+	 * Some users are setting ->datbuf or ->oobbuf to NULL, but are leaving
+	 * ->len or ->ooblen uninitialized. Force ->len and ->ooblen to 0 in
+	 *  this case.
+	 */
+	if (!ops->datbuf)
+		ops->len = 0;
+
+	if (!ops->oobbuf)
+		ops->ooblen = 0;
+
+	if (offs < 0 || offs + ops->len >= mtd->size)
+		return -EINVAL;
+
+	if (ops->ooblen) {
+		u64 maxooblen;
+
+		if (ops->ooboffs >= mtd_oobavail(mtd, ops))
+			return -EINVAL;
+
+		maxooblen = ((mtd_div_by_ws(mtd->size, mtd) -
+			      mtd_div_by_ws(offs, mtd)) *
+			     mtd_oobavail(mtd, ops)) - ops->ooboffs;
+		if (ops->ooblen > maxooblen)
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
 int mtd_read_oob(struct mtd_info *mtd, loff_t from, struct mtd_oob_ops *ops)
 {
 	int ret_code;
 	ops->retlen = ops->oobretlen = 0;
 	if (!mtd->_read_oob)
 		return -EOPNOTSUPP;
+
+	ret_code = mtd_check_oob_ops(mtd, from, ops);
+	if (ret_code)
+		return ret_code;
 
 	ledtrig_mtd_activity();
 	/*
@@ -1119,11 +1190,18 @@ EXPORT_SYMBOL_GPL(mtd_read_oob);
 int mtd_write_oob(struct mtd_info *mtd, loff_t to,
 				struct mtd_oob_ops *ops)
 {
+	int ret;
+
 	ops->retlen = ops->oobretlen = 0;
 	if (!mtd->_write_oob)
 		return -EOPNOTSUPP;
 	if (!(mtd->flags & MTD_WRITEABLE))
 		return -EROFS;
+
+	ret = mtd_check_oob_ops(mtd, to, ops);
+	if (ret)
+		return ret;
+
 	ledtrig_mtd_activity();
 	return mtd->_write_oob(mtd, to, ops);
 }
