@@ -37,6 +37,7 @@
 #include "blk-wbt.h"
 #include "blk-mq-sched.h"
 
+static bool blk_mq_poll(struct request_queue *q, blk_qc_t cookie);
 static void blk_mq_poll_stats_start(struct request_queue *q);
 static void blk_mq_poll_stats_fn(struct blk_stat_callback *cb);
 
@@ -336,12 +337,14 @@ static struct request *blk_mq_get_request(struct request_queue *q,
 	struct elevator_queue *e = q->elevator;
 	struct request *rq;
 	unsigned int tag;
-	struct blk_mq_ctx *local_ctx = NULL;
+	bool put_ctx_on_error = false;
 
 	blk_queue_enter_live(q);
 	data->q = q;
-	if (likely(!data->ctx))
-		data->ctx = local_ctx = blk_mq_get_ctx(q);
+	if (likely(!data->ctx)) {
+		data->ctx = blk_mq_get_ctx(q);
+		put_ctx_on_error = true;
+	}
 	if (likely(!data->hctx))
 		data->hctx = blk_mq_map_queue(q, data->ctx->cpu);
 	if (op & REQ_NOWAIT)
@@ -360,8 +363,8 @@ static struct request *blk_mq_get_request(struct request_queue *q,
 
 	tag = blk_mq_get_tag(data);
 	if (tag == BLK_MQ_TAG_FAIL) {
-		if (local_ctx) {
-			blk_mq_put_ctx(local_ctx);
+		if (put_ctx_on_error) {
+			blk_mq_put_ctx(data->ctx);
 			data->ctx = NULL;
 		}
 		blk_queue_exit(q);
@@ -476,7 +479,13 @@ void blk_mq_free_request(struct request *rq)
 	if (rq->rq_flags & RQF_MQ_INFLIGHT)
 		atomic_dec(&hctx->nr_active);
 
+	if (unlikely(laptop_mode && !blk_rq_is_passthrough(rq)))
+		laptop_io_completion(q->backing_dev_info);
+
 	wbt_done(q->rq_wb, &rq->issue_stat);
+
+	if (blk_rq_rl(rq))
+		blk_put_rl(blk_rq_rl(rq));
 
 	clear_bit(REQ_ATOM_STARTED, &rq->atomic_flags);
 	clear_bit(REQ_ATOM_POLL_SLEPT, &rq->atomic_flags);
@@ -593,22 +602,32 @@ void blk_mq_start_request(struct request *rq)
 
 	blk_add_timer(rq);
 
-	/*
-	 * Ensure that ->deadline is visible before set the started
-	 * flag and clear the completed flag.
-	 */
-	smp_mb__before_atomic();
+	WARN_ON_ONCE(test_bit(REQ_ATOM_STARTED, &rq->atomic_flags));
 
 	/*
 	 * Mark us as started and clear complete. Complete might have been
 	 * set if requeue raced with timeout, which then marked it as
 	 * complete. So be sure to clear complete again when we start
 	 * the request, otherwise we'll ignore the completion event.
+	 *
+	 * Ensure that ->deadline is visible before we set STARTED, such that
+	 * blk_mq_check_expired() is guaranteed to observe our ->deadline when
+	 * it observes STARTED.
 	 */
-	if (!test_bit(REQ_ATOM_STARTED, &rq->atomic_flags))
-		set_bit(REQ_ATOM_STARTED, &rq->atomic_flags);
-	if (test_bit(REQ_ATOM_COMPLETE, &rq->atomic_flags))
+	smp_wmb();
+	set_bit(REQ_ATOM_STARTED, &rq->atomic_flags);
+	if (test_bit(REQ_ATOM_COMPLETE, &rq->atomic_flags)) {
+		/*
+		 * Coherence order guarantees these consecutive stores to a
+		 * single variable propagate in the specified order. Thus the
+		 * clear_bit() is ordered _after_ the set bit. See
+		 * blk_mq_check_expired().
+		 *
+		 * (the bits must be part of the same byte for this to be
+		 * true).
+		 */
 		clear_bit(REQ_ATOM_COMPLETE, &rq->atomic_flags);
+	}
 
 	if (q->dma_drain_size && blk_rq_bytes(rq)) {
 		/*
@@ -633,6 +652,8 @@ EXPORT_SYMBOL(blk_mq_start_request);
 static void __blk_mq_requeue_request(struct request *rq)
 {
 	struct request_queue *q = rq->q;
+
+	blk_mq_put_driver_tag(rq);
 
 	trace_block_rq_requeue(q, rq);
 	wbt_requeue(q->rq_wb, &rq->issue_stat);
@@ -778,9 +799,18 @@ static void blk_mq_check_expired(struct blk_mq_hw_ctx *hctx,
 		struct request *rq, void *priv, bool reserved)
 {
 	struct blk_mq_timeout_data *data = priv;
+	unsigned long deadline;
 
 	if (!test_bit(REQ_ATOM_STARTED, &rq->atomic_flags))
 		return;
+
+	/*
+	 * Ensures that if we see STARTED we must also see our
+	 * up-to-date deadline, see blk_mq_start_request().
+	 */
+	smp_rmb();
+
+	deadline = READ_ONCE(rq->deadline);
 
 	/*
 	 * The rq being checked may have been freed and reallocated
@@ -795,11 +825,20 @@ static void blk_mq_check_expired(struct blk_mq_hw_ctx *hctx,
 	 *   and clearing the flag in blk_mq_start_request(), so
 	 *   this rq won't be timed out too.
 	 */
-	if (time_after_eq(jiffies, rq->deadline)) {
-		if (!blk_mark_rq_complete(rq))
+	if (time_after_eq(jiffies, deadline)) {
+		if (!blk_mark_rq_complete(rq)) {
+			/*
+			 * Again coherence order ensures that consecutive reads
+			 * from the same variable must be in that order. This
+			 * ensures that if we see COMPLETE clear, we must then
+			 * see STARTED set and we'll ignore this timeout.
+			 *
+			 * (There's also the MB implied by the test_and_clear())
+			 */
 			blk_mq_rq_timed_out(rq, reserved);
-	} else if (!data->next_set || time_after(data->next, rq->deadline)) {
-		data->next = rq->deadline;
+		}
+	} else if (!data->next_set || time_after(data->next, deadline)) {
+		data->next = deadline;
 		data->next_set = 1;
 	}
 }
@@ -880,6 +919,45 @@ void blk_mq_flush_busy_ctxs(struct blk_mq_hw_ctx *hctx, struct list_head *list)
 }
 EXPORT_SYMBOL_GPL(blk_mq_flush_busy_ctxs);
 
+struct dispatch_rq_data {
+	struct blk_mq_hw_ctx *hctx;
+	struct request *rq;
+};
+
+static bool dispatch_rq_from_ctx(struct sbitmap *sb, unsigned int bitnr,
+		void *data)
+{
+	struct dispatch_rq_data *dispatch_data = data;
+	struct blk_mq_hw_ctx *hctx = dispatch_data->hctx;
+	struct blk_mq_ctx *ctx = hctx->ctxs[bitnr];
+
+	spin_lock(&ctx->lock);
+	if (unlikely(!list_empty(&ctx->rq_list))) {
+		dispatch_data->rq = list_entry_rq(ctx->rq_list.next);
+		list_del_init(&dispatch_data->rq->queuelist);
+		if (list_empty(&ctx->rq_list))
+			sbitmap_clear_bit(sb, bitnr);
+	}
+	spin_unlock(&ctx->lock);
+
+	return !dispatch_data->rq;
+}
+
+struct request *blk_mq_dequeue_from_ctx(struct blk_mq_hw_ctx *hctx,
+					struct blk_mq_ctx *start)
+{
+	unsigned off = start ? start->index_hw : 0;
+	struct dispatch_rq_data data = {
+		.hctx = hctx,
+		.rq   = NULL,
+	};
+
+	__sbitmap_for_each_set(&hctx->ctx_map, off,
+			       dispatch_rq_from_ctx, &data);
+
+	return data.rq;
+}
+
 static inline unsigned int queued_to_index(unsigned int queued)
 {
 	if (!queued)
@@ -920,62 +998,6 @@ done:
 	return rq->tag != -1;
 }
 
-static void __blk_mq_put_driver_tag(struct blk_mq_hw_ctx *hctx,
-				    struct request *rq)
-{
-	blk_mq_put_tag(hctx, hctx->tags, rq->mq_ctx, rq->tag);
-	rq->tag = -1;
-
-	if (rq->rq_flags & RQF_MQ_INFLIGHT) {
-		rq->rq_flags &= ~RQF_MQ_INFLIGHT;
-		atomic_dec(&hctx->nr_active);
-	}
-}
-
-static void blk_mq_put_driver_tag_hctx(struct blk_mq_hw_ctx *hctx,
-				       struct request *rq)
-{
-	if (rq->tag == -1 || rq->internal_tag == -1)
-		return;
-
-	__blk_mq_put_driver_tag(hctx, rq);
-}
-
-static void blk_mq_put_driver_tag(struct request *rq)
-{
-	struct blk_mq_hw_ctx *hctx;
-
-	if (rq->tag == -1 || rq->internal_tag == -1)
-		return;
-
-	hctx = blk_mq_map_queue(rq->q, rq->mq_ctx->cpu);
-	__blk_mq_put_driver_tag(hctx, rq);
-}
-
-/*
- * If we fail getting a driver tag because all the driver tags are already
- * assigned and on the dispatch list, BUT the first entry does not have a
- * tag, then we could deadlock. For that case, move entries with assigned
- * driver tags to the front, leaving the set of tagged requests in the
- * same order, and the untagged set in the same order.
- */
-static bool reorder_tags_to_front(struct list_head *list)
-{
-	struct request *rq, *tmp, *first = NULL;
-
-	list_for_each_entry_safe_reverse(rq, tmp, list, queuelist) {
-		if (rq == first)
-			break;
-		if (rq->tag != -1) {
-			list_move(&rq->queuelist, list);
-			if (!first)
-				first = rq;
-		}
-	}
-
-	return first != NULL;
-}
-
 static int blk_mq_dispatch_wake(wait_queue_entry_t *wait, unsigned mode, int flags,
 				void *key)
 {
@@ -1014,14 +1036,17 @@ static bool blk_mq_dispatch_wait_add(struct blk_mq_hw_ctx *hctx)
 	return true;
 }
 
-bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list)
+bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
+		bool got_budget)
 {
 	struct blk_mq_hw_ctx *hctx;
-	struct request *rq;
+	struct request *rq, *nxt;
 	int errors, queued;
 
 	if (list_empty(list))
 		return false;
+
+	WARN_ON(!list_is_singular(list) && got_budget);
 
 	/*
 	 * Now process all the entries, sending them to the driver.
@@ -1033,24 +1058,30 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list)
 
 		rq = list_first_entry(list, struct request, queuelist);
 		if (!blk_mq_get_driver_tag(rq, &hctx, false)) {
-			if (!queued && reorder_tags_to_front(list))
-				continue;
-
 			/*
 			 * The initial allocation attempt failed, so we need to
 			 * rerun the hardware queue when a tag is freed.
 			 */
-			if (!blk_mq_dispatch_wait_add(hctx))
+			if (!blk_mq_dispatch_wait_add(hctx)) {
+				if (got_budget)
+					blk_mq_put_dispatch_budget(hctx);
 				break;
+			}
 
 			/*
 			 * It's possible that a tag was freed in the window
 			 * between the allocation failure and adding the
 			 * hardware queue to the wait queue.
 			 */
-			if (!blk_mq_get_driver_tag(rq, &hctx, false))
+			if (!blk_mq_get_driver_tag(rq, &hctx, false)) {
+				if (got_budget)
+					blk_mq_put_dispatch_budget(hctx);
 				break;
+			}
 		}
+
+		if (!got_budget && !blk_mq_get_dispatch_budget(hctx))
+			break;
 
 		list_del_init(&rq->queuelist);
 
@@ -1063,15 +1094,20 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list)
 		if (list_empty(list))
 			bd.last = true;
 		else {
-			struct request *nxt;
-
 			nxt = list_first_entry(list, struct request, queuelist);
 			bd.last = !blk_mq_get_driver_tag(nxt, NULL, false);
 		}
 
 		ret = q->mq_ops->queue_rq(hctx, &bd);
 		if (ret == BLK_STS_RESOURCE) {
-			blk_mq_put_driver_tag_hctx(hctx, rq);
+			/*
+			 * If an I/O scheduler has been configured and we got a
+			 * driver tag for the next request already, free it again.
+			 */
+			if (!list_empty(list)) {
+				nxt = list_first_entry(list, struct request, queuelist);
+				blk_mq_put_driver_tag(nxt);
+			}
 			list_add(&rq->queuelist, list);
 			__blk_mq_requeue_request(rq);
 			break;
@@ -1093,13 +1129,6 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list)
 	 * that is where we will continue on next queue run.
 	 */
 	if (!list_empty(list)) {
-		/*
-		 * If an I/O scheduler has been configured and we got a driver
-		 * tag for the next request already, free it again.
-		 */
-		rq = list_first_entry(list, struct request, queuelist);
-		blk_mq_put_driver_tag(rq);
-
 		spin_lock(&hctx->lock);
 		list_splice_init(list, &hctx->dispatch);
 		spin_unlock(&hctx->lock);
@@ -1405,7 +1434,7 @@ void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
  * Should only be used carefully, when the caller knows we want to
  * bypass a potential IO scheduler on the target device.
  */
-void blk_mq_request_bypass_insert(struct request *rq)
+void blk_mq_request_bypass_insert(struct request *rq, bool run_queue)
 {
 	struct blk_mq_ctx *ctx = rq->mq_ctx;
 	struct blk_mq_hw_ctx *hctx = blk_mq_map_queue(rq->q, ctx->cpu);
@@ -1414,7 +1443,8 @@ void blk_mq_request_bypass_insert(struct request *rq)
 	list_add_tail(&rq->queuelist, &hctx->dispatch);
 	spin_unlock(&hctx->lock);
 
-	blk_mq_run_hw_queue(hctx, false);
+	if (run_queue)
+		blk_mq_run_hw_queue(hctx, false);
 }
 
 void blk_mq_insert_requests(struct blk_mq_hw_ctx *hctx, struct blk_mq_ctx *ctx,
@@ -1501,13 +1531,9 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio)
 {
 	blk_init_request_from_bio(rq, bio);
 
-	blk_account_io_start(rq, true);
-}
+	blk_rq_set_rl(rq, blk_get_rl(rq->q, bio));
 
-static inline bool hctx_allow_merges(struct blk_mq_hw_ctx *hctx)
-{
-	return (hctx->flags & BLK_MQ_F_SHOULD_MERGE) &&
-		!blk_queue_nomerges(hctx->queue);
+	blk_account_io_start(rq, true);
 }
 
 static inline void blk_mq_queue_io(struct blk_mq_hw_ctx *hctx,
@@ -1551,6 +1577,11 @@ static void __blk_mq_try_issue_directly(struct blk_mq_hw_ctx *hctx,
 
 	if (!blk_mq_get_driver_tag(rq, NULL, false))
 		goto insert;
+
+	if (!blk_mq_get_dispatch_budget(hctx)) {
+		blk_mq_put_driver_tag(rq);
+		goto insert;
+	}
 
 	new_cookie = request_to_qc_t(hctx, rq);
 
@@ -1641,13 +1672,10 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 	if (unlikely(is_flush_fua)) {
 		blk_mq_put_ctx(data.ctx);
 		blk_mq_bio_to_request(rq, bio);
-		if (q->elevator) {
-			blk_mq_sched_insert_request(rq, false, true, true,
-					true);
-		} else {
-			blk_insert_flush(rq);
-			blk_mq_run_hw_queue(data.hctx, true);
-		}
+
+		/* bypass scheduler for flush rq */
+		blk_insert_flush(rq);
+		blk_mq_run_hw_queue(data.hctx, true);
 	} else if (plug && q->nr_hw_queues == 1) {
 		struct request *last = NULL;
 
@@ -2404,6 +2432,8 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	spin_lock_init(&q->requeue_lock);
 
 	blk_queue_make_request(q, blk_mq_make_request);
+	if (q->mq_ops->poll)
+		q->poll_fn = blk_mq_poll;
 
 	/*
 	 * Do this after blk_queue_make_request() overrides it...
@@ -2552,6 +2582,9 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	if (!set->ops->queue_rq)
 		return -EINVAL;
 
+	if (!set->ops->get_budget ^ !set->ops->put_budget)
+		return -EINVAL;
+
 	if (set->queue_depth > BLK_MQ_MAX_DEPTH) {
 		pr_info("blk-mq: reduced tag depth to %u\n",
 			BLK_MQ_MAX_DEPTH);
@@ -2642,8 +2675,7 @@ int blk_mq_update_nr_requests(struct request_queue *q, unsigned int nr)
 		 * queue depth. This is similar to what the old code would do.
 		 */
 		if (!hctx->sched_tags) {
-			ret = blk_mq_tag_update_depth(hctx, &hctx->tags,
-							min(nr, set->queue_depth),
+			ret = blk_mq_tag_update_depth(hctx, &hctx->tags, nr,
 							false);
 		} else {
 			ret = blk_mq_tag_update_depth(hctx, &hctx->sched_tags,
@@ -2863,19 +2895,13 @@ static bool __blk_mq_poll(struct blk_mq_hw_ctx *hctx, struct request *rq)
 	return false;
 }
 
-bool blk_mq_poll(struct request_queue *q, blk_qc_t cookie)
+static bool blk_mq_poll(struct request_queue *q, blk_qc_t cookie)
 {
 	struct blk_mq_hw_ctx *hctx;
-	struct blk_plug *plug;
 	struct request *rq;
 
-	if (!q->mq_ops || !q->mq_ops->poll || !blk_qc_t_valid(cookie) ||
-	    !test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
+	if (!test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
 		return false;
-
-	plug = current->plug;
-	if (plug)
-		blk_flush_plug_list(plug, false);
 
 	hctx = q->queue_hw_ctx[blk_qc_t_to_queue_num(cookie)];
 	if (!blk_qc_t_is_internal(cookie))
@@ -2894,10 +2920,15 @@ bool blk_mq_poll(struct request_queue *q, blk_qc_t cookie)
 
 	return __blk_mq_poll(hctx, rq);
 }
-EXPORT_SYMBOL_GPL(blk_mq_poll);
 
 static int __init blk_mq_init(void)
 {
+	/*
+	 * See comment in block/blk.h rq_atomic_flags enum
+	 */
+	BUILD_BUG_ON((REQ_ATOM_STARTED / BITS_PER_BYTE) !=
+			(REQ_ATOM_COMPLETE / BITS_PER_BYTE));
+
 	cpuhp_setup_state_multi(CPUHP_BLK_MQ_DEAD, "block/mq:dead", NULL,
 				blk_mq_hctx_notify_dead);
 	return 0;
