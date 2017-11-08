@@ -60,7 +60,7 @@ pte_t __ref *vmem_pte_alloc(void)
 		pte = (pte_t *) memblock_alloc(size, size);
 	if (!pte)
 		return NULL;
-	clear_table((unsigned long *) pte, _PAGE_INVALID, size);
+	memset64((u64 *)pte, _PAGE_INVALID, PTRS_PER_PTE);
 	return pte;
 }
 
@@ -407,13 +407,13 @@ void __init vmem_map_init(void)
 		     (_etext - _stext) >> PAGE_SHIFT,
 		     SET_MEMORY_RO | SET_MEMORY_X);
 	__set_memory((unsigned long) _etext,
-		     (_eshared - _etext) >> PAGE_SHIFT,
+		     (__end_rodata - _etext) >> PAGE_SHIFT,
 		     SET_MEMORY_RO);
 	__set_memory((unsigned long) _sinittext,
 		     (_einittext - _sinittext) >> PAGE_SHIFT,
 		     SET_MEMORY_RO | SET_MEMORY_X);
 	pr_info("Write protected kernel read-only data: %luk\n",
-		(_eshared - _stext) >> 10);
+		(__end_rodata - _stext) >> 10);
 }
 
 /*
