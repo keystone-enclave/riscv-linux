@@ -895,6 +895,20 @@ out:
 	return err;
 }
 
+static int ovl_get_upper(struct ovl_fs *ufs, struct path *upperpath)
+{
+	ufs->upper_mnt = clone_private_mount(upperpath);
+	if (IS_ERR(ufs->upper_mnt)) {
+		pr_err("overlayfs: failed to clone upperpath\n");
+		return PTR_ERR(ufs->upper_mnt);
+	}
+
+	/* Don't inherit atime flags */
+	ufs->upper_mnt->mnt_flags &= ~(MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME);
+
+	return 0;
+}
+
 static int ovl_get_lowerstack(struct super_block *sb, struct ovl_fs *ufs,
 			      struct path **stackp, unsigned int *stacklenp)
 {
@@ -1018,15 +1032,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_unlock_workdentry;
 
 	if (ufs->config.upperdir) {
-		ufs->upper_mnt = clone_private_mount(&upperpath);
-		err = PTR_ERR(ufs->upper_mnt);
-		if (IS_ERR(ufs->upper_mnt)) {
-			pr_err("overlayfs: failed to clone upperpath\n");
+		err = ovl_get_upper(ufs, &upperpath);
+		if (err)
 			goto out_put_lowerpath;
-		}
-
-		/* Don't inherit atime flags */
-		ufs->upper_mnt->mnt_flags &= ~(MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME);
 
 		sb->s_time_gran = ufs->upper_mnt->mnt_sb->s_time_gran;
 
