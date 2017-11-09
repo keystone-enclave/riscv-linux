@@ -21,6 +21,7 @@
  *
  */
 
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -99,18 +100,6 @@ static int part_unpoint(struct mtd_info *mtd, loff_t from, size_t len)
 	struct mtd_part *part = mtd_to_part(mtd);
 
 	return part->parent->_unpoint(part->parent, from + part->offset, len);
-}
-
-static unsigned long part_get_unmapped_area(struct mtd_info *mtd,
-					    unsigned long len,
-					    unsigned long offset,
-					    unsigned long flags)
-{
-	struct mtd_part *part = mtd_to_part(mtd);
-
-	offset += part->offset;
-	return part->parent->_get_unmapped_area(part->parent, len, offset,
-						flags);
 }
 
 static int part_read_oob(struct mtd_info *mtd, loff_t from,
@@ -458,8 +447,6 @@ static struct mtd_part *allocate_partition(struct mtd_info *parent,
 		slave->mtd._unpoint = part_unpoint;
 	}
 
-	if (parent->_get_unmapped_area)
-		slave->mtd._get_unmapped_area = part_get_unmapped_area;
 	if (parent->_read_oob)
 		slave->mtd._read_oob = part_read_oob;
 	if (parent->_write_oob)
@@ -778,15 +765,18 @@ int add_mtd_partitions(struct mtd_info *master,
 {
 	struct mtd_part *slave;
 	uint64_t cur_offset = 0;
-	int i;
+	int ret = 0, i;
+	char *link;
 
 	printk(KERN_NOTICE "Creating %d MTD partitions on \"%s\":\n", nbparts, master->name);
+	link = kasprintf(GFP_KERNEL, "../%s", dev_name(&master->dev));
 
 	for (i = 0; i < nbparts; i++) {
 		slave = allocate_partition(master, parts + i, i, cur_offset);
 		if (IS_ERR(slave)) {
 			del_mtd_partitions(master);
-			return PTR_ERR(slave);
+			ret = PTR_ERR(slave);
+			break;
 		}
 
 		mutex_lock(&mtd_partitions_mutex);
@@ -798,10 +788,13 @@ int add_mtd_partitions(struct mtd_info *master,
 		if (parts[i].types)
 			mtd_parse_part(slave, parts[i].types);
 
+		debugfs_create_symlink("master", slave->mtd.dbg.dfs_dir, link);
 		cur_offset = slave->offset + slave->mtd.size;
 	}
 
-	return 0;
+	kfree(link);
+
+	return ret;
 }
 
 static DEFINE_SPINLOCK(part_parser_lock);
