@@ -207,9 +207,9 @@ static void clear_once_table(struct bug_entry *start, struct bug_entry *end)
 
 void generic_bug_clear_once(void)
 {
+#ifdef CONFIG_MODULES
 	struct module *mod;
 
-#ifdef CONFIG_MODULES
 	rcu_read_lock_sched();
 	list_for_each_entry_rcu(mod, &module_bug_list, bug_list)
 		clear_once_table(mod->bug_table,
