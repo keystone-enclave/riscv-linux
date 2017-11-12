@@ -72,11 +72,12 @@ static void invalid_numa_statistics(void)
 	zero_global_numa_counters();
 }
 
+static DEFINE_MUTEX(vm_numa_stat_lock);
+
 int sysctl_vm_numa_stat_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *length, loff_t *ppos)
 {
 	int ret, oldval;
-	DEFINE_MUTEX(vm_numa_stat_lock);
 
 	mutex_lock(&vm_numa_stat_lock);
 	if (write)
