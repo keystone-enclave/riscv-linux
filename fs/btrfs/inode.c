@@ -769,7 +769,6 @@ retry:
 						  inode, async_extent->start,
 						  async_extent->start +
 						  async_extent->ram_size - 1,
-						  btrfs_get_extent,
 						  WB_SYNC_ALL);
 			else if (ret)
 				unlock_page(async_cow->locked_page);
@@ -8860,7 +8859,7 @@ static int btrfs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	if (ret)
 		return ret;
 
-	return extent_fiemap(inode, fieinfo, start, len, btrfs_get_extent_fiemap);
+	return extent_fiemap(inode, fieinfo, start, len);
 }
 
 int btrfs_readpage(struct file *file, struct page *page)
@@ -8892,7 +8891,7 @@ static int btrfs_writepage(struct page *page, struct writeback_control *wbc)
 		return AOP_WRITEPAGE_ACTIVATE;
 	}
 	tree = &BTRFS_I(page->mapping->host)->io_tree;
-	ret = extent_write_full_page(tree, page, btrfs_get_extent, wbc);
+	ret = extent_write_full_page(tree, page, wbc);
 	btrfs_add_delayed_iput(inode);
 	return ret;
 }
@@ -8903,7 +8902,7 @@ static int btrfs_writepages(struct address_space *mapping,
 	struct extent_io_tree *tree;
 
 	tree = &BTRFS_I(mapping->host)->io_tree;
-	return extent_writepages(tree, mapping, btrfs_get_extent, wbc);
+	return extent_writepages(tree, mapping, wbc);
 }
 
 static int
@@ -8912,8 +8911,7 @@ btrfs_readpages(struct file *file, struct address_space *mapping,
 {
 	struct extent_io_tree *tree;
 	tree = &BTRFS_I(mapping->host)->io_tree;
-	return extent_readpages(tree, mapping, pages, nr_pages,
-				btrfs_get_extent);
+	return extent_readpages(tree, mapping, pages, nr_pages);
 }
 static int __btrfs_releasepage(struct page *page, gfp_t gfp_flags)
 {
