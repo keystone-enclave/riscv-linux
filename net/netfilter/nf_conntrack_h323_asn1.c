@@ -164,8 +164,13 @@ static unsigned int get_len(struct bitstr *bs)
 	return v;
 }
 
-static int nf_h323_error_boundary(struct bitstr *bs, size_t bytes)
+static int nf_h323_error_boundary(struct bitstr *bs, size_t bytes, size_t bits)
 {
+	bits += bs->bit;
+	bytes += bits / BITS_PER_BYTE;
+	if (bits % BITS_PER_BYTE > 0)
+		bytes++;
+
 	if (*bs->cur + bytes > *bs->end)
 		return 1;
 
@@ -289,8 +294,7 @@ static int decode_bool(struct bitstr *bs, const struct field_t *f,
 	PRINT("%*.s%s\n", level * TAB_SIZE, " ", f->name);
 
 	INC_BIT(bs);
-
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -304,12 +308,12 @@ static int decode_oid(struct bitstr *bs, const struct field_t *f,
 	PRINT("%*.s%s\n", level * TAB_SIZE, " ", f->name);
 
 	BYTE_ALIGN(bs);
-	if (nf_h323_error_boundary(bs, 1))
+	if (nf_h323_error_boundary(bs, 1, 0))
 		return H323_ERROR_BOUND;
 
 	len = *bs->cur++;
 	bs->cur += len;
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 
 	return H323_ERROR_NONE;
@@ -333,6 +337,8 @@ static int decode_int(struct bitstr *bs, const struct field_t *f,
 		bs->cur += 2;
 		break;
 	case CONS:		/* 64K < Range < 4G */
+		if (nf_h323_error_boundary(bs, 0, 2))
+			return H323_ERROR_BOUND;
 		len = get_bits(bs, 2) + 1;
 		BYTE_ALIGN(bs);
 		if (base && (f->attr & DECODE)) {	/* timeToLive */
@@ -344,7 +350,7 @@ static int decode_int(struct bitstr *bs, const struct field_t *f,
 		break;
 	case UNCO:
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		len = get_len(bs);
 		bs->cur += len;
@@ -356,7 +362,7 @@ static int decode_int(struct bitstr *bs, const struct field_t *f,
 
 	PRINT("\n");
 
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -373,7 +379,7 @@ static int decode_enum(struct bitstr *bs, const struct field_t *f,
 		INC_BITS(bs, f->sz);
 	}
 
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -392,13 +398,13 @@ static int decode_bitstr(struct bitstr *bs, const struct field_t *f,
 		len = f->lb;
 		break;
 	case WORD:		/* 2-byte length */
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		len = (*bs->cur++) << 8;
 		len += (*bs->cur++) + f->lb;
 		break;
 	case SEMI:
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		len = get_len(bs);
 		break;
@@ -410,7 +416,7 @@ static int decode_bitstr(struct bitstr *bs, const struct field_t *f,
 	bs->cur += len >> 3;
 	bs->bit = len & 7;
 
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -424,12 +430,14 @@ static int decode_numstr(struct bitstr *bs, const struct field_t *f,
 	PRINT("%*.s%s\n", level * TAB_SIZE, " ", f->name);
 
 	/* 2 <= Range <= 255 */
+	if (nf_h323_error_boundary(bs, 0, f->sz))
+		return H323_ERROR_BOUND;
 	len = get_bits(bs, f->sz) + f->lb;
 
 	BYTE_ALIGN(bs);
 	INC_BITS(bs, (len << 2));
 
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -461,17 +469,19 @@ static int decode_octstr(struct bitstr *bs, const struct field_t *f,
 		break;
 	case BYTE:		/* Range == 256 */
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 1))
+		if (nf_h323_error_boundary(bs, 1, 0))
 			return H323_ERROR_BOUND;
 		len = (*bs->cur++) + f->lb;
 		break;
 	case SEMI:
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		len = get_len(bs) + f->lb;
 		break;
 	default:		/* 2 <= Range <= 255 */
+		if (nf_h323_error_boundary(bs, 0, f->sz))
+			return H323_ERROR_BOUND;
 		len = get_bits(bs, f->sz) + f->lb;
 		BYTE_ALIGN(bs);
 		break;
@@ -481,7 +491,7 @@ static int decode_octstr(struct bitstr *bs, const struct field_t *f,
 
 	PRINT("\n");
 
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -497,11 +507,13 @@ static int decode_bmpstr(struct bitstr *bs, const struct field_t *f,
 	switch (f->sz) {
 	case BYTE:		/* Range == 256 */
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 1))
+		if (nf_h323_error_boundary(bs, 1, 0))
 			return H323_ERROR_BOUND;
 		len = (*bs->cur++) + f->lb;
 		break;
 	default:		/* 2 <= Range <= 255 */
+		if (nf_h323_error_boundary(bs, 0, f->sz))
+			return H323_ERROR_BOUND;
 		len = get_bits(bs, f->sz) + f->lb;
 		BYTE_ALIGN(bs);
 		break;
@@ -509,7 +521,7 @@ static int decode_bmpstr(struct bitstr *bs, const struct field_t *f,
 
 	bs->cur += len << 1;
 
-	if (nf_h323_error_boundary(bs, 0))
+	if (nf_h323_error_boundary(bs, 0, 0))
 		return H323_ERROR_BOUND;
 	return H323_ERROR_NONE;
 }
@@ -529,9 +541,13 @@ static int decode_seq(struct bitstr *bs, const struct field_t *f,
 	base = (base && (f->attr & DECODE)) ? base + f->offset : NULL;
 
 	/* Extensible? */
+	if (nf_h323_error_boundary(bs, 0, 1))
+		return H323_ERROR_BOUND;
 	ext = (f->attr & EXT) ? get_bit(bs) : 0;
 
 	/* Get fields bitmap */
+	if (nf_h323_error_boundary(bs, 0, f->sz))
+		return H323_ERROR_BOUND;
 	bmp = get_bitmap(bs, f->sz);
 	if (base)
 		*(unsigned int *)base = bmp;
@@ -551,10 +567,10 @@ static int decode_seq(struct bitstr *bs, const struct field_t *f,
 
 		/* Decode */
 		if (son->attr & OPEN) {	/* Open field */
-			if (nf_h323_error_boundary(bs, 2))
+			if (nf_h323_error_boundary(bs, 2, 0))
 				return H323_ERROR_BOUND;
 			len = get_len(bs);
-			if (nf_h323_error_boundary(bs, len))
+			if (nf_h323_error_boundary(bs, len, 0))
 				return H323_ERROR_BOUND;
 			if (!base || !(son->attr & DECODE)) {
 				PRINT("%*.s%s\n", (level + 1) * TAB_SIZE,
@@ -583,8 +599,10 @@ static int decode_seq(struct bitstr *bs, const struct field_t *f,
 		return H323_ERROR_NONE;
 
 	/* Get the extension bitmap */
+	if (nf_h323_error_boundary(bs, 0, 7))
+		return H323_ERROR_BOUND;
 	bmp2_len = get_bits(bs, 7) + 1;
-	if (nf_h323_error_boundary(bs, (bmp2_len + 7) >> 3))
+	if (nf_h323_error_boundary(bs, 0, bmp2_len))
 		return H323_ERROR_BOUND;
 	bmp2 = get_bitmap(bs, bmp2_len);
 	bmp |= bmp2 >> f->sz;
@@ -596,10 +614,10 @@ static int decode_seq(struct bitstr *bs, const struct field_t *f,
 	for (opt = 0; opt < bmp2_len; opt++, i++, son++) {
 		/* Check Range */
 		if (i >= f->ub) {	/* Newer Version? */
-			if (nf_h323_error_boundary(bs, 2))
+			if (nf_h323_error_boundary(bs, 2, 0))
 				return H323_ERROR_BOUND;
 			len = get_len(bs);
-			if (nf_h323_error_boundary(bs, len))
+			if (nf_h323_error_boundary(bs, len, 0))
 				return H323_ERROR_BOUND;
 			bs->cur += len;
 			continue;
@@ -614,10 +632,10 @@ static int decode_seq(struct bitstr *bs, const struct field_t *f,
 		if (!((0x80000000 >> opt) & bmp2))	/* Not present */
 			continue;
 
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		len = get_len(bs);
-		if (nf_h323_error_boundary(bs, len))
+		if (nf_h323_error_boundary(bs, len, 0))
 			return H323_ERROR_BOUND;
 		if (!base || !(son->attr & DECODE)) {
 			PRINT("%*.s%s\n", (level + 1) * TAB_SIZE, " ",
@@ -656,13 +674,13 @@ static int decode_seqof(struct bitstr *bs, const struct field_t *f,
 	switch (f->sz) {
 	case BYTE:
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 1))
+		if (nf_h323_error_boundary(bs, 1, 0))
 			return H323_ERROR_BOUND;
 		count = *bs->cur++;
 		break;
 	case WORD:
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		count = *bs->cur++;
 		count <<= 8;
@@ -670,11 +688,13 @@ static int decode_seqof(struct bitstr *bs, const struct field_t *f,
 		break;
 	case SEMI:
 		BYTE_ALIGN(bs);
-		if (nf_h323_error_boundary(bs, 2))
+		if (nf_h323_error_boundary(bs, 2, 0))
 			return H323_ERROR_BOUND;
 		count = get_len(bs);
 		break;
 	default:
+		if (nf_h323_error_boundary(bs, 0, f->sz))
+			return H323_ERROR_BOUND;
 		count = get_bits(bs, f->sz);
 		break;
 	}
@@ -694,8 +714,10 @@ static int decode_seqof(struct bitstr *bs, const struct field_t *f,
 	for (i = 0; i < count; i++) {
 		if (son->attr & OPEN) {
 			BYTE_ALIGN(bs);
+			if (nf_h323_error_boundary(bs, 2, 0))
+				return H323_ERROR_BOUND;
 			len = get_len(bs);
-			if (nf_h323_error_boundary(bs, len))
+			if (nf_h323_error_boundary(bs, len, 0))
 				return H323_ERROR_BOUND;
 			if (!base || !(son->attr & DECODE)) {
 				PRINT("%*.s%s\n", (level + 1) * TAB_SIZE,
@@ -747,11 +769,17 @@ static int decode_choice(struct bitstr *bs, const struct field_t *f,
 	base = (base && (f->attr & DECODE)) ? base + f->offset : NULL;
 
 	/* Decode the choice index number */
+	if (nf_h323_error_boundary(bs, 0, 1))
+		return H323_ERROR_BOUND;
 	if ((f->attr & EXT) && get_bit(bs)) {
 		ext = 1;
+		if (nf_h323_error_boundary(bs, 0, 7))
+			return H323_ERROR_BOUND;
 		type = get_bits(bs, 7) + f->lb;
 	} else {
 		ext = 0;
+		if (nf_h323_error_boundary(bs, 0, f->sz))
+			return H323_ERROR_BOUND;
 		type = get_bits(bs, f->sz);
 		if (type >= f->lb)
 			return H323_ERROR_RANGE;
@@ -764,8 +792,10 @@ static int decode_choice(struct bitstr *bs, const struct field_t *f,
 	/* Check Range */
 	if (type >= f->ub) {	/* Newer version? */
 		BYTE_ALIGN(bs);
+		if (nf_h323_error_boundary(bs, 2, 0))
+			return H323_ERROR_BOUND;
 		len = get_len(bs);
-		if (nf_h323_error_boundary(bs, len))
+		if (nf_h323_error_boundary(bs, len, 0))
 			return H323_ERROR_BOUND;
 		bs->cur += len;
 		return H323_ERROR_NONE;
@@ -780,8 +810,10 @@ static int decode_choice(struct bitstr *bs, const struct field_t *f,
 
 	if (ext || (son->attr & OPEN)) {
 		BYTE_ALIGN(bs);
+		if (nf_h323_error_boundary(bs, len, 0))
+			return H323_ERROR_BOUND;
 		len = get_len(bs);
-		if (nf_h323_error_boundary(bs, len))
+		if (nf_h323_error_boundary(bs, len, 0))
 			return H323_ERROR_BOUND;
 		if (!base || !(son->attr & DECODE)) {
 			PRINT("%*.s%s\n", (level + 1) * TAB_SIZE, " ",
