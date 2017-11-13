@@ -894,6 +894,8 @@ void __check_sit_bitmap(struct f2fs_sb_info *sbi,
 	unsigned long offset, size, max_blocks = sbi->blocks_per_seg;
 	unsigned long *map;
 
+	down_read(&SIT_I(sbi)->sentry_lock);
+
 	while (blk < end) {
 		segno = GET_SEGNO(sbi, blk);
 		sentry = get_seg_entry(sbi, segno);
@@ -908,6 +910,8 @@ void __check_sit_bitmap(struct f2fs_sb_info *sbi,
 		f2fs_bug_on(sbi, offset != size);
 		blk = START_BLOCK(sbi, segno + 1);
 	}
+
+	up_read(&SIT_I(sbi)->sentry_lock);
 #endif
 }
 
@@ -2527,11 +2531,12 @@ void allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	down_read(&SM_I(sbi)->curseg_lock);
 
 	mutex_lock(&curseg->curseg_mutex);
-	down_write(&sit_i->sentry_lock);
 
 	*new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);
 
 	f2fs_wait_discard_bio(sbi, *new_blkaddr);
+
+	down_write(&sit_i->sentry_lock);
 
 	/*
 	 * __add_sum_entry should be resided under the curseg_mutex
