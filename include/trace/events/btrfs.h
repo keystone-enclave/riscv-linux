@@ -29,6 +29,13 @@ struct btrfs_qgroup_extent_record;
 struct btrfs_qgroup;
 struct prelim_ref;
 
+TRACE_DEFINE_ENUM(FLUSH_DELAYED_ITEMS_NR);
+TRACE_DEFINE_ENUM(FLUSH_DELAYED_ITEMS);
+TRACE_DEFINE_ENUM(FLUSH_DELALLOC);
+TRACE_DEFINE_ENUM(FLUSH_DELALLOC_WAIT);
+TRACE_DEFINE_ENUM(ALLOC_CHUNK);
+TRACE_DEFINE_ENUM(COMMIT_TRANS);
+
 #define show_ref_type(type)						\
 	__print_symbolic(type,						\
 		{ BTRFS_TREE_BLOCK_REF_KEY, 	"TREE_BLOCK_REF" },	\
@@ -63,6 +70,11 @@ struct prelim_ref;
 		 { BTRFS_FILE_EXTENT_INLINE,	"INLINE" },		\
 		 { BTRFS_FILE_EXTENT_REG,	"REG"	 },		\
 		 { BTRFS_FILE_EXTENT_PREALLOC,	"PREALLOC"})
+
+#define show_qgroup_rsv_type(type)					\
+	__print_symbolic(type,						\
+		{ BTRFS_QGROUP_RSV_DATA,	"DATA"	},		\
+		{ BTRFS_QGROUP_RSV_META,	"META"	})
 
 #define BTRFS_GROUP_FLAGS	\
 	{ BTRFS_BLOCK_GROUP_DATA,	"DATA"},	\
@@ -792,11 +804,10 @@ DEFINE_EVENT(btrfs_delayed_data_ref,  run_delayed_data_ref,
 DECLARE_EVENT_CLASS(btrfs_delayed_ref_head,
 
 	TP_PROTO(const struct btrfs_fs_info *fs_info,
-		 const struct btrfs_delayed_ref_node *ref,
 		 const struct btrfs_delayed_ref_head *head_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, head_ref, action),
+	TP_ARGS(fs_info, head_ref, action),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,  bytenr		)
@@ -806,8 +817,8 @@ DECLARE_EVENT_CLASS(btrfs_delayed_ref_head,
 	),
 
 	TP_fast_assign_btrfs(fs_info,
-		__entry->bytenr		= ref->bytenr;
-		__entry->num_bytes	= ref->num_bytes;
+		__entry->bytenr		= head_ref->bytenr;
+		__entry->num_bytes	= head_ref->num_bytes;
 		__entry->action		= action;
 		__entry->is_data	= head_ref->is_data;
 	),
@@ -822,21 +833,19 @@ DECLARE_EVENT_CLASS(btrfs_delayed_ref_head,
 DEFINE_EVENT(btrfs_delayed_ref_head,  add_delayed_ref_head,
 
 	TP_PROTO(const struct btrfs_fs_info *fs_info,
-		 const struct btrfs_delayed_ref_node *ref,
 		 const struct btrfs_delayed_ref_head *head_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, head_ref, action)
+	TP_ARGS(fs_info, head_ref, action)
 );
 
 DEFINE_EVENT(btrfs_delayed_ref_head,  run_delayed_ref_head,
 
 	TP_PROTO(const struct btrfs_fs_info *fs_info,
-		 const struct btrfs_delayed_ref_node *ref,
 		 const struct btrfs_delayed_ref_head *head_ref,
 		 int action),
 
-	TP_ARGS(fs_info, ref, head_ref, action)
+	TP_ARGS(fs_info, head_ref, action)
 );
 
 #define show_chunk_type(type)					\
@@ -1595,24 +1604,26 @@ TRACE_EVENT(qgroup_update_counters,
 TRACE_EVENT(qgroup_update_reserve,
 
 	TP_PROTO(struct btrfs_fs_info *fs_info, struct btrfs_qgroup *qgroup,
-		 s64 diff),
+		 s64 diff, int type),
 
-	TP_ARGS(fs_info, qgroup, diff),
+	TP_ARGS(fs_info, qgroup, diff, type),
 
 	TP_STRUCT__entry_btrfs(
 		__field(	u64,	qgid			)
 		__field(	u64,	cur_reserved		)
 		__field(	s64,	diff			)
+		__field(	int,	type			)
 	),
 
 	TP_fast_assign_btrfs(fs_info,
 		__entry->qgid		= qgroup->qgroupid;
-		__entry->cur_reserved	= qgroup->reserved;
+		__entry->cur_reserved	= qgroup->rsv.values[type];
 		__entry->diff		= diff;
 	),
 
-	TP_printk_btrfs("qgid=%llu cur_reserved=%llu diff=%lld",
-		__entry->qgid, __entry->cur_reserved, __entry->diff)
+	TP_printk_btrfs("qgid=%llu type=%s cur_reserved=%llu diff=%lld",
+		__entry->qgid, show_qgroup_rsv_type(__entry->type),
+		__entry->cur_reserved, __entry->diff)
 );
 
 TRACE_EVENT(qgroup_meta_reserve,
@@ -1692,6 +1703,27 @@ DEFINE_EVENT(btrfs__prelim_ref, btrfs_prelim_ref_insert,
 	TP_ARGS(fs_info, oldref, newref, tree_size)
 );
 
+TRACE_EVENT(btrfs_inode_mod_outstanding_extents,
+	TP_PROTO(struct btrfs_root *root, u64 ino, int mod),
+
+	TP_ARGS(root, ino, mod),
+
+	TP_STRUCT__entry_btrfs(
+		__field(	u64, root_objectid	)
+		__field(	u64, ino		)
+		__field(	int, mod		)
+	),
+
+	TP_fast_assign_btrfs(root->fs_info,
+		__entry->root_objectid	= root->objectid;
+		__entry->ino		= ino;
+		__entry->mod		= mod;
+	),
+
+	TP_printk_btrfs("root=%llu(%s) ino=%llu mod=%d",
+			show_root_type(__entry->root_objectid),
+			(unsigned long long)__entry->ino, __entry->mod)
+);
 #endif /* _TRACE_BTRFS_H */
 
 /* This part must be outside protection */
