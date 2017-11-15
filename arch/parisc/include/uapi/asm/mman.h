@@ -12,9 +12,11 @@
 
 #define MAP_SHARED	0x01		/* Share changes */
 #define MAP_PRIVATE	0x02		/* Changes are private */
-#define MAP_TYPE	0x03		/* Mask for type of mapping */
+#define MAP_TYPE	(MAP_SHARED|MAP_PRIVATE|MAP_RESRVD1|MAP_RESRVD2) /* Mask for type of mapping */
 #define MAP_FIXED	0x04		/* Interpret addr exactly */
+#define MAP_RESRVD1	0x08		/* reserved for 3rd bit of MAP_TYPE */
 #define MAP_ANONYMOUS	0x10		/* don't use a file */
+#define MAP_RESRVD2	0x20		/* reserved for 4th bit of MAP_TYPE */
 
 #define MAP_DENYWRITE	0x0800		/* ETXTBSY */
 #define MAP_EXECUTABLE	0x1000		/* mark it as an executable */
