@@ -259,3 +259,7 @@ cond_syscall(sys_membarrier);
 cond_syscall(sys_pkey_mprotect);
 cond_syscall(sys_pkey_alloc);
 cond_syscall(sys_pkey_free);
+
+/* restartable sequence */
+cond_syscall(sys_rseq);
+cond_syscall(sys_cpu_opv);
