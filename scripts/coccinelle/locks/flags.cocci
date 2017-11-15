@@ -12,9 +12,9 @@ virtual context
 virtual org
 virtual report
 
-@r exists@
-expression lock1,lock2,flags;
-position p1,p2;
+@pre exists@
+expression lock1,flags;
+position p1;
 @@
 
 (
@@ -24,25 +24,12 @@ read_lock_irqsave@p1(lock1,flags)
 |
 write_lock_irqsave@p1(lock1,flags)
 )
-... when != flags
-(
-spin_lock_irqsave(lock1,flags)
-|
-read_lock_irqsave(lock1,flags)
-|
-write_lock_irqsave(lock1,flags)
-|
-spin_lock_irqsave@p2(lock2,flags)
-|
-read_lock_irqsave@p2(lock2,flags)
-|
-write_lock_irqsave@p2(lock2,flags)
-)
 
-@d exists@
-expression f <= r.flags;
-expression lock1,lock2,flags;
-position r.p1, r.p2;
+@r exists@
+expression lock2 != pre.lock1;
+expression f <= pre.flags;
+expression pre.lock1,pre.flags;
+position pre.p1,p2;
 @@
 
 (
@@ -63,16 +50,16 @@ position r.p1, r.p2;
 
 // ----------------------------------------------------------------------
 
-@script:python depends on d && org@
-p1 << r.p1;
+@script:python depends on org@
+p1 << pre.p1;
 p2 << r.p2;
 @@
 
 cocci.print_main("original lock",p1)
 cocci.print_secs("nested lock+irqsave that reuses flags",p2)
 
-@script:python depends on d && report@
-p1 << r.p1;
+@script:python depends on report@
+p1 << pre.p1;
 p2 << r.p2;
 @@
 
