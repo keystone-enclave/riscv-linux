@@ -1134,24 +1134,11 @@ static struct geneve_dev *geneve_find_dev(struct geneve_net *gn,
 	return t;
 }
 
-static bool is_all_zero(const u8 *fp, size_t size)
-{
-	int i;
-
-	for (i = 0; i < size; i++)
-		if (fp[i])
-			return false;
-	return true;
-}
-
 static bool is_tnl_info_zero(const struct ip_tunnel_info *info)
 {
-	if (info->key.tun_id || info->key.tun_flags || info->key.tos ||
-	    info->key.ttl || info->key.label || info->key.tp_src ||
-	    !is_all_zero((const u8 *)&info->key.u, sizeof(info->key.u)))
-		return false;
-	else
-		return true;
+	return !(info->key.tun_id || info->key.tun_flags || info->key.tos ||
+		 info->key.ttl || info->key.label || info->key.tp_src ||
+		 memchr_inv(&info->key.u, 0, sizeof(info->key.u)));
 }
 
 static bool geneve_dst_addr_equal(struct ip_tunnel_info *a,
@@ -1667,6 +1654,7 @@ static void __net_exit geneve_exit_net(struct net *net)
 	/* unregister the devices gathered above */
 	unregister_netdevice_many(&list);
 	rtnl_unlock();
+	WARN_ON_ONCE(!list_empty(&gn->sock_list));
 }
 
 static struct pernet_operations geneve_net_ops = {
