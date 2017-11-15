@@ -7,7 +7,8 @@
  * This software may be used and distributed according to the terms
  * of the GNU General Public License, incorporated herein by reference.
  *
- * Usage: insert-sys-cert [-s <System.map> -b <vmlinux> -c <certfile>
+ * Usage: insert-sys-cert [-s <System.map>] -b <vmlinux> -c <certfile>
+ *                        [-s <System.map>] -z <bzImage> -c <certfile>
  */
 
 #define _GNU_SOURCE
@@ -24,27 +25,16 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <elf.h>
+#include <gelf.h>
+#include <linux/types.h>
 
 #define CERT_SYM  "system_extra_cert"
 #define USED_SYM  "system_extra_cert_used"
 #define LSIZE_SYM "system_certificate_list_size"
 
-#define info(format, args...) fprintf(stderr, "INFO:    " format, ## args)
+#define info(format, args...) fprintf(stdout, "INFO:    " format, ## args)
 #define warn(format, args...) fprintf(stdout, "WARNING: " format, ## args)
 #define  err(format, args...) fprintf(stderr, "ERROR:   " format, ## args)
-
-#if UINTPTR_MAX == 0xffffffff
-#define CURRENT_ELFCLASS ELFCLASS32
-#define Elf_Ehdr	Elf32_Ehdr
-#define Elf_Shdr	Elf32_Shdr
-#define Elf_Sym		Elf32_Sym
-#else
-#define CURRENT_ELFCLASS ELFCLASS64
-#define Elf_Ehdr	Elf64_Ehdr
-#define Elf_Shdr	Elf64_Shdr
-#define Elf_Sym		Elf64_Sym
-#endif
 
 static unsigned char endianness(void)
 {
@@ -65,22 +55,17 @@ struct sym {
 	int size;
 };
 
-static unsigned long get_offset_from_address(Elf_Ehdr *hdr, unsigned long addr)
+static unsigned long get_offset_from_address(Elf *elf, unsigned long addr)
 {
-	Elf_Shdr *x;
-	unsigned int i, num_sections;
+	Elf_Scn *scn = NULL;
+	GElf_Shdr shdr;
+	unsigned long start, end, offset;
 
-	x = (void *)hdr + hdr->e_shoff;
-	if (hdr->e_shnum == SHN_UNDEF)
-		num_sections = x[0].sh_size;
-	else
-		num_sections = hdr->e_shnum;
-
-	for (i = 1; i < num_sections; i++) {
-		unsigned long start = x[i].sh_addr;
-		unsigned long end = start + x[i].sh_size;
-		unsigned long offset = x[i].sh_offset;
-
+	while ((scn = elf_nextscn(elf, scn)) != NULL) {
+		gelf_getshdr(scn, &shdr);
+		start = shdr.sh_addr;
+		end = start + shdr.sh_size;
+		offset = shdr.sh_offset;
 		if (addr >= start && addr <= end)
 			return addr - start + offset;
 	}
@@ -90,7 +75,7 @@ static unsigned long get_offset_from_address(Elf_Ehdr *hdr, unsigned long addr)
 
 #define LINE_SIZE 100
 
-static void get_symbol_from_map(Elf_Ehdr *hdr, FILE *f, char *name,
+static void get_symbol_from_map(Elf *elf, void *base, FILE *f, char *name,
 				struct sym *s)
 {
 	char l[LINE_SIZE];
@@ -125,76 +110,65 @@ static void get_symbol_from_map(Elf_Ehdr *hdr, FILE *f, char *name,
 	s->address = strtoul(l, NULL, 16);
 	if (s->address == 0)
 		return;
-	s->offset = get_offset_from_address(hdr, s->address);
+	s->offset = get_offset_from_address(elf, s->address);
 	s->name = name;
-	s->content = (void *)hdr + s->offset;
+	s->content = (void *)base + s->offset;
 }
 
-static Elf_Sym *find_elf_symbol(Elf_Ehdr *hdr, Elf_Shdr *symtab, char *name)
-{
-	Elf_Sym *sym, *symtab_start;
-	char *strtab, *symname;
-	unsigned int link;
-	Elf_Shdr *x;
-	int i, n;
-
-	x = (void *)hdr + hdr->e_shoff;
-	link = symtab->sh_link;
-	symtab_start = (void *)hdr + symtab->sh_offset;
-	n = symtab->sh_size / symtab->sh_entsize;
-	strtab = (void *)hdr + x[link].sh_offset;
-
-	for (i = 0; i < n; i++) {
-		sym = &symtab_start[i];
-		symname = strtab + sym->st_name;
-		if (strcmp(symname, name) == 0)
-			return sym;
-	}
-	err("Unable to find symbol: %s\n", name);
-	return NULL;
-}
-
-static void get_symbol_from_table(Elf_Ehdr *hdr, Elf_Shdr *symtab,
+static void get_symbol_from_table(Elf *elf, Elf_Scn *symtab, void *base,
 				  char *name, struct sym *s)
 {
-	Elf_Shdr *sec;
-	int secndx;
-	Elf_Sym *elf_sym;
-	Elf_Shdr *x;
+	GElf_Shdr shdr;
+	Elf_Data *data;
+	int count;
+	int i;
+	GElf_Sym sym;
+	char *symname;
+	int found = 0;
+	size_t secndx;
+	Elf_Scn *sec;
 
-	x = (void *)hdr + hdr->e_shoff;
+	gelf_getshdr(symtab, &shdr);
+	data = elf_getdata(symtab, NULL);
+	count = shdr.sh_size / shdr.sh_entsize;
+
+	for (i = 0; i < count; i++) {
+		gelf_getsym(data, i, &sym);
+		symname = elf_strptr(elf, shdr.sh_link, sym.st_name);
+		if (strcmp(symname, name) == 0) {
+			found = 1;
+			break;
+		}
+	}
+
 	s->size = 0;
 	s->address = 0;
 	s->offset = 0;
-	elf_sym = find_elf_symbol(hdr, symtab, name);
-	if (!elf_sym)
+	if (!found)
 		return;
-	secndx = elf_sym->st_shndx;
+	secndx = sym.st_shndx;
 	if (!secndx)
 		return;
-	sec = &x[secndx];
-	s->size = elf_sym->st_size;
-	s->address = elf_sym->st_value;
-	s->offset = s->address - sec->sh_addr
-			       + sec->sh_offset;
+	sec = elf_getscn(elf, secndx);
+	gelf_getshdr(sec, &shdr);
+	s->size = sym.st_size;
+	s->address = sym.st_value;
+	s->offset = s->address - shdr.sh_addr
+			       + shdr.sh_offset;
 	s->name = name;
-	s->content = (void *)hdr + s->offset;
+	s->content = base + s->offset;
 }
 
-static Elf_Shdr *get_symbol_table(Elf_Ehdr *hdr)
+static Elf_Scn *get_symbol_table(Elf *elf)
 {
-	Elf_Shdr *x;
-	unsigned int i, num_sections;
+	Elf_Scn *scn = NULL;
+	GElf_Shdr shdr;
 
-	x = (void *)hdr + hdr->e_shoff;
-	if (hdr->e_shnum == SHN_UNDEF)
-		num_sections = x[0].sh_size;
-	else
-		num_sections = hdr->e_shnum;
-
-	for (i = 1; i < num_sections; i++)
-		if (x[i].sh_type == SHT_SYMTAB)
-			return &x[i];
+	while ((scn = elf_nextscn(elf, scn)) != NULL) {
+		gelf_getshdr(scn, &shdr);
+		if (shdr.sh_type == SHT_SYMTAB)
+			return scn;
+	}
 	return NULL;
 }
 
@@ -257,7 +231,229 @@ static char *read_file(char *file_name, int *size)
 	return buf;
 }
 
-static void print_sym(Elf_Ehdr *hdr, struct sym *s)
+#define BOOT_FLAG		0xAA55
+#define MAGIC			0x53726448
+
+#define BOOT_FLAG_O		0x1FE
+#define MAGIC_O			0x202
+#define VERSION_O		0x206
+#define SETUP_SECTS_O		0x1F1
+#define PAYLOAD_OFFSET_O	0x248
+#define PAYLOAD_LENGTH_O	0x24C
+
+static int image_supported(char *bzimage, int bzimage_size)
+{
+	u16 boot_flag;
+	u32 magic;
+	u16 version;
+
+	if (bzimage_size < 1024) {
+		err("Invalid bzImage: File is too small\n");
+		return 0;
+	}
+
+	boot_flag = *((u16 *)&bzimage[BOOT_FLAG_O]);
+	magic = *((u32 *)&bzimage[MAGIC_O]);
+	version = *((u16 *)&bzimage[VERSION_O]);
+
+	if (boot_flag != BOOT_FLAG || magic != MAGIC) {
+		err("Invalid bzImage: Magic mismatch\n");
+		return 0;
+	}
+
+	if (version < 0x208) {
+		err("Invalid bzImage: Boot version <2.08 not supported\n");
+		return 0;
+	}
+
+	return 1;
+}
+
+static void get_payload_info(char *bzimage, int *offset, int *size)
+{
+	unsigned int system_offset;
+	unsigned char setup_sectors;
+
+	setup_sectors = bzimage[SETUP_SECTS_O] + 1;
+	system_offset = setup_sectors * 512;
+	*offset = system_offset + *((int *)&bzimage[PAYLOAD_OFFSET_O]);
+	*size = *((int *)&bzimage[PAYLOAD_LENGTH_O]);
+}
+
+static void update_payload_info(char *bzimage, int new_size)
+{
+	int offset, size;
+
+	get_payload_info(bzimage, &offset, &size);
+	*((int *)&bzimage[PAYLOAD_LENGTH_O]) = new_size;
+	if (new_size < size)
+		memset(bzimage + offset + new_size, 0, size - new_size);
+}
+
+struct zipper {
+	unsigned char pattern[10];
+	int length;
+	char *command;
+	char *compress;
+};
+
+struct zipper zippers[] = {
+	{{0x7F, 'E', 'L', 'F'},
+	 4, "cat", "cat"},
+	{{0x1F, 0x8B},
+	 2, "gunzip", "gzip -n -f -9"},
+	{{0xFD, '7', 'z', 'X', 'Z', 0},
+	 6, "unxz", "xz"},
+	{{'B', 'Z', 'h'},
+	 3, "bunzip2", "bzip2 -9"},
+	{{0xFF, 'L', 'Z', 'M', 'A', 0},
+	 6, "unlzma", "lzma -9"},
+	{{0xD3, 'L', 'Z', 'O', 0, '\r', '\n', 0x20, '\n'},
+	 9, "lzop -d", "lzop -9"}
+};
+
+static struct zipper *get_zipper(char *p)
+{
+	int i;
+
+	for (i = 0; i < sizeof(zippers) / sizeof(struct zipper); i++) {
+		if (memcmp(p, zippers[i].pattern, zippers[i].length) == 0)
+			return &zippers[i];
+	}
+	return NULL;
+}
+
+static u32 crc32(u32 seed, const char *buffer, int size)
+{
+	int i, j;
+	u32 byte, crc, mask;
+
+	crc = seed;
+	for (i = 0; i < size; i++) {
+		byte = buffer[i];
+		crc = crc ^ byte;
+		for (j = 7; j >= 0; j--) {
+			mask = -(crc & 1);
+			crc = (crc >> 1) ^ (0xEDB88320 & mask);
+		}
+	}
+	return crc;
+}
+
+/*
+ * This only works for x86 bzImage
+ */
+static void extract_vmlinux(char *bzimage, int bzimage_size,
+			    char **file, struct zipper **zipper)
+{
+	int r;
+	char src[15] = "vmlinux-XXXXXX";
+	char dest[15] = "vmlinux-XXXXXX";
+	char cmd[100];
+	int src_fd, dest_fd;
+	int offset, size;
+	struct zipper *z;
+
+	if (!image_supported(bzimage, bzimage_size))
+		return;
+
+	get_payload_info(bzimage, &offset, &size);
+	z = get_zipper(bzimage + offset);
+	if (!z) {
+		err("Unable to determine the compression of vmlinux\n");
+		return;
+	}
+
+	src_fd = mkstemp(src);
+	if (src_fd == -1) {
+		perror("Could not create temp file");
+		return;
+	}
+
+	r = write(src_fd, bzimage + offset, size);
+	if (r != size) {
+		perror("Could not write vmlinux");
+		return;
+	}
+	dest_fd = mkstemp(dest);
+	if (dest_fd == -1) {
+		perror("Could not create temp file");
+		return;
+	}
+
+	snprintf(cmd, sizeof(cmd), "%s <%s >%s", z->command, src, dest);
+	info("Executing: %s\n", cmd);
+	r = system(cmd);
+	if (r != 0)
+		warn("Possible errors when extracting\n");
+
+	r = remove(src);
+	if (r != 0)
+		perror(src);
+
+	*file = strdup(dest);
+	*zipper = z;
+}
+
+static void repack_image(char *bzimage, int bzimage_size,
+			 char *vmlinux_file, struct zipper *z)
+{
+	char tmp[15] = "vmlinux-XXXXXX";
+	char cmd[100];
+	int fd;
+	struct stat st;
+	int new_size;
+	int r;
+	int offset, size;
+	u32 *crc;
+
+	get_payload_info(bzimage, &offset, &size);
+
+	fd = mkstemp(tmp);
+	if (fd == -1) {
+		perror("Could not create temp file");
+		return;
+	}
+	snprintf(cmd, sizeof(cmd), "%s <%s >%s",
+		 z->compress, vmlinux_file, tmp);
+
+	info("Executing: %s\n", cmd);
+	r = system(cmd);
+	if (r != 0)
+		warn("Possible errors when compressing\n");
+
+	r = remove(vmlinux_file);
+	if (r != 0)
+		perror(vmlinux_file);
+
+	if (fstat(fd, &st)) {
+		perror("Could not determine file size");
+		close(fd);
+	}
+	new_size = st.st_size;
+	if (new_size > size) {
+		err("Increase in compressed size is not supported.\n");
+		err("Old size was %d, new size is %d\n", size, new_size);
+		exit(EXIT_FAILURE);
+	}
+
+	r = read(fd, bzimage + offset, new_size);
+	if (r != new_size)
+		perror(tmp);
+
+	r = remove(tmp);
+	if (r != 0)
+		perror(tmp);
+
+	/* x86 specific patching of bzimage */
+	update_payload_info(bzimage, new_size);
+
+	/* update CRC */
+	crc = (u32 *)(bzimage + bzimage_size - 4);
+	*crc = crc32(~0, bzimage, bzimage_size);
+}
+
+static void print_sym(struct sym *s)
 {
 	info("sym:    %s\n", s->name);
 	info("addr:   0x%lx\n", s->address);
@@ -267,32 +463,41 @@ static void print_sym(Elf_Ehdr *hdr, struct sym *s)
 
 static void print_usage(char *e)
 {
-	printf("Usage %s [-s <System.map>] -b <vmlinux> -c <certfile>\n", e);
+	printf("Usage: %s [-s <System.map>] -b <vmlinux> -c <certfile>\n", e);
+	printf("       %s [-s <System.map>] -z <bzImage> -c <certfile>\n", e);
 }
 
 int main(int argc, char **argv)
 {
 	char *system_map_file = NULL;
 	char *vmlinux_file = NULL;
+	char *bzimage_file = NULL;
 	char *cert_file = NULL;
 	int vmlinux_size;
+	int bzimage_size;
 	int cert_size;
-	Elf_Ehdr *hdr;
+	char *vmlinux;
 	char *cert;
+	char *bzimage = NULL;
+	struct zipper *z = NULL;
 	FILE *system_map;
-	unsigned long *lsize;
 	int *used;
 	int opt;
-	Elf_Shdr *symtab = NULL;
 	struct sym cert_sym, lsize_sym, used_sym;
+	Elf *elf;
+	GElf_Ehdr hdr_s, *hdr;
+	Elf_Scn *symtab = NULL;
 
-	while ((opt = getopt(argc, argv, "b:c:s:")) != -1) {
+	while ((opt = getopt(argc, argv, "b:z:c:s:")) != -1) {
 		switch (opt) {
 		case 's':
 			system_map_file = optarg;
 			break;
 		case 'b':
 			vmlinux_file = optarg;
+			break;
+		case 'z':
+			bzimage_file = optarg;
 			break;
 		case 'c':
 			cert_file = optarg;
@@ -302,7 +507,9 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (!vmlinux_file || !cert_file) {
+	if (!cert_file ||
+	    (!vmlinux_file && !bzimage_file) ||
+	    (vmlinux_file && bzimage_file)) {
 		print_usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
@@ -311,12 +518,34 @@ int main(int argc, char **argv)
 	if (!cert)
 		exit(EXIT_FAILURE);
 
-	hdr = map_file(vmlinux_file, &vmlinux_size);
-	if (!hdr)
+	if (bzimage_file) {
+		bzimage = map_file(bzimage_file, &bzimage_size);
+		if (!bzimage)
+			exit(EXIT_FAILURE);
+
+		extract_vmlinux(bzimage, bzimage_size, &vmlinux_file, &z);
+		if (!vmlinux_file)
+			exit(EXIT_FAILURE);
+	}
+
+	vmlinux = map_file(vmlinux_file, &vmlinux_size);
+	if (!vmlinux)
 		exit(EXIT_FAILURE);
 
-	if (vmlinux_size < sizeof(*hdr)) {
-		err("Invalid ELF file.\n");
+	if (elf_version(EV_CURRENT) == EV_NONE) {
+		err("Init libelf failed.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	elf = elf_memory(vmlinux, vmlinux_size);
+	if (!elf) {
+		err("Unable to read Elf: %s\n", elf_errmsg(elf_errno()));
+		exit(EXIT_FAILURE);
+	}
+
+	hdr = gelf_getehdr(elf, &hdr_s);
+	if (!hdr) {
+		err("Unable to read Elf_hdr: %s\n", elf_errmsg(elf_errno()));
 		exit(EXIT_FAILURE);
 	}
 
@@ -325,11 +554,6 @@ int main(int argc, char **argv)
 	    (hdr->e_ident[EI_MAG2] != ELFMAG2) ||
 	    (hdr->e_ident[EI_MAG3] != ELFMAG3)) {
 		err("Invalid ELF magic.\n");
-		exit(EXIT_FAILURE);
-	}
-
-	if (hdr->e_ident[EI_CLASS] != CURRENT_ELFCLASS) {
-		err("ELF class mismatch.\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -343,7 +567,7 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	symtab = get_symbol_table(hdr);
+	symtab = get_symbol_table(elf);
 	if (!symtab) {
 		warn("Could not find the symbol table.\n");
 		if (!system_map_file) {
@@ -357,27 +581,32 @@ int main(int argc, char **argv)
 			perror(system_map_file);
 			exit(EXIT_FAILURE);
 		}
-		get_symbol_from_map(hdr, system_map, CERT_SYM, &cert_sym);
-		get_symbol_from_map(hdr, system_map, USED_SYM, &used_sym);
-		get_symbol_from_map(hdr, system_map, LSIZE_SYM, &lsize_sym);
+		get_symbol_from_map(elf, vmlinux, system_map,
+				    CERT_SYM, &cert_sym);
+		get_symbol_from_map(elf, vmlinux, system_map,
+				    USED_SYM, &used_sym);
+		get_symbol_from_map(elf, vmlinux, system_map,
+				    LSIZE_SYM, &lsize_sym);
 		cert_sym.size = used_sym.address - cert_sym.address;
 	} else {
 		info("Symbol table found.\n");
 		if (system_map_file)
 			warn("System.map is ignored.\n");
-		get_symbol_from_table(hdr, symtab, CERT_SYM, &cert_sym);
-		get_symbol_from_table(hdr, symtab, USED_SYM, &used_sym);
-		get_symbol_from_table(hdr, symtab, LSIZE_SYM, &lsize_sym);
+		get_symbol_from_table(elf, symtab, vmlinux,
+				      CERT_SYM, &cert_sym);
+		get_symbol_from_table(elf, symtab, vmlinux,
+				      USED_SYM, &used_sym);
+		get_symbol_from_table(elf, symtab, vmlinux,
+				      LSIZE_SYM, &lsize_sym);
 	}
 
 	if (!cert_sym.offset || !lsize_sym.offset || !used_sym.offset)
 		exit(EXIT_FAILURE);
 
-	print_sym(hdr, &cert_sym);
-	print_sym(hdr, &used_sym);
-	print_sym(hdr, &lsize_sym);
+	print_sym(&cert_sym);
+	print_sym(&used_sym);
+	print_sym(&lsize_sym);
 
-	lsize = (unsigned long *)lsize_sym.content;
 	used = (int *)used_sym.content;
 
 	if (cert_sym.size < cert_size) {
@@ -386,7 +615,7 @@ int main(int argc, char **argv)
 	}
 
 	/* If the existing cert is the same, don't overwrite */
-	if (cert_size == *used &&
+	if (cert_size > 0 && cert_size == *used &&
 	    strncmp(cert_sym.content, cert, cert_size) == 0) {
 		warn("Certificate was already inserted.\n");
 		exit(EXIT_SUCCESS);
@@ -400,11 +629,29 @@ int main(int argc, char **argv)
 		memset(cert_sym.content + cert_size,
 			0, cert_sym.size - cert_size);
 
-	*lsize = *lsize + cert_size - *used;
+	if (hdr->e_ident[EI_CLASS] == ELFCLASS64) {
+		u64 *lsize;
+
+		lsize = (u64 *)lsize_sym.content;
+		*lsize = *lsize + cert_size - *used;
+	} else {
+		u32 *lsize;
+
+		lsize = (u32 *)lsize_sym.content;
+		*lsize = *lsize + cert_size - *used;
+	}
 	*used = cert_size;
 	info("Inserted the contents of %s into %lx.\n", cert_file,
 						cert_sym.address);
 	info("Used %d bytes out of %d bytes reserved.\n", *used,
 						 cert_sym.size);
+	if (munmap(vmlinux, vmlinux_size) == -1) {
+		perror(vmlinux_file);
+		exit(EXIT_FAILURE);
+	}
+
+	if (bzimage)
+		repack_image(bzimage, bzimage_size, vmlinux_file, z);
+
 	exit(EXIT_SUCCESS);
 }

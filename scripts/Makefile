@@ -24,6 +24,7 @@ HOSTCFLAGS_sortextable.o = -I$(srctree)/tools/include
 HOSTCFLAGS_asn1_compiler.o = -I$(srctree)/include
 HOSTLOADLIBES_sign-file = -lcrypto
 HOSTLOADLIBES_extract-cert = -lcrypto
+HOSTLOADLIBES_insert-sys-cert = -lelf
 
 always		:= $(hostprogs-y) $(hostprogs-m)
 
