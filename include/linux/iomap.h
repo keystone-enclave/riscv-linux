@@ -24,6 +24,11 @@ struct vm_fault;
  */
 #define IOMAP_F_NEW		0x01	/* blocks have been newly allocated */
 #define IOMAP_F_BOUNDARY	0x02	/* mapping ends at metadata boundary */
+/*
+ * IOMAP_F_DIRTY indicates the inode has uncommitted metadata needed to access
+ * written data and requires fdatasync to commit them to persistent storage.
+ */
+#define IOMAP_F_DIRTY		0x04
 
 /*
  * Flags that only need to be reported for IOMAP_REPORT requests:
