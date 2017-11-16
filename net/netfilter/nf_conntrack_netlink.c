@@ -533,6 +533,7 @@ nla_put_failure:
 	return -1;
 }
 
+#if defined(CONFIG_NETFILTER_NETLINK_GLUE_CT) || defined(CONFIG_NF_CONNTRACK_EVENTS)
 static size_t ctnetlink_proto_size(const struct nf_conn *ct)
 {
 	const struct nf_conntrack_l3proto *l3proto;
@@ -544,7 +545,7 @@ static size_t ctnetlink_proto_size(const struct nf_conn *ct)
 	len *= 3u; /* ORIG, REPLY, MASTER */
 
 	l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
-	len += l4proto->nla_size;
+	len += l4proto->nlattr_size;
 	if (l4proto->nlattr_tuple_size) {
 		len4 = l4proto->nlattr_tuple_size();
 		len4 *= 3u; /* ORIG, REPLY, MASTER */
@@ -552,6 +553,7 @@ static size_t ctnetlink_proto_size(const struct nf_conn *ct)
 
 	return len + len4;
 }
+#endif
 
 static inline size_t ctnetlink_acct_size(const struct nf_conn *ct)
 {
