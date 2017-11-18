@@ -812,6 +812,15 @@ static inline int pmd_write(pmd_t pmd)
 	return 0;
 }
 #endif /* __HAVE_ARCH_PMD_WRITE */
+
+#ifndef __HAVE_ARCH_PUD_WRITE
+static inline int pud_write(pud_t pud)
+{
+	BUG();
+	return 0;
+}
+#endif /* __HAVE_ARCH_PUD_WRITE */
+
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
 #if !defined(CONFIG_TRANSPARENT_HUGEPAGE) || \
