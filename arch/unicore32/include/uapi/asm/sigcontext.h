@@ -19,6 +19,7 @@
  * before the signal handler was invoked.  Note: only add new entries
  * to the end of the structure.
  */
+#ifndef CONFIG_UNICORE32_OLDABI
 struct sigcontext {
 	unsigned long trap_no;
 	unsigned long error_code;
@@ -26,5 +27,18 @@ struct sigcontext {
 	unsigned long fault_address;
 	struct pt_regs regs;
 };
+#else
+struct pt_regs_sigcontext {
+	unsigned long uregs[33];
+};
+
+struct sigcontext {
+	unsigned long trap_no;
+	unsigned long error_code;
+	unsigned long oldmask;
+	struct pt_regs_sigcontext regs;
+	unsigned long fault_address;
+};
+#endif /* CONFIG_UNICORE32_OLDABI */
 
 #endif
