@@ -1057,6 +1057,7 @@ struct tpt_led_trigger {
 	const struct ieee80211_tpt_blink *blink_table;
 	unsigned int blink_table_len;
 	struct timer_list timer;
+	struct ieee80211_local *local;
 	unsigned long prev_traffic;
 	unsigned long tx_bytes, rx_bytes;
 	unsigned int active, want;
@@ -1756,10 +1757,6 @@ void ___ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 				     u16 initiator, u16 reason, bool stop);
 void __ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 				    u16 initiator, u16 reason, bool stop);
-void __ieee80211_start_rx_ba_session(struct sta_info *sta,
-				     u8 dialog_token, u16 timeout,
-				     u16 start_seq_num, u16 ba_policy, u16 tid,
-				     u16 buf_size, bool tx, bool auto_seq);
 void ___ieee80211_start_rx_ba_session(struct sta_info *sta,
 				      u8 dialog_token, u16 timeout,
 				      u16 start_seq_num, u16 ba_policy, u16 tid,
@@ -1932,7 +1929,7 @@ static inline int ieee80211_ac_from_tid(int tid)
 
 void ieee80211_dynamic_ps_enable_work(struct work_struct *work);
 void ieee80211_dynamic_ps_disable_work(struct work_struct *work);
-void ieee80211_dynamic_ps_timer(unsigned long data);
+void ieee80211_dynamic_ps_timer(struct timer_list *t);
 void ieee80211_send_nullfunc(struct ieee80211_local *local,
 			     struct ieee80211_sub_if_data *sdata,
 			     bool powersave);
