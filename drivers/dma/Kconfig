@@ -451,6 +451,14 @@ config SIRF_DMA
 	help
 	  Enable support for the CSR SiRFprimaII DMA engine.
 
+config SPRD_DMA
+	tristate "Spreadtrum DMA support"
+	depends on ARCH_SPRD || COMPILE_TEST
+	select DMA_ENGINE
+	select DMA_VIRTUAL_CHANNELS
+	help
+	  Enable support for the on-chip DMA controller on Spreadtrum platform.
+
 config STE_DMA40
 	bool "ST-Ericsson DMA40 support"
 	depends on ARCH_U8500
