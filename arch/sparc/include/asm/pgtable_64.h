@@ -723,6 +723,7 @@ static inline unsigned long pmd_write(pmd_t pmd)
 	return pte_write(pte);
 }
 
+#define __HAVE_ARCH_PUD_WRITE
 #define pud_write(pud)	pte_write(__pte(pud_val(pud)))
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
