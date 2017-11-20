@@ -361,6 +361,7 @@ static void recalc_intercepts(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *c, *h;
 	struct nested_state *g;
+	u32 h_intercept_exceptions;
 
 	mark_dirty(svm->vmcb, VMCB_INTERCEPTS);
 
@@ -371,9 +372,14 @@ static void recalc_intercepts(struct vcpu_svm *svm)
 	h = &svm->nested.hsave->control;
 	g = &svm->nested;
 
+	/* No need to intercept #UD if L1 doesn't intercept it */
+	h_intercept_exceptions =
+		h->intercept_exceptions & ~(1U << UD_VECTOR);
+
 	c->intercept_cr = h->intercept_cr | g->intercept_cr;
 	c->intercept_dr = h->intercept_dr | g->intercept_dr;
-	c->intercept_exceptions = h->intercept_exceptions | g->intercept_exceptions;
+	c->intercept_exceptions =
+		h_intercept_exceptions | g->intercept_exceptions;
 	c->intercept = h->intercept | g->intercept;
 }
 
@@ -2196,7 +2202,10 @@ static int ud_interception(struct vcpu_svm *svm)
 {
 	int er;
 
+	WARN_ON_ONCE(is_guest_mode(&svm->vcpu));
 	er = emulate_instruction(&svm->vcpu, EMULTYPE_TRAP_UD);
+	if (er == EMULATE_USER_EXIT)
+		return 0;
 	if (er != EMULATE_DONE)
 		kvm_queue_exception(&svm->vcpu, UD_VECTOR);
 	return 1;
@@ -3671,6 +3680,13 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 	u32 ecx = msr->index;
 	u64 data = msr->data;
 	switch (ecx) {
+	case MSR_IA32_CR_PAT:
+		if (!kvm_mtrr_valid(vcpu, MSR_IA32_CR_PAT, data))
+			return 1;
+		vcpu->arch.pat = data;
+		svm->vmcb->save.g_pat = data;
+		mark_dirty(svm->vmcb, VMCB_NPT);
+		break;
 	case MSR_IA32_TSC:
 		kvm_write_tsc(vcpu, msr);
 		break;
@@ -5188,6 +5204,11 @@ static bool svm_xsaves_supported(void)
 	return false;
 }
 
+static bool svm_umip_emulated(void)
+{
+	return false;
+}
+
 static bool svm_has_wbinvd_exit(void)
 {
 	return true;
@@ -5581,6 +5602,7 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
 	.invpcid_supported = svm_invpcid_supported,
 	.mpx_supported = svm_mpx_supported,
 	.xsaves_supported = svm_xsaves_supported,
+	.umip_emulated = svm_umip_emulated,
 
 	.set_supported_cpuid = svm_set_supported_cpuid,
 
