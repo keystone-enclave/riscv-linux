@@ -841,6 +841,7 @@ static inline pud_t pte_pud(pte_t pte)
 {
 	return __pud_raw(pte_raw(pte));
 }
+#define __HAVE_ARCH_PUD_WRITE
 #define pud_write(pud)		pte_write(pud_pte(pud))
 
 static inline int pud_bad(pud_t pud)
