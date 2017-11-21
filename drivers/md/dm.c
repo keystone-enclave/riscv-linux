@@ -2205,9 +2205,8 @@ static int dm_wait_for_completion(struct mapped_device *md, long task_state)
  */
 static void dm_wq_work(struct work_struct *work)
 {
-	struct mapped_device *md = container_of(work, struct mapped_device,
-						work);
-	struct bio *c;
+	struct mapped_device *md = container_of(work, struct mapped_device, work);
+	struct bio *bio;
 	int srcu_idx;
 	struct dm_table *map;
 
@@ -2217,24 +2216,24 @@ static void dm_wq_work(struct work_struct *work)
 		list = md->rescued;
 		bio_list_init(&md->rescued);
 		spin_unlock_irq(&md->deferred_lock);
-		while ((c = bio_list_pop(&list)))
-			generic_make_request(c);
+		while ((bio = bio_list_pop(&list)))
+			generic_make_request(bio);
 	}
 
 	map = dm_get_live_table(md, &srcu_idx);
 
 	while (!test_bit(DMF_BLOCK_IO_FOR_SUSPEND, &md->flags)) {
 		spin_lock_irq(&md->deferred_lock);
-		c = bio_list_pop(&md->deferred);
+		bio = bio_list_pop(&md->deferred);
 		spin_unlock_irq(&md->deferred_lock);
 
-		if (!c)
+		if (!bio)
 			break;
 
 		if (dm_request_based(md))
-			generic_make_request(c);
+			generic_make_request(bio);
 		else
-			__split_and_process_bio(md, map, c);
+			__split_and_process_bio(md, map, bio);
 	}
 
 	dm_put_live_table(md, srcu_idx);
