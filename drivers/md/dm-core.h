@@ -70,6 +70,7 @@ struct mapped_device {
 	struct work_struct work;
 	spinlock_t deferred_lock;
 	struct bio_list deferred;
+	struct bio_list rescued;
 
 	/*
 	 * Event handling.
