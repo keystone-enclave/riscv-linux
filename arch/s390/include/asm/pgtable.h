@@ -1264,7 +1264,7 @@ static inline pud_t pud_mkwrite(pud_t pud)
 	return pud;
 }
 
-#define __HAVE_ARCH_PUD_WRITE
+#define pud_write pud_write
 static inline int pud_write(pud_t pud)
 {
 	return (pud_val(pud) & _REGION3_ENTRY_WRITE) != 0;
