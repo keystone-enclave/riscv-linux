@@ -21,6 +21,11 @@
 #define ICENET_RECV_COMP 18
 #define ICENET_COUNTS 20
 #define ICENET_MACADDR 24
+#define ICENET_INTMASK 32
+
+#define ICENET_INTMASK_TX 1
+#define ICENET_INTMASK_RX 2
+#define ICENET_INTMASK_BOTH 3
 
 #define ALIGN_BYTES 8
 #define ALIGN_MASK 0x7
@@ -80,8 +85,10 @@ struct icenet_device {
 	void __iomem *iomem;
 	struct sk_buff_cq send_cq;
 	struct sk_buff_cq recv_cq;
-	spinlock_t lock;
-	int irq;
+	spinlock_t tx_lock;
+	spinlock_t rx_lock;
+	int tx_irq;
+	int rx_irq;
 };
 
 static inline int send_req_avail(struct icenet_device *nic)
@@ -104,6 +111,17 @@ static inline int recv_comp_avail(struct icenet_device *nic)
 	return (ioread32(nic->iomem + ICENET_COUNTS) >> 24) & 0xff;
 }
 
+static inline void set_intmask(struct icenet_device *nic, uint32_t mask)
+{
+	atomic_t *mem = nic->iomem + ICENET_INTMASK;
+	atomic_fetch_or(mask, mem);
+}
+
+static inline void clear_intmask(struct icenet_device *nic, uint32_t mask)
+{
+	atomic_t *mem = nic->iomem + ICENET_INTMASK;
+	atomic_fetch_and(~mask, mem);
+}
 
 static inline void post_send_frag(
 		struct icenet_device *nic, skb_frag_t *frag, int last)
@@ -233,21 +251,37 @@ static void alloc_recv(struct net_device *ndev)
 	}
 }
 
-static irqreturn_t icenet_isr(int irq, void *data)
+static irqreturn_t icenet_tx_isr(int irq, void *data)
 {
 	struct net_device *ndev = data;
 	struct icenet_device *nic = netdev_priv(ndev);
 
-	if (irq != nic->irq)
+	if (irq != nic->tx_irq)
 		return IRQ_NONE;
 
-	spin_lock(&nic->lock);
+	spin_lock(&nic->tx_lock);
 
 	complete_send(ndev);
+
+	spin_unlock(&nic->tx_lock);
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t icenet_rx_isr(int irq, void *data)
+{
+	struct net_device *ndev = data;
+	struct icenet_device *nic = netdev_priv(ndev);
+
+	if (irq != nic->rx_irq)
+		return IRQ_NONE;
+
+	spin_lock(&nic->rx_lock);
+
 	complete_recv(ndev);
 	alloc_recv(ndev);
 
-	spin_unlock(&nic->lock);
+	spin_unlock(&nic->rx_lock);
 
 	return IRQ_HANDLED;
 }
@@ -282,12 +316,21 @@ static int icenet_parse_irq(struct net_device *ndev)
 	struct device_node *node = dev->of_node;
 	int err;
 
-	nic->irq = irq_of_parse_and_map(node, 0);
-	err = devm_request_irq(dev, nic->irq, icenet_isr,
+	nic->tx_irq = irq_of_parse_and_map(node, 0);
+	err = devm_request_irq(dev, nic->tx_irq, icenet_tx_isr,
 			IRQF_SHARED | IRQF_NO_THREAD,
 			ICENET_NAME, ndev);
 	if (err) {
-		dev_err(dev, "could not obtain irq %d\n", nic->irq);
+		dev_err(dev, "could not obtain TX irq %d\n", nic->tx_irq);
+		return err;
+	}
+
+	nic->rx_irq = irq_of_parse_and_map(node, 1);
+	err = devm_request_irq(dev, nic->rx_irq, icenet_rx_isr,
+			IRQF_SHARED | IRQF_NO_THREAD,
+			ICENET_NAME, ndev);
+	if (err) {
+		dev_err(dev, "could not obtain RX irq %d\n", nic->rx_irq);
 		return err;
 	}
 
@@ -299,13 +342,12 @@ static int icenet_open(struct net_device *ndev)
 	struct icenet_device *nic = netdev_priv(ndev);
 	unsigned long flags;
 
-	spin_lock_irqsave(&nic->lock, flags);
-
-	icenet_parse_irq(ndev);
+	spin_lock_irqsave(&nic->rx_lock, flags);
 	alloc_recv(ndev);
-	netif_start_queue(ndev);
+	spin_unlock_irqrestore(&nic->rx_lock, flags);
 
-	spin_unlock_irqrestore(&nic->lock, flags);
+	netif_start_queue(ndev);
+	set_intmask(nic, ICENET_INTMASK_BOTH);
 
 	printk(KERN_DEBUG "IceNet: opened device\n");
 
@@ -315,14 +357,9 @@ static int icenet_open(struct net_device *ndev)
 static int icenet_stop(struct net_device *ndev)
 {
 	struct icenet_device *nic = netdev_priv(ndev);
-	unsigned long flags;
 
-	spin_lock_irqsave(&nic->lock, flags);
-
+	clear_intmask(nic, ICENET_INTMASK_BOTH);
 	netif_stop_queue(ndev);
-	devm_free_irq(nic->dev, nic->irq, ICENET_NAME);
-
-	spin_unlock_irqrestore(&nic->lock, flags);
 
 	printk(KERN_DEBUG "IceNet: stopped device\n");
 	return 0;
@@ -334,7 +371,7 @@ static int icenet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	unsigned long flags;
 	int space;
 
-	spin_lock_irqsave(&nic->lock, flags);
+	spin_lock_irqsave(&nic->tx_lock, flags);
 
 	space = send_space(nic);
 	BUG_ON(space < skb_shinfo(skb)->nr_frags + 1);
@@ -347,7 +384,7 @@ static int icenet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	if (unlikely(send_space(nic) == 0))
 		netif_stop_queue(ndev);
 
-	spin_unlock_irqrestore(&nic->lock, flags);
+	spin_unlock_irqrestore(&nic->tx_lock, flags);
 
 	return NETDEV_TX_OK;
 }
@@ -396,7 +433,8 @@ static int icenet_probe(struct platform_device *pdev)
 	ndev->features = ndev->hw_features;
 	ndev->vlan_features = ndev->hw_features;
 
-	spin_lock_init(&nic->lock);
+	spin_lock_init(&nic->tx_lock);
+	spin_lock_init(&nic->rx_lock);
 	sk_buff_cq_init(&nic->send_cq);
 	sk_buff_cq_init(&nic->recv_cq);
 	if ((ret = icenet_parse_addr(ndev)) < 0)
@@ -407,6 +445,9 @@ static int icenet_probe(struct platform_device *pdev)
 		dev_err(dev, "Failed to register netdev\n");
 		return ret;
 	}
+
+	if ((ret = icenet_parse_irq(ndev)) < 0)
+		return ret;
 
 	printk(KERN_INFO "Registered IceNet NIC %02x:%02x:%02x:%02x:%02x:%02x\n",
 			ndev->dev_addr[0],
