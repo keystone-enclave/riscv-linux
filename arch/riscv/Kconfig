@@ -180,23 +180,6 @@ config KEYSTONE_ENCLAVE
   tristate "Keystone Enclave"
   default y 
 
-config SBI_CONSOLE
-	tristate "SBI console support"
-	select TTY
-	default y
-
-config SBI_DISK
-	tristate "SBI disk support"
-	default y
-
-config GENERIC_BLKDEV
-        tristate "Generic Block Device"
-        default y
-
-config ICENET
-        tristate "IceNet Ethernet NIC"
-        default y
-
 config RISCV_ISA_C
 	bool "Emit compressed instructions when building Linux"
 	default y

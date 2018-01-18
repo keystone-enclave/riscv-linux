@@ -69,6 +69,4 @@ core-y += arch/riscv/kernel/ arch/riscv/mm/
 
 libs-y += arch/riscv/lib/
 
-drivers-y += arch/riscv/drivers/
-
 all: vmlinux
