@@ -78,22 +78,22 @@ struct icenet_device {
 
 static inline int send_req_avail(struct icenet_device *nic)
 {
-	return ioread16(nic->iomem + ICENET_COUNTS) & 0xf;
+	return ioread32(nic->iomem + ICENET_COUNTS) & 0xff;
 }
 
 static inline int recv_req_avail(struct icenet_device *nic)
 {
-	return (ioread16(nic->iomem + ICENET_COUNTS) >> 4) & 0xf;
+	return (ioread32(nic->iomem + ICENET_COUNTS) >> 8) & 0xff;
 }
 
 static inline int send_comp_avail(struct icenet_device *nic)
 {
-	return (ioread16(nic->iomem + ICENET_COUNTS) >> 8) & 0xf;
+	return (ioread32(nic->iomem + ICENET_COUNTS) >> 16) & 0xff;
 }
 
 static inline int recv_comp_avail(struct icenet_device *nic)
 {
-	return (ioread16(nic->iomem + ICENET_COUNTS) >> 12) & 0xf;
+	return (ioread32(nic->iomem + ICENET_COUNTS) >> 24) & 0xff;
 }
 
 
