@@ -22,7 +22,6 @@
 #define ICENET_COUNTS 20
 #define ICENET_MACADDR 24
 
-#define CIRC_BUF_LEN 16
 #define ALIGN_BYTES 8
 #define ALIGN_MASK 0x7
 #define ALIGN_SHIFT 3
@@ -36,13 +35,13 @@ struct sk_buff_cq_entry {
 };
 
 struct sk_buff_cq {
-	struct sk_buff_cq_entry entries[CIRC_BUF_LEN];
+	struct sk_buff_cq_entry entries[CONFIG_ICENET_RING_SIZE];
 	int head;
 	int tail;
 };
 
-#define SK_BUFF_CQ_COUNT(cq) CIRC_CNT(cq.head, cq.tail, CIRC_BUF_LEN)
-#define SK_BUFF_CQ_SPACE(cq) CIRC_SPACE(cq.head, cq.tail, CIRC_BUF_LEN)
+#define SK_BUFF_CQ_COUNT(cq) CIRC_CNT(cq.head, cq.tail, CONFIG_ICENET_RING_SIZE)
+#define SK_BUFF_CQ_SPACE(cq) CIRC_SPACE(cq.head, cq.tail, CONFIG_ICENET_RING_SIZE)
 
 static inline void sk_buff_cq_init(struct sk_buff_cq *cq)
 {
@@ -54,7 +53,7 @@ static inline void sk_buff_cq_push(
 		struct sk_buff_cq *cq, struct sk_buff *skb)
 {
 	cq->entries[cq->head].skb = skb;
-	cq->head = (cq->head + 1) & (CIRC_BUF_LEN - 1);
+	cq->head = (cq->head + 1) & (CONFIG_ICENET_RING_SIZE - 1);
 }
 
 static inline struct sk_buff *sk_buff_cq_pop(struct sk_buff_cq *cq)
@@ -62,7 +61,7 @@ static inline struct sk_buff *sk_buff_cq_pop(struct sk_buff_cq *cq)
 	struct sk_buff *skb;
 
 	skb = cq->entries[cq->tail].skb;
-	cq->tail = (cq->tail + 1) & (CIRC_BUF_LEN - 1);
+	cq->tail = (cq->tail + 1) & (CONFIG_ICENET_RING_SIZE - 1);
 
 	return skb;
 }
@@ -337,6 +336,7 @@ static int icenet_probe(struct platform_device *pdev)
 	dev_set_drvdata(dev, ndev);
 	nic = netdev_priv(ndev);
 	nic->dev = dev;
+
 
 	ether_setup(ndev);
 	ndev->flags &= ~IFF_MULTICAST;

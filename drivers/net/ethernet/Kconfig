@@ -85,9 +85,15 @@ source "drivers/net/ethernet/i825xx/Kconfig"
 source "drivers/net/ethernet/xscale/Kconfig"
 
 config ICENET
-        tristate "IceNet Ethernet NIC (RISC-V)"
-        depends on HAS_IOMEM && HAS_DMA
-        default y
+	tristate "IceNet Ethernet NIC (RISC-V)"
+	depends on HAS_IOMEM && HAS_DMA
+	default y
+
+if ICENET
+	config ICENET_RING_SIZE
+		int "IceNet DMA ring size"
+		default 64
+endif # ICENET
 
 config JME
 	tristate "JMicron(R) PCI-Express Gigabit Ethernet support"
