@@ -53,16 +53,16 @@ static inline void sk_buff_cq_init(struct sk_buff_cq *cq)
 static inline void sk_buff_cq_push(
 		struct sk_buff_cq *cq, struct sk_buff *skb)
 {
-	cq->entries[cq->tail].skb = skb;
-	cq->tail = (cq->tail + 1) & (CIRC_BUF_LEN - 1);
+	cq->entries[cq->head].skb = skb;
+	cq->head = (cq->head + 1) & (CIRC_BUF_LEN - 1);
 }
 
 static inline struct sk_buff *sk_buff_cq_pop(struct sk_buff_cq *cq)
 {
 	struct sk_buff *skb;
 
-	skb = cq->entries[cq->head].skb;
-	cq->head = (cq->head + 1) & (CIRC_BUF_LEN - 1);
+	skb = cq->entries[cq->tail].skb;
+	cq->tail = (cq->tail + 1) & (CIRC_BUF_LEN - 1);
 
 	return skb;
 }
