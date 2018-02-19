@@ -36,16 +36,13 @@
 #define TMDS_MAX_PIXEL_CLOCK_IN_KHZ_UPMOST 297000
 static void update_stream_signal(struct dc_stream_state *stream)
 {
-	if (stream->output_signal == SIGNAL_TYPE_NONE) {
-		struct dc_sink *dc_sink = stream->sink;
 
-		if (dc_sink->sink_signal == SIGNAL_TYPE_NONE)
-			stream->signal = stream->sink->link->connector_signal;
-		else
-			stream->signal = dc_sink->sink_signal;
-	} else {
-		stream->signal = stream->output_signal;
-	}
+	struct dc_sink *dc_sink = stream->sink;
+
+	if (dc_sink->sink_signal == SIGNAL_TYPE_NONE)
+		stream->signal = stream->sink->link->connector_signal;
+	else
+		stream->signal = dc_sink->sink_signal;
 
 	if (dc_is_dvi_signal(stream->signal)) {
 		if (stream->timing.pix_clk_khz > TMDS_MAX_PIXEL_CLOCK_IN_KHZ_UPMOST &&
@@ -229,7 +226,7 @@ bool dc_stream_set_cursor_attributes(
 		if (pipe_ctx->plane_res.dpp != NULL &&
 				pipe_ctx->plane_res.dpp->funcs->set_cursor_attributes != NULL)
 			pipe_ctx->plane_res.dpp->funcs->set_cursor_attributes(
-				pipe_ctx->plane_res.dpp, attributes);
+				pipe_ctx->plane_res.dpp, attributes->color_format);
 	}
 
 	stream->cursor_attributes = *attributes;
@@ -263,7 +260,6 @@ bool dc_stream_set_cursor_position(
 		struct input_pixel_processor *ipp = pipe_ctx->plane_res.ipp;
 		struct mem_input *mi = pipe_ctx->plane_res.mi;
 		struct hubp *hubp = pipe_ctx->plane_res.hubp;
-		struct transform *xfm = pipe_ctx->plane_res.xfm;
 		struct dpp *dpp = pipe_ctx->plane_res.dpp;
 		struct dc_cursor_position pos_cpy = *position;
 		struct dc_cursor_mi_param param = {
@@ -294,16 +290,18 @@ bool dc_stream_set_cursor_position(
 		if (mi != NULL && mi->funcs->set_cursor_position != NULL)
 			mi->funcs->set_cursor_position(mi, &pos_cpy, &param);
 
-		if (hubp != NULL && hubp->funcs->set_cursor_position != NULL)
-			hubp->funcs->set_cursor_position(hubp, &pos_cpy, &param);
+		if (!hubp)
+			continue;
 
-		if (xfm != NULL && xfm->funcs->set_cursor_position != NULL)
-			xfm->funcs->set_cursor_position(xfm, &pos_cpy, &param, hubp->curs_attr.width);
+		if (hubp->funcs->set_cursor_position != NULL)
+			hubp->funcs->set_cursor_position(hubp, &pos_cpy, &param);
 
 		if (dpp != NULL && dpp->funcs->set_cursor_position != NULL)
 			dpp->funcs->set_cursor_position(dpp, &pos_cpy, &param, hubp->curs_attr.width);
 
 	}
+
+	stream->cursor_position = *position;
 
 	return true;
 }
