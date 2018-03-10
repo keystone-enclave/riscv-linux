@@ -96,6 +96,8 @@ static inline void fs_put_dax(struct dax_device *dax_dev)
 
 int dax_writeback_mapping_range(struct address_space *mapping,
 		struct block_device *bdev, struct writeback_control *wbc);
+
+struct page *dax_layout_busy_page(struct address_space *mapping);
 #else
 static inline int bdev_dax_supported(struct super_block *sb, int blocksize)
 {
@@ -115,6 +117,11 @@ static inline int dax_writeback_mapping_range(struct address_space *mapping,
 		struct block_device *bdev, struct writeback_control *wbc)
 {
 	return -EOPNOTSUPP;
+}
+
+static inline struct page *dax_layout_busy_page(struct address_space *mapping)
+{
+	return NULL;
 }
 #endif
 
