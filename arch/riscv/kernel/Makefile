@@ -33,6 +33,7 @@ CFLAGS_setup.o := -mcmodel=medany
 
 obj-$(CONFIG_SMP)		+= smpboot.o smp.o
 obj-$(CONFIG_MODULES)		+= module.o
+obj-$(CONFIG_MODULE_SECTIONS)	+= module-sections.o
 obj-$(CONFIG_FUNCTION_TRACER)	+= mcount.o
 obj-$(CONFIG_FUNCTION_GRAPH_TRACER)	+= ftrace.o
 
