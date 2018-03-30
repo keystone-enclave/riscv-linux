@@ -4,6 +4,7 @@
 
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/blkdev.h>
 #include <linux/radix-tree.h>
 #include <asm/pgtable.h>
 
@@ -20,6 +21,10 @@ struct dax_operations {
 	/* copy_from_iter: required operation for fs-dax direct-i/o */
 	size_t (*copy_from_iter)(struct dax_device *, pgoff_t, void *, size_t,
 			struct iov_iter *);
+	/* fs_claim: setup filesytem parameters for the device's dev_pagemap */
+	struct dax_device *(*fs_claim)(struct dax_device *, void *);
+	/* fs_release: restore device's dev_pagemap to its default state */
+	void (*fs_release)(struct dax_device *, void *);
 };
 
 extern struct attribute_group dax_attribute_group;
@@ -83,6 +88,26 @@ static inline void fs_put_dax(struct dax_device *dax_dev)
 struct dax_device *fs_dax_get_by_bdev(struct block_device *bdev);
 int dax_writeback_mapping_range(struct address_space *mapping,
 		struct block_device *bdev, struct writeback_control *wbc);
+struct dax_device *fs_dax_claim(struct dax_device *dax_dev, void *owner);
+#ifdef CONFIG_BLOCK
+static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
+		void *owner)
+{
+	struct dax_device *dax_dev;
+
+	if (!blk_queue_dax(bdev->bd_queue))
+		return NULL;
+	dax_dev = fs_dax_get_by_host(bdev->bd_disk->disk_name);
+	return fs_dax_claim(dax_dev, owner);
+}
+#else
+static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
+		void *owner)
+{
+	return NULL;
+}
+#endif
+void fs_dax_release(struct dax_device *dax_dev, void *owner);
 #else
 static inline int bdev_dax_supported(struct super_block *sb, int blocksize)
 {
@@ -107,6 +132,29 @@ static inline int dax_writeback_mapping_range(struct address_space *mapping,
 		struct block_device *bdev, struct writeback_control *wbc)
 {
 	return -EOPNOTSUPP;
+}
+
+static inline struct dax_device *fs_dax_claim(struct dax_device *dax_dev,
+		void *owner)
+{
+	return NULL;
+}
+
+#ifdef CONFIG_BLOCK
+static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
+		void *owner)
+{
+	return fs_dax_get_by_host(bdev->bd_disk->disk_name);
+}
+#else
+static inline struct dax_device *fs_dax_claim_bdev(struct block_device *bdev,
+		void *owner)
+{
+	return NULL;
+}
+#endif
+static inline void fs_dax_release(struct dax_device *dax_dev, void *owner)
+{
 }
 #endif
 

@@ -29,6 +29,7 @@ static struct vfsmount *dax_mnt;
 static DEFINE_IDA(dax_minor_ida);
 static struct kmem_cache *dax_cache __read_mostly;
 static struct super_block *dax_superblock __read_mostly;
+static DEFINE_MUTEX(devmap_lock);
 
 #define DAX_HASH_SIZE (PAGE_SIZE / sizeof(struct hlist_head))
 static struct hlist_head dax_host_list[DAX_HASH_SIZE];
@@ -169,8 +170,83 @@ struct dax_device {
 	const char *host;
 	void *private;
 	unsigned long flags;
+	struct dev_pagemap *pgmap;
 	const struct dax_operations *ops;
 };
+
+#if IS_ENABLED(CONFIG_FS_DAX)
+static void generic_dax_pagefree(struct page *page, void *data)
+{
+	/* TODO: wakeup page-idle waiters */
+}
+
+static struct dax_device *__fs_dax_claim(struct dax_device *dax_dev,
+		void *owner)
+{
+	struct dev_pagemap *pgmap;
+
+	if (!dax_dev->pgmap)
+		return dax_dev;
+	pgmap = dax_dev->pgmap;
+
+	mutex_lock(&devmap_lock);
+	if (pgmap->data && pgmap->data == owner) {
+		/* dm might try to claim the same device more than once... */
+		mutex_unlock(&devmap_lock);
+		return dax_dev;
+	} else if (pgmap->page_free || pgmap->page_fault
+			|| pgmap->type != MEMORY_DEVICE_HOST) {
+		put_dax(dax_dev);
+		mutex_unlock(&devmap_lock);
+		return NULL;
+	}
+
+	pgmap->type = MEMORY_DEVICE_FS_DAX;
+	pgmap->page_free = generic_dax_pagefree;
+	pgmap->data = owner;
+	mutex_unlock(&devmap_lock);
+
+	return dax_dev;
+}
+
+struct dax_device *fs_dax_claim(struct dax_device *dax_dev, void *owner)
+{
+	if (dax_dev->ops->fs_claim)
+		return dax_dev->ops->fs_claim(dax_dev, owner);
+	else
+		return __fs_dax_claim(dax_dev, owner);
+}
+EXPORT_SYMBOL_GPL(fs_dax_claim);
+
+static void __fs_dax_release(struct dax_device *dax_dev, void *owner)
+{
+	struct dev_pagemap *pgmap = dax_dev->pgmap;
+
+	put_dax(dax_dev);
+	if (!pgmap)
+		return;
+	if (!pgmap->data)
+		return;
+
+	mutex_lock(&devmap_lock);
+	WARN_ON(pgmap->data != owner);
+	pgmap->type = MEMORY_DEVICE_HOST;
+	pgmap->page_free = NULL;
+	pgmap->data = NULL;
+	mutex_unlock(&devmap_lock);
+}
+
+void fs_dax_release(struct dax_device *dax_dev, void *owner)
+{
+	if (!dax_dev)
+		return;
+	if (dax_dev->ops->fs_release)
+		dax_dev->ops->fs_release(dax_dev, owner);
+	else
+		__fs_dax_release(dax_dev, owner);
+}
+EXPORT_SYMBOL_GPL(fs_dax_release);
+#endif
 
 static ssize_t write_cache_show(struct device *dev,
 		struct device_attribute *attr, char *buf)

@@ -53,11 +53,19 @@ struct vmem_altmap {
  * driver can hotplug the device memory using ZONE_DEVICE and with that memory
  * type. Any page of a process can be migrated to such memory. However no one
  * should be allow to pin such memory so that it can always be evicted.
+ *
+ * MEMORY_DEVICE_FS_DAX:
+ * When MEMORY_DEVICE_HOST memory is represented by a device that can
+ * host a filesystem, for example /dev/pmem0, that filesystem can
+ * register for a callback when a page is idled. For the filesystem-dax
+ * case page idle callbacks are used to coordinate DMA vs
+ * hole-punch/truncate.
  */
 enum memory_type {
 	MEMORY_DEVICE_HOST = 0,
 	MEMORY_DEVICE_PRIVATE,
 	MEMORY_DEVICE_PUBLIC,
+	MEMORY_DEVICE_FS_DAX,
 };
 
 /*
