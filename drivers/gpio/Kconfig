@@ -383,6 +383,14 @@ config GPIO_OMAP
 	help
 	  Say yes here to enable GPIO support for TI OMAP SoCs.
 
+config GPIO_OWL
+	tristate "Actions Semi OWL GPIO support"
+	default ARCH_ACTIONS
+	depends on ARCH_ACTIONS || COMPILE_TEST
+	depends on OF_GPIO
+	help
+	  Say yes here to enable GPIO support for Actions Semi OWL SoCs.
+
 config GPIO_PL061
 	bool "PrimeCell PL061 GPIO support"
 	depends on ARM_AMBA
