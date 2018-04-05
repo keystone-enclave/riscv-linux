@@ -2034,6 +2034,18 @@ static int remove_extent_backref(struct btrfs_trans_handle *trans,
 	return ret;
 }
 
+static int btrfs_issue_clear_op(struct block_device *bdev, u64 start, u64 size,
+		enum btrfs_clear_op_type clear)
+{
+	switch (clear) {
+	case BTRFS_CLEAR_OP_DISCARD:
+		return blkdev_issue_discard(bdev, start >> 9, size >> 9,
+				GFP_NOFS, 0);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
 #define in_range(b, first, len)        ((b) >= (first) && (b) < (first) + (len))
 static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 			       u64 *discarded_bytes,
@@ -2081,13 +2093,8 @@ static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 			bytes_left = end - start;
 			continue;
 		}
-
 		if (size) {
-			if (clear == BTRFS_CLEAR_OP_DISCARD)
-				ret = blkdev_issue_discard(bdev, start >> 9,
-						size >> 9, GFP_NOFS, 0);
-			else
-				ret = -EOPNOTSUPP;
+			ret = btrfs_issue_clear_op(bdev, start, size, clear);
 			if (!ret)
 				*discarded_bytes += size;
 			else if (ret != -EOPNOTSUPP)
@@ -2103,11 +2110,7 @@ static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 	}
 
 	if (bytes_left) {
-		if (clear == BTRFS_CLEAR_OP_DISCARD)
-			ret = blkdev_issue_discard(bdev, start >> 9,
-					bytes_left >> 9, GFP_NOFS, 0);
-		else
-			ret = -EOPNOTSUPP;
+		ret = btrfs_issue_clear_op(bdev, start, bytes_left, clear);
 		if (!ret)
 			*discarded_bytes += bytes_left;
 	}
