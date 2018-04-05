@@ -2041,6 +2041,9 @@ static int btrfs_issue_clear_op(struct block_device *bdev, u64 start, u64 size,
 	case BTRFS_CLEAR_OP_DISCARD:
 		return blkdev_issue_discard(bdev, start >> 9, size >> 9,
 				GFP_NOFS, 0);
+	case BTRFS_CLEAR_OP_ZERO:
+		return blkdev_issue_zeroout(bdev, start >> 9, size >> 9,
+				GFP_NOFS, 0);
 	default:
 		return -EOPNOTSUPP;
 	}
