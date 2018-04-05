@@ -11061,6 +11061,54 @@ int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 	return ret;
 }
 
+int btrfs_clear_free_space(struct btrfs_root *root,
+		struct btrfs_ioctl_clear_free_args *args)
+{
+	struct btrfs_fs_info *fs_info = root->fs_info;
+	struct btrfs_block_group_cache *cache = NULL;
+	u64 group_cleared;
+	u64 start;
+	u64 cleared = 0;
+	u64 end;
+	int ret = 0;
+
+	cache = btrfs_lookup_first_block_group(fs_info, args->start);
+
+	while (cache) {
+		if (cache->key.objectid >= (args->start + args->length)) {
+			btrfs_put_block_group(cache);
+			break;
+		}
+
+		start = max(args->start, cache->key.objectid);
+		end = min(args->start + args->length,
+				cache->key.objectid + cache->key.offset);
+
+		if (end - start >= args->minlen) {
+			if (!block_group_cache_done(cache)) {
+				ret = cache_block_group(cache, 0);
+				if (!ret)
+					wait_block_group_cache_done(cache);
+			}
+			ret = btrfs_trim_block_group(cache, &group_cleared,
+					start, end, args->minlen,
+					args->type);
+
+			if (ret) {
+				btrfs_put_block_group(cache);
+				break;
+			}
+			cleared += group_cleared;
+		}
+
+		cache = next_block_group(fs_info, cache);
+	}
+
+	args->length = cleared;
+
+	return ret;
+}
+
 /*
  * btrfs_{start,end}_write_no_snapshotting() are similar to
  * mnt_{want,drop}_write(), they are used to prevent some tasks from writing
