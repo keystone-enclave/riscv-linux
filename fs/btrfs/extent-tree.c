@@ -2036,7 +2036,8 @@ static int remove_extent_backref(struct btrfs_trans_handle *trans,
 
 #define in_range(b, first, len)        ((b) >= (first) && (b) < (first) + (len))
 static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
-			       u64 *discarded_bytes)
+			       u64 *discarded_bytes,
+			       enum btrfs_clear_op_type clear)
 {
 	int j, ret = 0;
 	u64 bytes_left, end;
@@ -2082,8 +2083,11 @@ static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 		}
 
 		if (size) {
-			ret = blkdev_issue_discard(bdev, start >> 9, size >> 9,
-						   GFP_NOFS, 0);
+			if (clear == BTRFS_CLEAR_OP_DISCARD)
+				ret = blkdev_issue_discard(bdev, start >> 9,
+						size >> 9, GFP_NOFS, 0);
+			else
+				ret = -EOPNOTSUPP;
 			if (!ret)
 				*discarded_bytes += size;
 			else if (ret != -EOPNOTSUPP)
@@ -2099,8 +2103,11 @@ static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 	}
 
 	if (bytes_left) {
-		ret = blkdev_issue_discard(bdev, start >> 9, bytes_left >> 9,
-					   GFP_NOFS, 0);
+		if (clear == BTRFS_CLEAR_OP_DISCARD)
+			ret = blkdev_issue_discard(bdev, start >> 9,
+					bytes_left >> 9, GFP_NOFS, 0);
+		else
+			ret = -EOPNOTSUPP;
 		if (!ret)
 			*discarded_bytes += bytes_left;
 	}
@@ -2108,12 +2115,18 @@ static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 }
 
 int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
-			 u64 num_bytes, u64 *actual_bytes)
+			 u64 num_bytes, u64 *actual_bytes,
+			 enum btrfs_clear_op_type clear)
 {
 	int ret;
 	u64 discarded_bytes = 0;
 	struct btrfs_bio *bbio = NULL;
+	int rw;
 
+	if (clear == BTRFS_CLEAR_OP_DISCARD)
+		rw = BTRFS_MAP_DISCARD;
+	else
+		rw = BTRFS_MAP_WRITE;
 
 	/*
 	 * Avoid races with device replace and make sure our bbio has devices
@@ -2121,8 +2134,7 @@ int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
 	 */
 	btrfs_bio_counter_inc_blocked(fs_info);
 	/* Tell the block device(s) that the sectors can be discarded */
-	ret = btrfs_map_block(fs_info, BTRFS_MAP_DISCARD, bytenr, &num_bytes,
-			      &bbio, 0);
+	ret = btrfs_map_block(fs_info, rw, bytenr, &num_bytes, &bbio, 0);
 	/* Error condition is -ENOMEM */
 	if (!ret) {
 		struct btrfs_bio_stripe *stripe = bbio->stripes;
@@ -2138,13 +2150,14 @@ int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
 				continue;
 			}
 			req_q = bdev_get_queue(stripe->dev->bdev);
-			if (!blk_queue_discard(req_q))
+			if (clear == BTRFS_CLEAR_OP_DISCARD &&
+			    !blk_queue_discard(req_q))
 				continue;
 
 			ret = btrfs_issue_discard(stripe->dev->bdev,
 						  stripe->physical,
 						  stripe->length,
-						  &bytes);
+						  &bytes, clear);
 			if (!ret)
 				discarded_bytes += bytes;
 			else if (ret != -EOPNOTSUPP)
@@ -6785,7 +6798,8 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans)
 
 		if (btrfs_test_opt(fs_info, DISCARD))
 			ret = btrfs_discard_extent(fs_info, start,
-						   end + 1 - start, NULL);
+						   end + 1 - start, NULL,
+						   BTRFS_CLEAR_OP_DISCARD);
 
 		clear_extent_dirty(unpin, start, end);
 		unpin_extent_range(fs_info, start, end, true);
@@ -6807,7 +6821,8 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans)
 			ret = btrfs_discard_extent(fs_info,
 						   block_group->key.objectid,
 						   block_group->key.offset,
-						   &trimmed);
+						   &trimmed,
+						   BTRFS_CLEAR_OP_DISCARD);
 
 		list_del_init(&block_group->bg_list);
 		btrfs_put_block_group_trimming(block_group);
@@ -8056,7 +8071,8 @@ static int __btrfs_free_reserved_extent(struct btrfs_fs_info *fs_info,
 		pin_down_extent(fs_info, cache, start, len, 1);
 	else {
 		if (btrfs_test_opt(fs_info, DISCARD))
-			ret = btrfs_discard_extent(fs_info, start, len, NULL);
+			ret = btrfs_discard_extent(fs_info, start, len, NULL,
+					BTRFS_CLEAR_OP_DISCARD);
 		btrfs_add_free_space(cache, start, len);
 		btrfs_free_reserved_bytes(cache, len, delalloc);
 		trace_btrfs_reserved_extent_free(fs_info, start, len);
@@ -10892,7 +10908,8 @@ int btrfs_error_unpin_extent_range(struct btrfs_fs_info *fs_info,
  * transaction.
  */
 static int btrfs_trim_free_extents(struct btrfs_device *device,
-				   u64 minlen, u64 *trimmed)
+				   u64 minlen, u64 *trimmed,
+				   enum btrfs_clear_op_type clear)
 {
 	u64 start = 0, len = 0;
 	int ret;
@@ -10939,7 +10956,8 @@ static int btrfs_trim_free_extents(struct btrfs_device *device,
 			break;
 		}
 
-		ret = btrfs_issue_discard(device->bdev, start, len, &bytes);
+		ret = btrfs_issue_discard(device->bdev, start, len, &bytes,
+				clear);
 		up_read(&fs_info->commit_root_sem);
 		mutex_unlock(&fs_info->chunk_mutex);
 
@@ -11007,7 +11025,8 @@ int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 						     &group_trimmed,
 						     start,
 						     end,
-						     range->minlen);
+						     range->minlen,
+						     BTRFS_CLEAR_OP_DISCARD);
 
 			trimmed += group_trimmed;
 			if (ret) {
@@ -11023,7 +11042,8 @@ int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 	devices = &fs_info->fs_devices->alloc_list;
 	list_for_each_entry(device, devices, dev_alloc_list) {
 		ret = btrfs_trim_free_extents(device, range->minlen,
-					      &group_trimmed);
+					      &group_trimmed,
+					      BTRFS_CLEAR_OP_DISCARD);
 		if (ret)
 			break;
 
