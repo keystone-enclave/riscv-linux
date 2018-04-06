@@ -32,6 +32,10 @@ asmlinkage void erase_kstack(void)
 	if (p == boundary)
 		p += sizeof(unsigned long);
 
+#ifdef CONFIG_STACKLEAK_METRICS
+	current->thread.prev_lowest_stack = p;
+#endif
+
 	/*
 	 * So let's write the poison value to the kernel stack.
 	 * Start from the address in p and move up till the new boundary.
