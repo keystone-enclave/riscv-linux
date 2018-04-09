@@ -25,6 +25,7 @@
 #include <asm/page.h>
 #include <asm/tlbflush.h>
 #include <linux/mm_types.h>
+#include <linux/sizes.h>
 
 #ifdef CONFIG_64BIT
 #include <asm/pgtable-64.h>
@@ -424,6 +425,14 @@ static inline void pgtable_cache_init(void)
 #else
 #define TASK_SIZE VMALLOC_START
 #endif
+
+/*
+ * The module space lives between the addresses given by TASK_SIZE
+ * and PAGE_OFFSET - it must be within 2G of the kernel text.
+ */
+#define MODULES_SIZE		(SZ_128M)
+#define MODULES_VADDR		(PAGE_OFFSET - MODULES_SIZE)
+#define MODULES_END		(VMALLOC_END)
 
 #include <asm-generic/pgtable.h>
 
