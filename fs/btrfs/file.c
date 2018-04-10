@@ -397,7 +397,7 @@ int btrfs_run_defrag_inodes(struct btrfs_fs_info *fs_info)
  */
 static noinline int btrfs_copy_from_user(loff_t pos, size_t write_bytes,
 					 struct page **prepared_pages,
-					 struct iov_iter *i)
+					 struct iov_iter *iter)
 {
 	size_t copied = 0;
 	size_t total_copied = 0;
@@ -411,7 +411,8 @@ static noinline int btrfs_copy_from_user(loff_t pos, size_t write_bytes,
 		/*
 		 * Copy data from userspace to the current page
 		 */
-		copied = iov_iter_copy_from_user_atomic(page, i, offset, count);
+		copied = iov_iter_copy_from_user_atomic(page, iter, offset,
+				count);
 
 		/* Flush processor's dcache for this page */
 		flush_dcache_page(page);
@@ -428,7 +429,7 @@ static noinline int btrfs_copy_from_user(loff_t pos, size_t write_bytes,
 		if (!PageUptodate(page) && copied < count)
 			copied = 0;
 
-		iov_iter_advance(i, copied);
+		iov_iter_advance(iter, copied);
 		write_bytes -= copied;
 		total_copied += copied;
 
@@ -1570,7 +1571,7 @@ static noinline int check_can_nocow(struct btrfs_inode *inode, loff_t pos,
 }
 
 static noinline ssize_t btrfs_buffered_write(struct kiocb *iocb,
-					     struct iov_iter *i)
+					     struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
 	loff_t pos = iocb->ki_pos;
@@ -1589,7 +1590,7 @@ static noinline ssize_t btrfs_buffered_write(struct kiocb *iocb,
 	bool only_release_metadata = false;
 	bool force_page_uptodate = false;
 
-	nrptrs = min(DIV_ROUND_UP(iov_iter_count(i), PAGE_SIZE),
+	nrptrs = min(DIV_ROUND_UP(iov_iter_count(iter), PAGE_SIZE),
 			PAGE_SIZE / (sizeof(struct page *)));
 	nrptrs = min(nrptrs, current->nr_dirtied_pause - current->nr_dirtied);
 	nrptrs = max(nrptrs, 8);
@@ -1597,10 +1598,10 @@ static noinline ssize_t btrfs_buffered_write(struct kiocb *iocb,
 	if (!pages)
 		return -ENOMEM;
 
-	while (iov_iter_count(i) > 0) {
+	while (iov_iter_count(iter) > 0) {
 		size_t offset = pos & (PAGE_SIZE - 1);
 		size_t sector_offset;
-		size_t write_bytes = min(iov_iter_count(i),
+		size_t write_bytes = min(iov_iter_count(iter),
 					 nrptrs * (size_t)PAGE_SIZE -
 					 offset);
 		size_t num_pages = DIV_ROUND_UP(write_bytes + offset,
@@ -1618,7 +1619,7 @@ static noinline ssize_t btrfs_buffered_write(struct kiocb *iocb,
 		 * Fault pages before locking them in prepare_pages
 		 * to avoid recursive lock
 		 */
-		if (unlikely(iov_iter_fault_in_readable(i, write_bytes))) {
+		if (unlikely(iov_iter_fault_in_readable(iter, write_bytes))) {
 			ret = -EFAULT;
 			break;
 		}
@@ -1696,7 +1697,7 @@ again:
 			break;
 		}
 
-		copied = btrfs_copy_from_user(pos, write_bytes, pages, i);
+		copied = btrfs_copy_from_user(pos, write_bytes, pages, iter);
 
 		num_sectors = BTRFS_BYTES_TO_BLKS(fs_info, reserve_bytes);
 		dirty_sectors = round_up(copied + sector_offset,
