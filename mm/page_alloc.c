@@ -5038,6 +5038,103 @@ void show_free_areas(unsigned int filter, nodemask_t *nodemask)
 	show_swap_cache_info();
 }
 
+/*
+ * Walk through a free page list and report the found pfn range via the
+ * callback.
+ *
+ * Return 0 if it completes the reporting. Otherwise, return the non-zero
+ * value returned from the callback.
+ */
+static int walk_free_page_list(void *opaque,
+			       struct zone *zone,
+			       int order,
+			       enum migratetype mt,
+			       int (*report_pfn_range)(void *,
+						       unsigned long,
+						       unsigned long))
+{
+	struct page *page;
+	struct list_head *list;
+	unsigned long pfn, flags;
+	int ret = 0;
+
+	spin_lock_irqsave(&zone->lock, flags);
+	list = &zone->free_area[order].free_list[mt];
+	list_for_each_entry(page, list, lru) {
+		pfn = page_to_pfn(page);
+		ret = report_pfn_range(opaque, pfn, 1 << order);
+		if (ret)
+			break;
+	}
+	spin_unlock_irqrestore(&zone->lock, flags);
+
+	return ret;
+}
+
+/**
+ * walk_free_mem_block - Walk through the free page blocks in the system
+ * @opaque: the context passed from the caller
+ * @min_order: the minimum order of free lists to check
+ * @report_pfn_range: the callback to report the pfn range of the free pages
+ *
+ * If the callback returns a non-zero value, stop iterating the list of free
+ * page blocks. Otherwise, continue to report.
+ *
+ * Please note that there are no locking guarantees for the callback and
+ * that the reported pfn range might be freed or disappear after the
+ * callback returns so the caller has to be very careful how it is used.
+ *
+ * The callback itself must not sleep or perform any operations which would
+ * require any memory allocations directly (not even GFP_NOWAIT/GFP_ATOMIC)
+ * or via any lock dependency. It is generally advisable to implement
+ * the callback as simple as possible and defer any heavy lifting to a
+ * different context.
+ *
+ * There is no guarantee that each free range will be reported only once
+ * during one walk_free_mem_block invocation.
+ *
+ * pfn_to_page on the given range is strongly discouraged and if there is
+ * an absolute need for that make sure to contact MM people to discuss
+ * potential problems.
+ *
+ * The function itself might sleep so it cannot be called from atomic
+ * contexts.
+ *
+ * In general low orders tend to be very volatile and so it makes more
+ * sense to query larger ones first for various optimizations which like
+ * ballooning etc... This will reduce the overhead as well.
+ *
+ * Return 0 if it completes the reporting. Otherwise, return the non-zero
+ * value returned from the callback.
+ */
+int walk_free_mem_block(void *opaque,
+			int min_order,
+			int (*report_pfn_range)(void *opaque,
+			unsigned long pfn,
+			unsigned long num))
+{
+	struct zone *zone;
+	int order;
+	enum migratetype mt;
+	int ret;
+
+	for_each_populated_zone(zone) {
+		for (order = MAX_ORDER - 1; order >= min_order; order--) {
+			for (mt = 0; mt < MIGRATE_TYPES; mt++) {
+				ret = walk_free_page_list(opaque, zone,
+							  order, mt,
+							  report_pfn_range);
+				if (ret)
+					return ret;
+			}
+			cond_resched();
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(walk_free_mem_block);
+
 static void zoneref_set_zone(struct zone *zone, struct zoneref *zoneref)
 {
 	zoneref->zone = zone;
