@@ -990,7 +990,6 @@ static void btrfs_prepare_close_one_device(struct btrfs_device *device)
 					device->uuid);
 	BUG_ON(IS_ERR(new_device)); /* -ENOMEM */
 
-	/* Safe because we are under uuid_mutex */
 	if (device->name) {
 		name = rcu_string_strdup(device->name->str, GFP_NOFS);
 		BUG_ON(!name); /* -ENOMEM */
@@ -1008,10 +1007,12 @@ static int close_fs_devices(struct btrfs_fs_devices *fs_devices)
 
 	INIT_LIST_HEAD(&pending_put);
 
-	if (--fs_devices->opened > 0)
-		return 0;
-
 	mutex_lock(&fs_devices->device_list_mutex);
+	if (--fs_devices->opened > 0) {
+		mutex_unlock(&fs_devices->device_list_mutex);
+		return 0;
+	}
+
 	list_for_each_entry_safe(device, tmp, &fs_devices->devices, dev_list) {
 		btrfs_prepare_close_one_device(device);
 		list_add(&device->dev_list, &pending_put);
@@ -1045,13 +1046,11 @@ int btrfs_close_devices(struct btrfs_fs_devices *fs_devices)
 	struct btrfs_fs_devices *seed_devices = NULL;
 	int ret;
 
-	mutex_lock(&uuid_mutex);
 	ret = close_fs_devices(fs_devices);
 	if (!fs_devices->opened) {
 		seed_devices = fs_devices->seed;
 		fs_devices->seed = NULL;
 	}
-	mutex_unlock(&uuid_mutex);
 
 	while (seed_devices) {
 		fs_devices = seed_devices;
