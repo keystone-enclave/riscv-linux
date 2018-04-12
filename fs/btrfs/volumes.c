@@ -1005,7 +1005,7 @@ static void btrfs_prepare_close_one_device(struct btrfs_device *device)
 	new_device->fs_devices = device->fs_devices;
 }
 
-static int __btrfs_close_devices(struct btrfs_fs_devices *fs_devices)
+static int close_fs_devices(struct btrfs_fs_devices *fs_devices)
 {
 	struct btrfs_device *device, *tmp;
 	struct list_head pending_put;
@@ -1050,7 +1050,7 @@ int btrfs_close_devices(struct btrfs_fs_devices *fs_devices)
 	int ret;
 
 	mutex_lock(&uuid_mutex);
-	ret = __btrfs_close_devices(fs_devices);
+	ret = close_fs_devices(fs_devices);
 	if (!fs_devices->opened) {
 		seed_devices = fs_devices->seed;
 		fs_devices->seed = NULL;
@@ -1060,7 +1060,7 @@ int btrfs_close_devices(struct btrfs_fs_devices *fs_devices)
 	while (seed_devices) {
 		fs_devices = seed_devices;
 		seed_devices = fs_devices->seed;
-		__btrfs_close_devices(fs_devices);
+		close_fs_devices(fs_devices);
 		free_fs_devices(fs_devices);
 	}
 	return ret;
@@ -2027,7 +2027,7 @@ int btrfs_rm_device(struct btrfs_fs_info *fs_info, const char *device_path,
 			fs_devices = fs_devices->seed;
 		}
 		cur_devices->seed = NULL;
-		__btrfs_close_devices(cur_devices);
+		close_fs_devices(cur_devices);
 		free_fs_devices(cur_devices);
 	}
 
@@ -2109,7 +2109,7 @@ void btrfs_rm_dev_replace_free_srcdev(struct btrfs_fs_info *fs_info,
 			tmp_fs_devices = tmp_fs_devices->seed;
 		}
 		fs_devices->seed = NULL;
-		__btrfs_close_devices(fs_devices);
+		close_fs_devices(fs_devices);
 		free_fs_devices(fs_devices);
 	}
 }
@@ -6681,7 +6681,7 @@ static struct btrfs_fs_devices *open_seed_devices(struct btrfs_fs_info *fs_info,
 	}
 
 	if (!fs_devices->seeding) {
-		__btrfs_close_devices(fs_devices);
+		close_fs_devices(fs_devices);
 		free_fs_devices(fs_devices);
 		fs_devices = ERR_PTR(-EINVAL);
 		goto out;
