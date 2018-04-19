@@ -439,7 +439,8 @@ extern long simple_strtol(const char *,char **,unsigned int);
 extern unsigned long long simple_strtoull(const char *,char **,unsigned int);
 extern long long simple_strtoll(const char *,char **,unsigned int);
 
-extern int num_to_str(char *buf, int size, unsigned long long num);
+extern int num_to_str(char *buf, int size,
+		      unsigned long long num, unsigned int width);
 
 /* lib/printf utilities */
 
@@ -543,6 +544,7 @@ extern enum system_states {
 	SYSTEM_RESTART,
 } system_state;
 
+/* This cannot be an enum because some may be used in assembly source. */
 #define TAINT_PROPRIETARY_MODULE	0
 #define TAINT_FORCED_MODULE		1
 #define TAINT_CPU_OUT_OF_SPEC		2
@@ -560,7 +562,8 @@ extern enum system_states {
 #define TAINT_SOFTLOCKUP		14
 #define TAINT_LIVEPATCH			15
 #define TAINT_AUX			16
-#define TAINT_FLAGS_COUNT		17
+#define TAINT_RANDSTRUCT		17
+#define TAINT_FLAGS_COUNT		18
 
 struct taint_flag {
 	char c_true;	/* character printed when tainted */
@@ -822,14 +825,15 @@ static inline void ftrace_dump(enum ftrace_dump_mode oops_dump_mode) { }
 
 #define __cmp(x, y, op)	((x) op (y) ? (x) : (y))
 
-#define __cmp_once(x, y, op) ({		\
-		typeof(x) __x = (x);	\
-		typeof(y) __y = (y);	\
-		__cmp(__x, __y, op); })
+#define __cmp_once(x, y, unique_x, unique_y, op) ({	\
+		typeof(x) unique_x = (x);		\
+		typeof(y) unique_y = (y);		\
+		__cmp(unique_x, unique_y, op); })
 
-#define __careful_cmp(x, y, op)				\
-		__builtin_choose_expr(__safe_cmp(x, y),	\
-				      __cmp(x, y, op), __cmp_once(x, y, op))
+#define __careful_cmp(x, y, op) \
+	__builtin_choose_expr(__safe_cmp(x, y), \
+		__cmp(x, y, op), \
+		__cmp_once(x, y, __UNIQUE_ID(__x), __UNIQUE_ID(__y), op))
 
 /**
  * min - return minimum of two values of the same or compatible types
