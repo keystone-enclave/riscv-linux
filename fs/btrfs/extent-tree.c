@@ -2037,10 +2037,15 @@ static int remove_extent_backref(struct btrfs_trans_handle *trans,
 static int btrfs_issue_clear_op(struct block_device *bdev, u64 start, u64 size,
 		enum btrfs_clear_op_type clear)
 {
+	int flags = 0;
+
 	switch (clear) {
+	case BTRFS_CLEAR_OP_DISCARD_SECURE:
+		flags = BLKDEV_DISCARD_SECURE;
+		/* fall through */
 	case BTRFS_CLEAR_OP_DISCARD:
 		return blkdev_issue_discard(bdev, start >> 9, size >> 9,
-				GFP_NOFS, 0);
+				GFP_NOFS, flags);
 	case BTRFS_CLEAR_OP_ZERO:
 		return blkdev_issue_zeroout(bdev, start >> 9, size >> 9,
 				GFP_NOFS, 0);
@@ -2129,7 +2134,8 @@ int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
 	struct btrfs_bio *bbio = NULL;
 	int rw;
 
-	if (clear == BTRFS_CLEAR_OP_DISCARD)
+	if (clear == BTRFS_CLEAR_OP_DISCARD ||
+	    clear == BTRFS_CLEAR_OP_DISCARD_SECURE)
 		rw = BTRFS_MAP_DISCARD;
 	else
 		rw = BTRFS_MAP_WRITE;
@@ -2158,6 +2164,10 @@ int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
 			req_q = bdev_get_queue(stripe->dev->bdev);
 			if (clear == BTRFS_CLEAR_OP_DISCARD &&
 			    !blk_queue_discard(req_q))
+				continue;
+
+			if (clear == BTRFS_CLEAR_OP_DISCARD_SECURE &&
+			    !blk_queue_secure_erase(req_q))
 				continue;
 
 			ret = btrfs_issue_discard(stripe->dev->bdev,
