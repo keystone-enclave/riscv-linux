@@ -2046,9 +2046,19 @@ static int btrfs_issue_clear_op(struct block_device *bdev, u64 start, u64 size,
 	case BTRFS_CLEAR_OP_DISCARD:
 		return blkdev_issue_discard(bdev, start >> 9, size >> 9,
 				GFP_NOFS, flags);
+	case BTRFS_CLEAR_OP_ZERO_NOUNMAP:
+		flags = BLKDEV_ZERO_NOUNMAP;
+		goto zeroout;
+	case BTRFS_CLEAR_OP_ZERO_NOFALLBACK:
+		flags = BLKDEV_ZERO_NOFALLBACK;
+		goto zeroout;
+	case BTRFS_CLEAR_OP_ZERO_NOUNMAP_NOFALLBACK:
+		flags = BLKDEV_ZERO_NOUNMAP | BLKDEV_ZERO_NOFALLBACK;
+		/* fall through */
 	case BTRFS_CLEAR_OP_ZERO:
+zeroout:
 		return blkdev_issue_zeroout(bdev, start >> 9, size >> 9,
-				GFP_NOFS, 0);
+				GFP_NOFS, flags);
 	default:
 		return -EOPNOTSUPP;
 	}
