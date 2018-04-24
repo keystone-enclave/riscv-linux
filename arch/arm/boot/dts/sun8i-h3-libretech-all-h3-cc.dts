@@ -113,8 +113,8 @@
 	reg_vdd_cpux: vdd-cpux {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd-cpux";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
 		regulator-always-on;
 		regulator-boot-on;
 		vin-supply = <&reg_vcc5v0>;
@@ -129,6 +129,10 @@
 		"MIC1", "Mic",
 		"Mic",  "MBIAS";
 	status = "okay";
+};
+
+&cpu0 {
+	cpu-supply = <&reg_vdd_cpux>;
 };
 
 &de {
