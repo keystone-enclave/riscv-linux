@@ -274,8 +274,7 @@ acpi_parse_entries_array(char *id, unsigned long table_size,
 	entry = (struct acpi_subtable_header *)
 	    ((unsigned long)table_header + table_size);
 
-	while (((unsigned long)entry) + sizeof(struct acpi_subtable_header) <
-	       table_end) {
+	while ((unsigned long)entry + entry->length <= table_end) {
 		if (max_entries && count >= max_entries)
 			break;
 
