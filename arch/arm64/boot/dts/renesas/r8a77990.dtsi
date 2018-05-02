@@ -27,9 +27,8 @@
 			enable-method = "psci";
 		};
 
-		L2_CA53: cache-controller@0 {
+		L2_CA53: cache-controller-0 {
 			compatible = "cache";
-			reg = <0>;
 			power-domains = <&sysc 21>;
 			cache-unified;
 			cache-level = <2>;
@@ -50,7 +49,7 @@
 	};
 
 	psci {
-		compatible = "arm,psci-0.2";
+		compatible = "arm,psci-1.0", "arm,psci-0.2";
 		method = "smc";
 	};
 
