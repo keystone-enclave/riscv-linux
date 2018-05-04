@@ -374,6 +374,8 @@
 		#interrupt-cells = <2>;
 		gpio-controller;
 		#gpio-cells = <2>;
+		rohm,ddr-backup-power = <0xf>;
+		rohm,rstbmode-level;
 
 		regulators {
 			dvfs: dvfs {
@@ -384,6 +386,12 @@
 				regulator-always-on;
 			};
 		};
+	};
+
+	eeprom@50 {
+		compatible = "rohm,br24t01", "atmel,24c01";
+		reg = <0x50>;
+		pagesize = <8>;
 	};
 };
 
