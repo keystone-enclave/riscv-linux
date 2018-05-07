@@ -216,13 +216,14 @@ static int nfsd4_scsi_identify_device(struct block_device *bdev,
 	struct request_queue *q = bdev->bd_disk->queue;
 	struct request *rq;
 	struct scsi_request *req;
-	size_t bufflen = 252, len, id_len;
+	size_t bufflen = 252, maxlen = 65532, len, id_len;
 	u8 *buf, *d, type, assoc;
-	int error;
+	int retries = 1, error;
 
 	if (WARN_ON_ONCE(!blk_queue_scsi_passthrough(q)))
 		return -EINVAL;
 
+again:
 	buf = kzalloc(bufflen, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
@@ -255,9 +256,16 @@ static int nfsd4_scsi_identify_device(struct block_device *bdev,
 
 	len = (buf[2] << 8) + buf[3] + 4;
 	if (len > bufflen) {
-		pr_err("pNFS: INQUIRY 0x83 response invalid (len = %zd)\n",
-			len);
-		goto out_put_request;
+		if (len < maxlen && retries--) {
+			blk_put_request(rq);
+			kfree(buf);
+			bufflen = len;
+			goto again;
+		} else {
+			pr_err("pNFS: INQUIRY 0x83 response invalid (len = %zd)\n",
+				len);
+			goto out_put_request;
+		}
 	}
 
 	d = buf + 4;
