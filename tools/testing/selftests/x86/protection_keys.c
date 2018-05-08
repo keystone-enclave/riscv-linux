@@ -225,8 +225,12 @@ void dump_mem(void *dumpme, int len_bytes)
 	}
 }
 
-#define SEGV_BNDERR     3  /* failed address bound checks */
-#define SEGV_PKUERR     4
+#ifndef SEGV_BNDERR
+# define SEGV_BNDERR     3  /* failed address bound checks */
+#endif
+#ifndef SEGV_PKUERR
+# define SEGV_PKUERR     4
+#endif
 
 static char *si_code_str(int si_code)
 {
