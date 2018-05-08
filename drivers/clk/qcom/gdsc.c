@@ -33,6 +33,11 @@
 #define GMEM_CLAMP_IO_MASK	BIT(0)
 #define GMEM_RESET_MASK		BIT(4)
 
+/* CFG_GDSCR */
+#define GDSC_POWER_UP_COMPLETE		BIT(16)
+#define GDSC_POWER_DOWN_COMPLETE	BIT(15)
+#define CFG_GDSCR_OFFSET		0x4
+
 /* Wait 2^n CXO cycles between all states. Here, n=2 (4 cycles). */
 #define EN_REST_WAIT_VAL	(0x2 << 20)
 #define EN_FEW_WAIT_VAL		(0x8 << 16)
@@ -45,16 +50,46 @@
 
 #define domain_to_gdsc(domain) container_of(domain, struct gdsc, pd)
 
-static int gdsc_is_enabled(struct gdsc *sc, unsigned int reg)
+enum gdsc_status {
+	GDSC_OFF,
+	GDSC_ON
+};
+
+/* Returns 1 if GDSC status is status, 0 if not, and < 0 on error */
+static int gdsc_check_status(struct gdsc *sc, enum gdsc_status status)
 {
+	unsigned int reg;
 	u32 val;
 	int ret;
+
+	if (sc->flags & POLL_CFG_GDSCR)
+		reg = sc->gdscr + CFG_GDSCR_OFFSET;
+	else if (sc->gds_hw_ctrl)
+		reg = sc->gds_hw_ctrl;
+	else
+		reg = sc->gdscr;
 
 	ret = regmap_read(sc->regmap, reg, &val);
 	if (ret)
 		return ret;
 
-	return !!(val & PWR_ON_MASK);
+	if (sc->flags & POLL_CFG_GDSCR) {
+		switch (status) {
+		case GDSC_ON:
+			return !!(val & GDSC_POWER_UP_COMPLETE);
+		case GDSC_OFF:
+			return !!(val & GDSC_POWER_DOWN_COMPLETE);
+		}
+	}
+
+	switch (status) {
+	case GDSC_ON:
+		return !!(val & PWR_ON_MASK);
+	case GDSC_OFF:
+		return !(val & PWR_ON_MASK);
+	}
+
+	return -EINVAL;
 }
 
 static int gdsc_hwctrl(struct gdsc *sc, bool en)
@@ -64,34 +99,33 @@ static int gdsc_hwctrl(struct gdsc *sc, bool en)
 	return regmap_update_bits(sc->regmap, sc->gdscr, HW_CONTROL_MASK, val);
 }
 
-static int gdsc_poll_status(struct gdsc *sc, unsigned int reg, bool en)
+static int gdsc_poll_status(struct gdsc *sc, enum gdsc_status status)
 {
 	ktime_t start;
 
 	start = ktime_get();
 	do {
-		if (gdsc_is_enabled(sc, reg) == en)
+		if (gdsc_check_status(sc, status))
 			return 0;
 	} while (ktime_us_delta(ktime_get(), start) < TIMEOUT_US);
 
-	if (gdsc_is_enabled(sc, reg) == en)
+	if (gdsc_check_status(sc, status))
 		return 0;
 
 	return -ETIMEDOUT;
 }
 
-static int gdsc_toggle_logic(struct gdsc *sc, bool en)
+static int gdsc_toggle_logic(struct gdsc *sc, enum gdsc_status status)
 {
 	int ret;
-	u32 val = en ? 0 : SW_COLLAPSE_MASK;
-	unsigned int status_reg = sc->gdscr;
+	u32 val = (status == GDSC_ON) ? 0 : SW_COLLAPSE_MASK;
 
 	ret = regmap_update_bits(sc->regmap, sc->gdscr, SW_COLLAPSE_MASK, val);
 	if (ret)
 		return ret;
 
 	/* If disabling votable gdscs, don't poll on status */
-	if ((sc->flags & VOTABLE) && !en) {
+	if ((sc->flags & VOTABLE) && status == GDSC_OFF) {
 		/*
 		 * Add a short delay here to ensure that an enable
 		 * right after it was disabled does not put it in an
@@ -102,7 +136,6 @@ static int gdsc_toggle_logic(struct gdsc *sc, bool en)
 	}
 
 	if (sc->gds_hw_ctrl) {
-		status_reg = sc->gds_hw_ctrl;
 		/*
 		 * The gds hw controller asserts/de-asserts the status bit soon
 		 * after it receives a power on/off request from a master.
@@ -116,7 +149,7 @@ static int gdsc_toggle_logic(struct gdsc *sc, bool en)
 		udelay(1);
 	}
 
-	return gdsc_poll_status(sc, status_reg, en);
+	return gdsc_poll_status(sc, status);
 }
 
 static inline int gdsc_deassert_reset(struct gdsc *sc)
@@ -195,7 +228,7 @@ static int gdsc_enable(struct generic_pm_domain *domain)
 		gdsc_deassert_clamp_io(sc);
 	}
 
-	ret = gdsc_toggle_logic(sc, true);
+	ret = gdsc_toggle_logic(sc, GDSC_ON);
 	if (ret)
 		return ret;
 
@@ -240,8 +273,6 @@ static int gdsc_disable(struct generic_pm_domain *domain)
 
 	/* Turn off HW trigger mode if supported */
 	if (sc->flags & HW_CTRL) {
-		unsigned int reg;
-
 		ret = gdsc_hwctrl(sc, false);
 		if (ret < 0)
 			return ret;
@@ -253,8 +284,7 @@ static int gdsc_disable(struct generic_pm_domain *domain)
 		 */
 		udelay(1);
 
-		reg = sc->gds_hw_ctrl ? sc->gds_hw_ctrl : sc->gdscr;
-		ret = gdsc_poll_status(sc, reg, true);
+		ret = gdsc_poll_status(sc, GDSC_ON);
 		if (ret)
 			return ret;
 	}
@@ -262,7 +292,7 @@ static int gdsc_disable(struct generic_pm_domain *domain)
 	if (sc->pwrsts & PWRSTS_OFF)
 		gdsc_clear_mem_on(sc);
 
-	ret = gdsc_toggle_logic(sc, false);
+	ret = gdsc_toggle_logic(sc, GDSC_OFF);
 	if (ret)
 		return ret;
 
@@ -276,7 +306,6 @@ static int gdsc_init(struct gdsc *sc)
 {
 	u32 mask, val;
 	int on, ret;
-	unsigned int reg;
 
 	/*
 	 * Disable HW trigger: collapse/restore occur based on registers writes.
@@ -292,13 +321,12 @@ static int gdsc_init(struct gdsc *sc)
 
 	/* Force gdsc ON if only ON state is supported */
 	if (sc->pwrsts == PWRSTS_ON) {
-		ret = gdsc_toggle_logic(sc, true);
+		ret = gdsc_toggle_logic(sc, GDSC_ON);
 		if (ret)
 			return ret;
 	}
 
-	reg = sc->gds_hw_ctrl ? sc->gds_hw_ctrl : sc->gdscr;
-	on = gdsc_is_enabled(sc, reg);
+	on = gdsc_check_status(sc, GDSC_ON);
 	if (on < 0)
 		return on;
 
