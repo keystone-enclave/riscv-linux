@@ -2610,6 +2610,41 @@ static int btrfs_validate_mount_super(struct btrfs_fs_info *fs_info)
 	return validate_super(fs_info, fs_info->super_copy, 0);
 }
 
+/*
+ * Validation of super block at write time.
+ * Some checks like bytenr check will be skipped as their values will be
+ * overwritten soon.
+ * Extra checks like csum type and incompat flags will be done here.
+ */
+static int btrfs_validate_write_super(struct btrfs_fs_info *fs_info,
+				      struct btrfs_super_block *sb)
+{
+	int ret;
+
+	ret = validate_super(fs_info, sb, -1);
+	if (ret < 0)
+		goto out;
+	if (btrfs_super_csum_type(sb) != BTRFS_CSUM_TYPE_CRC32) {
+		ret = -EUCLEAN;
+		btrfs_err(fs_info, "invalid csum type, has %u want %u",
+			  btrfs_super_csum_type(sb), BTRFS_CSUM_TYPE_CRC32);
+		goto out;
+	}
+	if (btrfs_super_incompat_flags(sb) & ~BTRFS_FEATURE_INCOMPAT_SUPP) {
+		ret = -EUCLEAN;
+		btrfs_err(fs_info,
+		"invalid incompat flags, has 0x%llx valid mask 0x%llx",
+			  btrfs_super_incompat_flags(sb),
+			  (unsigned long long)BTRFS_FEATURE_INCOMPAT_SUPP);
+		goto out;
+	}
+out:
+	if (ret < 0)
+		btrfs_err(fs_info,
+		"super block corruption detected before writing it to disk");
+	return ret;
+}
+
 int open_ctree(struct super_block *sb,
 	       struct btrfs_fs_devices *fs_devices,
 	       char *options)
@@ -3729,6 +3764,10 @@ int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 
 	sb = fs_info->super_for_commit;
 	dev_item = &sb->dev_item;
+
+	ret = btrfs_validate_write_super(fs_info, sb);
+	if (ret < 0)
+		return ret;
 
 	mutex_lock(&fs_info->fs_devices->device_list_mutex);
 	head = &fs_info->fs_devices->devices;
