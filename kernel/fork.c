@@ -878,10 +878,19 @@ static void mm_init_aio(struct mm_struct *mm)
 #endif
 }
 
-static void mm_init_owner(struct mm_struct *mm, struct task_struct *p)
+static void mm_init_memcg(struct mm_struct *mm)
 {
 #ifdef CONFIG_MEMCG
-	mm->owner = p;
+	struct cgroup_subsys_state *css;
+
+	/* Ensure mm->memcg is initialized */
+	mm->memcg = NULL;
+
+	rcu_read_lock();
+	css = task_css(current, memory_cgrp_id);
+	if (css && css_tryget(css))
+		mm_update_memcg(mm, mem_cgroup_from_css(css));
+	rcu_read_unlock();
 #endif
 }
 
@@ -912,7 +921,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	spin_lock_init(&mm->arg_lock);
 	mm_init_cpumask(mm);
 	mm_init_aio(mm);
-	mm_init_owner(mm, p);
+	mm_init_memcg(mm);
 	RCU_INIT_POINTER(mm->exe_file, NULL);
 	mmu_notifier_mm_init(mm);
 	hmm_mm_init(mm);
@@ -942,6 +951,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 fail_nocontext:
 	mm_free_pgd(mm);
 fail_nopgd:
+	mm_update_memcg(mm, NULL);
 	free_mm(mm);
 	return NULL;
 }
@@ -979,6 +989,7 @@ static inline void __mmput(struct mm_struct *mm)
 	}
 	if (mm->binfmt)
 		module_put(mm->binfmt->module);
+	mm_update_memcg(mm, NULL);
 	mmdrop(mm);
 }
 

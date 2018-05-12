@@ -664,20 +664,6 @@ static void memcg_check_events(struct mem_cgroup *memcg, struct page *page)
 	}
 }
 
-struct mem_cgroup *mem_cgroup_from_task(struct task_struct *p)
-{
-	/*
-	 * mm_update_next_owner() may clear mm->owner to NULL
-	 * if it races with swapoff, page migration, etc.
-	 * So this can be called with p == NULL.
-	 */
-	if (unlikely(!p))
-		return NULL;
-
-	return mem_cgroup_from_css(task_css(p, memory_cgrp_id));
-}
-EXPORT_SYMBOL(mem_cgroup_from_task);
-
 struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
 {
 	struct mem_cgroup *memcg = NULL;
@@ -692,7 +678,7 @@ struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
 		if (unlikely(!mm))
 			memcg = root_mem_cgroup;
 		else {
-			memcg = mem_cgroup_from_task(rcu_dereference(mm->owner));
+			memcg = rcu_dereference(mm->memcg);
 			if (unlikely(!memcg))
 				memcg = root_mem_cgroup;
 		}
@@ -1025,7 +1011,7 @@ bool task_in_mem_cgroup(struct task_struct *task, struct mem_cgroup *memcg)
 		 * killed to prevent needlessly killing additional tasks.
 		 */
 		rcu_read_lock();
-		task_memcg = mem_cgroup_from_task(task);
+		task_memcg = mem_cgroup_from_css(task_css(task, memory_cgrp_id));
 		css_get(&task_memcg->css);
 		rcu_read_unlock();
 	}
@@ -4843,15 +4829,16 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 	if (!move_flags)
 		return 0;
 
-	from = mem_cgroup_from_task(p);
+	from = mem_cgroup_from_css(task_css(p, memory_cgrp_id));
 
 	VM_BUG_ON(from == memcg);
 
 	mm = get_task_mm(p);
 	if (!mm)
 		return 0;
-	/* We move charges only when we move a owner of the mm */
-	if (mm->owner == p) {
+
+	/* We move charges except for creative uses of CLONE_VM */
+	if (mm->memcg == from) {
 		VM_BUG_ON(mc.from);
 		VM_BUG_ON(mc.to);
 		VM_BUG_ON(mc.precharge);
@@ -4874,6 +4861,59 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 	}
 	return ret;
 }
+
+/**
+ * mm_update_memcg - Update the memory cgroup of a mm_struct
+ * @mm: mm struct
+ * @new: new memory cgroup value
+ *
+ * Called whenever mm->memcg needs to change.   Consumes a reference
+ * to new (unless new is NULL).   The reference to the old memory
+ * cgroup is decreased.
+ */
+void mm_update_memcg(struct mm_struct *mm, struct mem_cgroup *new)
+{
+	/* This is the only place where mm->memcg is changed */
+	struct mem_cgroup *old;
+
+	old = xchg(&mm->memcg, new);
+	if (old)
+		css_put(&old->css);
+}
+
+static void task_update_memcg(struct task_struct *tsk, struct mem_cgroup *new)
+{
+	struct mm_struct *mm;
+	task_lock(tsk);
+	mm = tsk->mm;
+	if (mm && !(tsk->flags & PF_KTHREAD))
+		mm_update_memcg(mm, new);
+	task_unlock(tsk);
+}
+
+static void mem_cgroup_attach(struct cgroup_taskset *tset)
+{
+	struct cgroup_subsys_state *css;
+	struct task_struct *tsk;
+
+	cgroup_taskset_for_each(tsk, css, tset) {
+		struct mem_cgroup *new = mem_cgroup_from_css(css);
+		css_get(css);
+		task_update_memcg(tsk, new);
+	}
+}
+
+static void mem_cgroup_fork(struct task_struct *tsk)
+{
+	struct cgroup_subsys_state *css;
+
+	rcu_read_lock();
+	css = task_css(tsk, memory_cgrp_id);
+	if (css && css_tryget(css))
+		task_update_memcg(tsk, mem_cgroup_from_css(css));
+	rcu_read_unlock();
+}
+
 
 static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
@@ -5042,6 +5082,12 @@ static void mem_cgroup_move_task(void)
 static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 {
 	return 0;
+}
+static void mem_cgroup_attach(struct cgroup_taskset *tset)
+{
+}
+static void mem_cgroup_fork(struct task_struct *task)
+{
 }
 static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
@@ -5351,8 +5397,10 @@ struct cgroup_subsys memory_cgrp_subsys = {
 	.css_free = mem_cgroup_css_free,
 	.css_reset = mem_cgroup_css_reset,
 	.can_attach = mem_cgroup_can_attach,
+	.attach = mem_cgroup_attach,
 	.cancel_attach = mem_cgroup_cancel_attach,
 	.post_attach = mem_cgroup_move_task,
+	.fork = mem_cgroup_fork,
 	.bind = mem_cgroup_bind,
 	.dfl_cftypes = memory_files,
 	.legacy_cftypes = mem_cgroup_legacy_files,
@@ -5839,7 +5887,7 @@ void mem_cgroup_sk_alloc(struct sock *sk)
 	}
 
 	rcu_read_lock();
-	memcg = mem_cgroup_from_task(current);
+	memcg = mem_cgroup_from_css(task_css(current, memory_cgrp_id));
 	if (memcg == root_mem_cgroup)
 		goto out;
 	if (!cgroup_subsys_on_dfl(memory_cgrp_subsys) && !memcg->tcpmem_active)
