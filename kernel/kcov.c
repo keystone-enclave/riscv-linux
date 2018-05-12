@@ -330,9 +330,8 @@ static void kcov_fault_in_area(struct kcov *kcov)
 	unsigned long *area = kcov->area;
 	unsigned long offset;
 
-	for (offset = 0; offset < kcov->size; offset += stride) {
+	for (offset = 0; offset < kcov->size; offset += stride)
 		READ_ONCE(area[offset]);
-	}
 }
 
 static int kcov_ioctl_locked(struct kcov *kcov, unsigned int cmd,
