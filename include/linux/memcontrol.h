@@ -408,6 +408,7 @@ static inline bool mem_cgroup_is_descendant(struct mem_cgroup *memcg,
 }
 
 void mm_update_memcg(struct mm_struct *mm, struct mem_cgroup *new);
+void mm_sync_memcg_from_task(struct task_struct *tsk);
 
 static inline bool mm_match_cgroup(struct mm_struct *mm,
 				   struct mem_cgroup *memcg)
@@ -789,6 +790,10 @@ static inline struct lruvec *mem_cgroup_page_lruvec(struct page *page,
 }
 
 static inline void mm_update_memcg(struct mm_struct *mm, struct mem_cgroup *new)
+{
+}
+
+static inline void mm_sync_memcg_from_task(struct task_struct *tsk)
 {
 }
 

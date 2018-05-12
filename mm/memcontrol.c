@@ -5079,7 +5079,7 @@ static void mem_cgroup_attach(struct cgroup_taskset *tset)
 	}
 }
 
-static void mem_cgroup_fork(struct task_struct *tsk)
+void mm_sync_memcg_from_task(struct task_struct *tsk)
 {
 	struct cgroup_subsys_state *css;
 
@@ -5393,7 +5393,7 @@ struct cgroup_subsys memory_cgrp_subsys = {
 	.attach = mem_cgroup_attach,
 	.cancel_attach = mem_cgroup_cancel_attach,
 	.post_attach = mem_cgroup_move_task,
-	.fork = mem_cgroup_fork,
+	.fork = mm_sync_memcg_from_task,
 	.bind = mem_cgroup_bind,
 	.dfl_cftypes = memory_files,
 	.legacy_cftypes = mem_cgroup_legacy_files,

@@ -1044,6 +1044,8 @@ static int exec_mmap(struct mm_struct *mm)
 		return 0;
 	}
 	mmdrop(active_mm);
+	/* The tsk may have migrated before the new mm was attached */
+	mm_sync_memcg_from_task(tsk);
 	return 0;
 }
 
