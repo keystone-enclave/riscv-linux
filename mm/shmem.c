@@ -577,8 +577,7 @@ static inline bool is_huge_enabled(struct shmem_sb_info *sbinfo)
 	    (shmem_huge == SHMEM_HUGE_FORCE || sbinfo->huge) &&
 	    shmem_huge != SHMEM_HUGE_DENY)
 		return true;
-	else
-		return false;
+	return false;
 }
 
 /*
