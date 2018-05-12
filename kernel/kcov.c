@@ -324,6 +324,10 @@ static int kcov_close(struct inode *inode, struct file *filep)
 	return 0;
 }
 
+/*
+ * fault in a lazily-faulted vmalloc area, to avoid recursion issues if the
+ * vmalloc fault handler itself is instrumented.
+ */
 static void kcov_fault_in_area(struct kcov *kcov)
 {
 	unsigned long stride = PAGE_SIZE / sizeof(unsigned long);
