@@ -347,11 +347,8 @@ static ssize_t proc_pid_cmdline_read(struct file *file, char __user *buf,
 	}
 
 end:
-	free_page((unsigned long)page);
-	mmput(mm);
 	*pos += buf - buf0;
-	return buf - buf0;
-
+	rv = buf - buf0;
 out_free_page:
 	free_page((unsigned long)page);
 out_mmput:
