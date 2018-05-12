@@ -256,7 +256,7 @@ If you enable the feature, you could see block state via
 	  302    63.806919 ..h
 
 First column is zram's block index.
-Second column is access time since the system is boot
+Second column is access time since the system was booted
 Third column is state of the block.
 (s: same page
 w: written page to backing store
