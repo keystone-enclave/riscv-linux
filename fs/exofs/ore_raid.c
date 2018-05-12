@@ -139,6 +139,8 @@ static int _sp2d_alloc(unsigned pages_in_unit, unsigned group_width,
 
 	/* Allocate additionally needed a1pa items in PAGE_SIZE chunks. */
 	for (i = 0; i < pages_in_unit; ++i) {
+		struct __1_page_stripe *stripe = &sp2d->_1p_stripes[i];
+
 		if (unlikely(__a1pa >= __a1pa_end)) {
 			num_a1pa = min_t(unsigned, PAGE_SIZE / sizeof__a1pa,
 							pages_in_unit - i);
@@ -152,7 +154,7 @@ static int _sp2d_alloc(unsigned pages_in_unit, unsigned group_width,
 			}
 			__a1pa_end = __a1pa + alloc_size;
 			/* First *pages is marked for kfree of the buffer */
-			sp2d->_1p_stripes[i].alloc = true;
+			stripe->alloc = true;
 		}
 
 		/*
@@ -160,11 +162,9 @@ static int _sp2d_alloc(unsigned pages_in_unit, unsigned group_width,
 		 * it which was either part of the original PAGE_SIZE
 		 * allocation or the subsequent allocation in this loop.
 		 */
-		sp2d->_1p_stripes[i].pages = (void *)__a1pa;
-		sp2d->_1p_stripes[i].scribble =
-			sp2d->_1p_stripes[i].pages + group_width;
-		sp2d->_1p_stripes[i].page_is_read =
-			(char *)(sp2d->_1p_stripes[i].scribble + group_width);
+		stripe->pages = (void *)__a1pa;
+		stripe->scribble = stripe->pages + group_width;
+		stripe->page_is_read = (char *)stripe->scribble + group_width;
 		__a1pa += sizeof__a1pa;
 	}
 

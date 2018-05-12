@@ -552,7 +552,7 @@ static int __alloc_dev_table(struct exofs_sb_info *sbi, unsigned numdevs,
 	/* Twice bigger table: See exofs_init_comps() and comment at
 	 * exofs_read_lookup_dev_table()
 	 */
-	size_t numores = numdevs * 2 - 1;
+	const size_t numores = numdevs * 2 - 1;
 	struct exofs_dev *eds;
 	unsigned i;
 
