@@ -634,19 +634,12 @@ static void zram_debugfs_destroy(void)
 
 static void zram_accessed(struct zram *zram, u32 index)
 {
-	zram->table[index].ac_time = sched_clock();
+	zram->table[index].ac_time = ktime_get_boottime();
 }
 
 static void zram_reset_access(struct zram *zram, u32 index)
 {
 	zram->table[index].ac_time = 0;
-}
-
-static long long ns2usecs(u64 nsec)
-{
-	nsec += 500;
-	do_div(nsec, 1000);
-	return nsec;
 }
 
 static ssize_t read_block_state(struct file *file, char __user *buf,
@@ -655,9 +648,8 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 	char *kbuf;
 	ssize_t index, written = 0;
 	struct zram *zram = file->private_data;
-	u64 last_access;
-	unsigned long usec_rem;
 	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
+	struct timespec64 ts;
 
 	kbuf = kvmalloc(count, GFP_KERNEL);
 	if (!kbuf)
@@ -677,12 +669,11 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 		if (!zram_allocated(zram, index))
 			goto next;
 
-		last_access = ns2usecs(zram->table[index].ac_time);
-		usec_rem = do_div(last_access, USEC_PER_SEC);
+		ts = ktime_to_timespec64(zram->table[index].ac_time);
 		copied = snprintf(kbuf + written, count,
-			"%12lu %5lu.%06lu %c%c%c\n",
-			(unsigned long)index, (unsigned long)last_access,
-			usec_rem,
+			"%12lu %12lu.%06lu %c%c%c\n",
+			(unsigned long)index, ts.tv_sec,
+			ts.tv_nsec / NSEC_PER_USEC,
 			zram_test_flag(zram, index, ZRAM_SAME) ? 's' : '.',
 			zram_test_flag(zram, index, ZRAM_WB) ? 'w' : '.',
 			zram_test_flag(zram, index, ZRAM_HUGE) ? 'h' : '.');
