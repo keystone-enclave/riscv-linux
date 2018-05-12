@@ -1036,6 +1036,10 @@ static void vb_free(const void *addr, unsigned long size)
 
 	vunmap_page_range((unsigned long)addr, (unsigned long)addr + size);
 
+	if (debug_pagealloc_enabled())
+		flush_tlb_kernel_range((unsigned long)addr,
+					(unsigned long)addr + size);
+
 	spin_lock(&vb->lock);
 
 	/* Expand dirty range */
