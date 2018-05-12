@@ -664,6 +664,11 @@ static void memcg_check_events(struct mem_cgroup *memcg, struct page *page)
 	}
 }
 
+static inline struct mem_cgroup *mem_cgroup_from_task(struct task_struct *p)
+{
+	return mem_cgroup_from_css(task_css(p, memory_cgrp_id));
+}
+
 struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
 {
 	struct mem_cgroup *memcg = NULL;
@@ -1011,7 +1016,7 @@ bool task_in_mem_cgroup(struct task_struct *task, struct mem_cgroup *memcg)
 		 * killed to prevent needlessly killing additional tasks.
 		 */
 		rcu_read_lock();
-		task_memcg = mem_cgroup_from_css(task_css(task, memory_cgrp_id));
+		task_memcg = mem_cgroup_from_task(task);
 		css_get(&task_memcg->css);
 		rcu_read_unlock();
 	}
@@ -4829,7 +4834,7 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 	if (!move_flags)
 		return 0;
 
-	from = mem_cgroup_from_css(task_css(p, memory_cgrp_id));
+	from = mem_cgroup_from_task(p);
 
 	VM_BUG_ON(from == memcg);
 
@@ -5880,7 +5885,7 @@ void mem_cgroup_sk_alloc(struct sock *sk)
 	}
 
 	rcu_read_lock();
-	memcg = mem_cgroup_from_css(task_css(current, memory_cgrp_id));
+	memcg = mem_cgroup_from_task(current);
 	if (memcg == root_mem_cgroup)
 		goto out;
 	if (!cgroup_subsys_on_dfl(memory_cgrp_subsys) && !memcg->tcpmem_active)
