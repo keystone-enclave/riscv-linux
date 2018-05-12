@@ -153,14 +153,16 @@ struct fanotify_event_info *fanotify_alloc_event(struct fsnotify_group *group,
 	if (fanotify_is_perm_event(mask)) {
 		struct fanotify_perm_event_info *pevent;
 
-		pevent = kmem_cache_alloc(fanotify_perm_event_cachep, gfp);
+		pevent = kmem_cache_alloc_memcg(fanotify_perm_event_cachep, gfp,
+						group->memcg);
 		if (!pevent)
 			return NULL;
 		event = &pevent->fae;
 		pevent->response = 0;
 		goto init;
 	}
-	event = kmem_cache_alloc(fanotify_event_cachep, gfp);
+	event = kmem_cache_alloc_memcg(fanotify_event_cachep, gfp,
+				       group->memcg);
 	if (!event)
 		return NULL;
 init: __maybe_unused
