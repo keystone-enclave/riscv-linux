@@ -2456,14 +2456,11 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
 	for (p = ents; p < last; p++) {
 		if (p->len != dentry->d_name.len)
 			continue;
-		if (!memcmp(dentry->d_name.name, p->name, p->len))
+		if (!memcmp(dentry->d_name.name, p->name, p->len)) {
+			error = proc_pident_instantiate(dir, dentry, task, p);
 			break;
+		}
 	}
-	if (p >= last)
-		goto out;
-
-	error = proc_pident_instantiate(dir, dentry, task, p);
-out:
 	put_task_struct(task);
 out_no_task:
 	return ERR_PTR(error);
