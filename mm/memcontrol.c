@@ -4862,59 +4862,6 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 	return ret;
 }
 
-/**
- * mm_update_memcg - Update the memory cgroup of a mm_struct
- * @mm: mm struct
- * @new: new memory cgroup value
- *
- * Called whenever mm->memcg needs to change.   Consumes a reference
- * to new (unless new is NULL).   The reference to the old memory
- * cgroup is decreased.
- */
-void mm_update_memcg(struct mm_struct *mm, struct mem_cgroup *new)
-{
-	/* This is the only place where mm->memcg is changed */
-	struct mem_cgroup *old;
-
-	old = xchg(&mm->memcg, new);
-	if (old)
-		css_put(&old->css);
-}
-
-static void task_update_memcg(struct task_struct *tsk, struct mem_cgroup *new)
-{
-	struct mm_struct *mm;
-	task_lock(tsk);
-	mm = tsk->mm;
-	if (mm && !(tsk->flags & PF_KTHREAD))
-		mm_update_memcg(mm, new);
-	task_unlock(tsk);
-}
-
-static void mem_cgroup_attach(struct cgroup_taskset *tset)
-{
-	struct cgroup_subsys_state *css;
-	struct task_struct *tsk;
-
-	cgroup_taskset_for_each(tsk, css, tset) {
-		struct mem_cgroup *new = mem_cgroup_from_css(css);
-		css_get(css);
-		task_update_memcg(tsk, new);
-	}
-}
-
-static void mem_cgroup_fork(struct task_struct *tsk)
-{
-	struct cgroup_subsys_state *css;
-
-	rcu_read_lock();
-	css = task_css(tsk, memory_cgrp_id);
-	if (css && css_tryget(css))
-		task_update_memcg(tsk, mem_cgroup_from_css(css));
-	rcu_read_unlock();
-}
-
-
 static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
 	if (mc.to)
@@ -5083,12 +5030,6 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 {
 	return 0;
 }
-static void mem_cgroup_attach(struct cgroup_taskset *tset)
-{
-}
-static void mem_cgroup_fork(struct task_struct *task)
-{
-}
 static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
 }
@@ -5096,6 +5037,58 @@ static void mem_cgroup_move_task(void)
 {
 }
 #endif
+
+/**
+ * mm_update_memcg - Update the memory cgroup of a mm_struct
+ * @mm: mm struct
+ * @new: new memory cgroup value
+ *
+ * Called whenever mm->memcg needs to change.   Consumes a reference
+ * to new (unless new is NULL).   The reference to the old memory
+ * cgroup is decreased.
+ */
+void mm_update_memcg(struct mm_struct *mm, struct mem_cgroup *new)
+{
+	/* This is the only place where mm->memcg is changed */
+	struct mem_cgroup *old;
+
+	old = xchg(&mm->memcg, new);
+	if (old)
+		css_put(&old->css);
+}
+
+static void task_update_memcg(struct task_struct *tsk, struct mem_cgroup *new)
+{
+	struct mm_struct *mm;
+	task_lock(tsk);
+	mm = tsk->mm;
+	if (mm && !(tsk->flags & PF_KTHREAD))
+		mm_update_memcg(mm, new);
+	task_unlock(tsk);
+}
+
+static void mem_cgroup_attach(struct cgroup_taskset *tset)
+{
+	struct cgroup_subsys_state *css;
+	struct task_struct *tsk;
+
+	cgroup_taskset_for_each(tsk, css, tset) {
+		struct mem_cgroup *new = mem_cgroup_from_css(css);
+		css_get(css);
+		task_update_memcg(tsk, new);
+	}
+}
+
+static void mem_cgroup_fork(struct task_struct *tsk)
+{
+	struct cgroup_subsys_state *css;
+
+	rcu_read_lock();
+	css = task_css(tsk, memory_cgrp_id);
+	if (css && css_tryget(css))
+		task_update_memcg(tsk, mem_cgroup_from_css(css));
+	rcu_read_unlock();
+}
 
 /*
  * Cgroup retains root cgroups across [un]mount cycles making it necessary
