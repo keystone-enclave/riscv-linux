@@ -681,7 +681,8 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 		usec_rem = do_div(last_access, USEC_PER_SEC);
 		copied = snprintf(kbuf + written, count,
 			"%12lu %5lu.%06lu %c%c%c\n",
-			index, (unsigned long)last_access, usec_rem,
+			(unsigned long)index, (unsigned long)last_access,
+			usec_rem,
 			zram_test_flag(zram, index, ZRAM_SAME) ? 's' : '.',
 			zram_test_flag(zram, index, ZRAM_WB) ? 'w' : '.',
 			zram_test_flag(zram, index, ZRAM_HUGE) ? 'h' : '.');
