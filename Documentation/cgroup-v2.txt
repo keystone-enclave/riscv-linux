@@ -1011,7 +1011,7 @@ PAGE_SIZE multiple when read back.
 	unprotected reclaimable memory available, OOM killer
 	is invoked.
 
-	Effective low boundary is limited by memory.min values of
+       Effective min boundary is limited by memory.min values of
 	all ancestor cgroups. If there is memory.min overcommitment
 	(child cgroup or cgroups are requiring more protected memory
 	than parent will allow), then each child cgroup will get
