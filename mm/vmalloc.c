@@ -1136,7 +1136,8 @@ void vm_unmap_ram(const void *mem, unsigned int count)
 
 	va = find_vmap_area(addr);
 	BUG_ON(!va);
-	debug_check_no_locks_freed(va->va_start, (va->va_end - va->va_start));
+	debug_check_no_locks_freed((void *)va->va_start,
+				    (va->va_end - va->va_start));
 	free_unmap_vmap_area(va);
 }
 EXPORT_SYMBOL(vm_unmap_ram);
