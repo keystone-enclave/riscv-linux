@@ -325,8 +325,9 @@ static int kcov_close(struct inode *inode, struct file *filep)
 }
 
 /*
- * fault in a lazily-faulted vmalloc area, to avoid recursion issues if the
- * vmalloc fault handler itself is instrumented.
+ * Fault in a lazily-faulted vmalloc area before it can be used by
+ * __santizer_cov_trace_pc(), to avoid recursion issues if any code on the
+ * vmalloc fault handling path is instrumented.
  */
 static void kcov_fault_in_area(struct kcov *kcov)
 {
