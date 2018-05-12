@@ -3387,7 +3387,8 @@ finish_open:
 		error = -EISDIR;
 		if (d_is_dir(nd->path.dentry))
 			goto out;
-		error = may_create_in_sticky(dir, inode);
+		error = may_create_in_sticky(dir,
+					     d_backing_inode(nd->path.dentry));
 		if (unlikely(error))
 			goto out;
 	}
