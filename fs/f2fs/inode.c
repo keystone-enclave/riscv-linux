@@ -48,9 +48,10 @@ void f2fs_set_inode_flags(struct inode *inode)
 		new_fl |= S_DIRSYNC;
 	if (f2fs_encrypted_inode(inode))
 		new_fl |= S_ENCRYPTED;
+	new_fl |= S_CGROUPWB;
 	inode_set_flags(inode, new_fl,
 			S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME|S_DIRSYNC|
-			S_ENCRYPTED);
+			S_ENCRYPTED|S_CGROUPWB);
 }
 
 static void __get_inode_rdev(struct inode *inode, struct f2fs_inode *ri)
