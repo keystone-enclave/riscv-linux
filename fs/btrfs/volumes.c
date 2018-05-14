@@ -925,7 +925,6 @@ void btrfs_free_extra_devids(struct btrfs_fs_devices *fs_devices, int step)
 	struct btrfs_device *device, *next;
 	struct btrfs_device *latest_dev = NULL;
 
-	mutex_lock(&uuid_mutex);
 again:
 	/* This is the initialized path, it is safe to release the devices. */
 	list_for_each_entry_safe(device, next, &fs_devices->devices, dev_list) {
@@ -979,8 +978,6 @@ again:
 	}
 
 	fs_devices->latest_bdev = latest_dev->bdev;
-
-	mutex_unlock(&uuid_mutex);
 }
 
 static void free_device_rcu(struct rcu_head *head)
@@ -1026,7 +1023,6 @@ static void btrfs_prepare_close_one_device(struct btrfs_device *device)
 					device->uuid);
 	BUG_ON(IS_ERR(new_device)); /* -ENOMEM */
 
-	/* Safe because we are under uuid_mutex */
 	if (device->name) {
 		name = rcu_string_strdup(device->name->str, GFP_NOFS);
 		BUG_ON(!name); /* -ENOMEM */
@@ -1044,10 +1040,12 @@ static int close_fs_devices(struct btrfs_fs_devices *fs_devices)
 
 	INIT_LIST_HEAD(&pending_put);
 
-	if (--fs_devices->opened > 0)
-		return 0;
-
 	mutex_lock(&fs_devices->device_list_mutex);
+	if (--fs_devices->opened > 0) {
+		mutex_unlock(&fs_devices->device_list_mutex);
+		return 0;
+	}
+
 	list_for_each_entry_safe(device, tmp, &fs_devices->devices, dev_list) {
 		btrfs_prepare_close_one_device(device);
 		list_add(&device->dev_list, &pending_put);
@@ -1081,13 +1079,11 @@ int btrfs_close_devices(struct btrfs_fs_devices *fs_devices)
 	struct btrfs_fs_devices *seed_devices = NULL;
 	int ret;
 
-	mutex_lock(&uuid_mutex);
 	ret = close_fs_devices(fs_devices);
 	if (!fs_devices->opened) {
 		seed_devices = fs_devices->seed;
 		fs_devices->seed = NULL;
 	}
-	mutex_unlock(&uuid_mutex);
 
 	while (seed_devices) {
 		fs_devices = seed_devices;
@@ -1146,7 +1142,7 @@ int btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 {
 	int ret;
 
-	mutex_lock(&uuid_mutex);
+	mutex_lock(&fs_devices->device_list_mutex);
 	if (fs_devices->opened) {
 		fs_devices->opened++;
 		ret = 0;
@@ -1154,7 +1150,7 @@ int btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 		list_sort(NULL, &fs_devices->devices, devid_cmp);
 		ret = open_fs_devices(fs_devices, flags, holder);
 	}
-	mutex_unlock(&uuid_mutex);
+	mutex_unlock(&fs_devices->device_list_mutex);
 	return ret;
 }
 
@@ -1232,31 +1228,29 @@ int btrfs_scan_one_device(const char *path, fmode_t flags, void *holder,
 	 */
 	bytenr = btrfs_sb_offset(0);
 	flags |= FMODE_EXCL;
-	mutex_lock(&uuid_mutex);
 
 	bdev = blkdev_get_by_path(path, flags, holder);
-	if (IS_ERR(bdev)) {
-		ret = PTR_ERR(bdev);
-		goto error;
-	}
+	if (IS_ERR(bdev))
+		return PTR_ERR(bdev);
 
 	if (btrfs_read_disk_super(bdev, bytenr, &page, &disk_super)) {
 		ret = -EINVAL;
 		goto error_bdev_put;
 	}
 
+	mutex_lock(&uuid_mutex);
 	device = device_list_add(path, disk_super);
 	if (IS_ERR(device))
 		ret = PTR_ERR(device);
 	else
 		*fs_devices_ret = device->fs_devices;
+	mutex_unlock(&uuid_mutex);
 
 	btrfs_release_disk_super(page);
 
 error_bdev_put:
 	blkdev_put(bdev, flags);
-error:
-	mutex_unlock(&uuid_mutex);
+
 	return ret;
 }
 
@@ -2017,20 +2011,25 @@ int btrfs_rm_device(struct btrfs_fs_info *fs_info, const char *device_path,
 	 * (super_copy) should hold the device list mutex.
 	 */
 
+	/*
+	 * In normal cases the cur_devices == fs_devices. But in case
+	 * of deleting a seed device, the cur_devices should point to
+	 * its own fs_devices listed under the fs_devices->seed.
+	 */
 	cur_devices = device->fs_devices;
 	mutex_lock(&fs_devices->device_list_mutex);
 	list_del_rcu(&device->dev_list);
 
-	device->fs_devices->num_devices--;
-	device->fs_devices->total_devices--;
+	cur_devices->num_devices--;
+	cur_devices->total_devices--;
 
 	if (test_bit(BTRFS_DEV_STATE_MISSING, &device->dev_state))
-		device->fs_devices->missing_devices--;
+		cur_devices->missing_devices--;
 
 	btrfs_assign_next_active_device(fs_info, device, NULL);
 
 	if (device->bdev) {
-		device->fs_devices->open_devices--;
+		cur_devices->open_devices--;
 		/* remove sysfs entry */
 		btrfs_sysfs_rm_device_link(fs_devices, device);
 	}
@@ -2148,23 +2147,23 @@ void btrfs_rm_dev_replace_free_srcdev(struct btrfs_fs_info *fs_info,
 void btrfs_destroy_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 				      struct btrfs_device *tgtdev)
 {
-	mutex_lock(&uuid_mutex);
-	WARN_ON(!tgtdev);
-	mutex_lock(&fs_info->fs_devices->device_list_mutex);
+	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
 
-	btrfs_sysfs_rm_device_link(fs_info->fs_devices, tgtdev);
+	WARN_ON(!tgtdev);
+	mutex_lock(&fs_devices->device_list_mutex);
+
+	btrfs_sysfs_rm_device_link(fs_devices, tgtdev);
 
 	if (tgtdev->bdev)
-		fs_info->fs_devices->open_devices--;
+		fs_devices->open_devices--;
 
-	fs_info->fs_devices->num_devices--;
+	fs_devices->num_devices--;
 
 	btrfs_assign_next_active_device(fs_info, tgtdev, NULL);
 
 	list_del_rcu(&tgtdev->dev_list);
 
-	mutex_unlock(&fs_info->fs_devices->device_list_mutex);
-	mutex_unlock(&uuid_mutex);
+	mutex_unlock(&fs_devices->device_list_mutex);
 
 	/*
 	 * The update_dev_time() with in btrfs_scratch_superblocks()
@@ -6920,6 +6919,10 @@ int btrfs_read_chunk_tree(struct btrfs_fs_info *fs_info)
 	if (!path)
 		return -ENOMEM;
 
+	/*
+	 * uuid_mutex is needed only if we are mounting a sprout FS
+	 * otherwise we don't need it.
+	 */
 	mutex_lock(&uuid_mutex);
 	mutex_lock(&fs_info->chunk_mutex);
 
