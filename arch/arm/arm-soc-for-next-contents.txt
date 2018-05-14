@@ -1,0 +1,85 @@
+next/soc
+	ux500/machine
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-stericsson tags/ux500-machine-arm-soc
+	patch
+		ARM: stm32: Select DMA, DMAMUX and MDMA support on STM32MP157C
+	omap/ti-sysc
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/ti-sysc-signed
+	brcm/soc
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/soc
+	samsung/soc
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.18
+
+next/dt
+	ux500/dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-stericsson tags/ux500-dts-arm-soc
+	stm32/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-dt-for-v4.18-1
+	omap/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/dt-signed
+	keystone/dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_dts_for_4.18
+	omap/dt-sdhci
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/dt-sdhci-signed
+		contains depends/sdhci-omap
+	brcm/dt
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/devicetree
+	gemini/dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-nomadik tags/gemini-dts-arm-soc
+	samsung/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-4.18
+	samsung/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt64-4.18
+
+next/drivers
+	patch
+		bus: arm-cci: remove unnecessary unreachable()
+	keystone/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/soc_drivers_for_4.18
+	omap/gpmc
+		https://github.com/rogerq/linux tags/gpmc-omap-for-v4.18
+	hisi/drivers
+		git://github.com/hisilicon/linux-hisi tags/hisi-drivers-for-4.18
+	brcm/drivers
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/drivers
+	samsung/drivers
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.18
+
+next/defconfig
+	patch
+		ARM: multi_v7_defconfig: Add STM32F7 I2C & STM32 USBPHYC support
+	brcm/defconfig
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/defconfig
+	brcm/defconfig-arm64
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/defconfig-arm64
+	samsung/defconfig
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-defconfig-4.18
+
+fixes
+	<no branch> (8b82b66e68b32dd8e22a04db6a0494bfdd65156f)
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-fixes-v4.17
+	<no branch> (edb0c3affe5214a21d71ffb82ca92ed068e828df)
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-fixes-for-v4.17
+	<no branch> (9411ac07cd764be34bbd7ff09125a6b7b9175d4c)
+		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-fixes-for-v4.17
+	<no branch> (9bf4e370048d2bbae5262d0c6280e0142804a272)
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.17-fixes
+	patch
+		arm64: dts: exynos: Fix interrupt type for I2S1 device on Exynos5433
+	<no branch> (ab9d3db5b320a052452b9cd035599ee3c84bbee9)
+		git://git.linaro.org/people/jens.wiklander/linux-tee tags/tee-drv-fixes-for-4.17
+	<no branch> (675c7215aacf54242b2e8bc64bab698abbe764db)
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/devicetree-fixes
+	<no branch> (41bd6adf3c5d3990d7a67639aff53d54483744fa)
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v17/fixes-rc4
+	<no branch> (31c6085562a03124d3f6a5c43dd9888ac44495a5)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scmi-fixes-4.17
+	<no branch> (6d3299aef7df7225ecff653feedafb5d1646998b)
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.17
+	patch
+		ARM: keystone: fix platform_domain_notifier array overrun
+	<no branch> (f43194c1447c9536efb0859c2f3f46f6bf2b9154)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.17-1
+	<no branch> (e6914365fd280fce303a89b8a8d4529af5a2e0f9)
+		git://git.pengutronix.de/pza/linux tags/reset-fixes-for-4.17
+
