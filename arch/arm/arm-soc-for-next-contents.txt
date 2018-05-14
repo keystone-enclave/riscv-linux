@@ -1,0 +1,28 @@
+next/soc
+
+next/dt
+
+next/drivers
+
+fixes
+	<no branch> (8b82b66e68b32dd8e22a04db6a0494bfdd65156f)
+		git://git.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-fixes-v4.17
+	<no branch> (edb0c3affe5214a21d71ffb82ca92ed068e828df)
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-fixes-for-v4.17
+	<no branch> (9411ac07cd764be34bbd7ff09125a6b7b9175d4c)
+		git://git.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-fixes-for-v4.17
+	<no branch> (9bf4e370048d2bbae5262d0c6280e0142804a272)
+		git://git.kernel.org/pub/scm/linux/kernel/git/tegra/linux tags/tegra-for-4.17-fixes
+	patch
+		arm64: dts: exynos: Fix interrupt type for I2S1 device on Exynos5433
+	<no branch> (ab9d3db5b320a052452b9cd035599ee3c84bbee9)
+		git://git.linaro.org/people/jens.wiklander/linux-tee tags/tee-drv-fixes-for-4.17
+	<no branch> (675c7215aacf54242b2e8bc64bab698abbe764db)
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/devicetree-fixes
+	<no branch> (41bd6adf3c5d3990d7a67639aff53d54483744fa)
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v17/fixes-rc4
+	<no branch> (31c6085562a03124d3f6a5c43dd9888ac44495a5)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scmi-fixes-4.17
+	<no branch> (6d3299aef7df7225ecff653feedafb5d1646998b)
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.17
+
