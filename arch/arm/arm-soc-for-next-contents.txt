@@ -15,6 +15,9 @@ next/dt
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/dt-signed
 	keystone/dts
 		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_dts_for_4.18
+	omap/dt-sdhci
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/dt-sdhci-signed
+		contains depends/sdhci-omap
 
 next/drivers
 	patch
@@ -49,4 +52,10 @@ fixes
 		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scmi-fixes-4.17
 	<no branch> (6d3299aef7df7225ecff653feedafb5d1646998b)
 		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.17
+	patch
+		ARM: keystone: fix platform_domain_notifier array overrun
+	<no branch> (f43194c1447c9536efb0859c2f3f46f6bf2b9154)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.17-1
+	<no branch> (e6914365fd280fce303a89b8a8d4529af5a2e0f9)
+		git://git.pengutronix.de/pza/linux tags/reset-fixes-for-4.17
 
