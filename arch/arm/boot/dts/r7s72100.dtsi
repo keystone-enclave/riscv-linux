@@ -77,6 +77,11 @@
 		clock-div = <6>;
 	};
 
+	pmu {
+		compatible = "arm,cortex-a9-pmu";
+		interrupts-extended = <&gic GIC_PPI 0 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
 	rtc_x1_clk: rtc_x1 {
 		#clock-cells = <0>;
 		compatible = "fixed-clock";
@@ -387,7 +392,7 @@
 		wdt: watchdog@fcfe0000 {
 			compatible = "renesas,r7s72100-wdt", "renesas,rza-wdt";
 			reg = <0xfcfe0000 0x6>;
-			interrupts = <GIC_SPI 106 IRQ_TYPE_EDGE_RISING>;
+			interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&p0_clk>;
 		};
 
@@ -682,9 +687,9 @@
 		rtc: rtc@fcff1000 {
 			compatible = "renesas,r7s72100-rtc", "renesas,sh-rtc";
 			reg = <0xfcff1000 0x2e>;
-			interrupts = <GIC_SPI 276 IRQ_TYPE_EDGE_RISING
-				      GIC_SPI 277 IRQ_TYPE_EDGE_RISING
-				      GIC_SPI 278 IRQ_TYPE_EDGE_RISING>;
+			interrupts = <GIC_SPI 276 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 277 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 278 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "alarm", "period", "carry";
 			clocks = <&mstp6_clks R7S72100_CLK_RTC>, <&rtc_x1_clk>,
 				 <&rtc_x3_clk>, <&extal_clk>;
