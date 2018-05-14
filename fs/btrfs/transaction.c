@@ -877,12 +877,7 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	atomic_dec(&cur_trans->num_writers);
 	extwriter_counter_dec(cur_trans, trans->type);
 
-	/*
-	 * Make sure counter is updated before we wake up waiters.
-	 */
-	smp_mb();
-	if (waitqueue_active(&cur_trans->writer_wait))
-		wake_up(&cur_trans->writer_wait);
+	cond_wake_up(&cur_trans->writer_wait);
 	btrfs_put_transaction(cur_trans);
 
 	if (current->journal_info == trans)
@@ -1501,18 +1496,6 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	}
 	btrfs_release_path(path);
 
-	/*
-	 * pull in the delayed directory update
-	 * and the delayed inode item
-	 * otherwise we corrupt the FS during
-	 * snapshot
-	 */
-	ret = btrfs_run_delayed_items(trans);
-	if (ret) {	/* Transaction aborted */
-		btrfs_abort_transaction(trans, ret);
-		goto fail;
-	}
-
 	record_root_in_trans(trans, root, 0);
 	btrfs_set_root_last_snapshot(&root->root_item, trans->transid);
 	memcpy(new_root_item, &root->root_item, sizeof(*new_root_item));
@@ -2043,17 +2026,9 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	if (ret)
 		goto cleanup_transaction;
 
-	ret = btrfs_run_delayed_items(trans);
-	if (ret)
-		goto cleanup_transaction;
-
 	wait_event(cur_trans->writer_wait,
 		   extwriter_counter_read(cur_trans) == 0);
 
-	/* some pending stuffs might be added after the previous flush. */
-	ret = btrfs_run_delayed_items(trans);
-	if (ret)
-		goto cleanup_transaction;
 
 	btrfs_wait_delalloc_flush(fs_info);
 
@@ -2076,6 +2051,16 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 		ret = cur_trans->aborted;
 		goto scrub_continue;
 	}
+
+	/*
+	 * Run delayed items because we need them to be consistent on-disk
+	 * so that snapshots created in create_pending_snapshots don't corrupt
+	 * the filesystem. At this point we are the one doing transaction
+	 * commit and now one can come and introduce new delayed inode items
+	 */
+	ret = btrfs_run_delayed_items(trans);
+	if (ret)
+		goto scrub_continue;
 	/*
 	 * the reloc mutex makes sure that we stop
 	 * the balancing code from coming in and moving
@@ -2083,11 +2068,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	 */
 	mutex_lock(&fs_info->reloc_mutex);
 
-	/*
-	 * We needn't worry about the delayed items because we will
-	 * deal with them in create_pending_snapshot(), which is the
-	 * core function of the snapshot creation.
-	 */
 	ret = create_pending_snapshots(trans);
 	if (ret) {
 		mutex_unlock(&fs_info->reloc_mutex);
