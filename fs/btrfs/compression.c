@@ -990,12 +990,7 @@ static void __free_workspace(int type, struct list_head *workspace,
 		btrfs_compress_op[idx]->free_workspace(workspace);
 	atomic_dec(total_ws);
 wake:
-	/*
-	 * Make sure counter is updated before we wake up waiters.
-	 */
-	smp_mb();
-	if (waitqueue_active(ws_wait))
-		wake_up(ws_wait);
+	cond_wake_up(ws_wait);
 }
 
 static void free_workspace(int type, struct list_head *ws)
@@ -1608,12 +1603,23 @@ out:
 
 unsigned int btrfs_compress_str2level(const char *str)
 {
-	if (strncmp(str, "zlib", 4) != 0)
+	long level;
+	int max;
+
+	if (strncmp(str, "zlib", 4) == 0)
+		max = 9;
+	else if (strncmp(str, "zstd", 4) == 0)
+		max = 15; // encoded on 4 bits, real max is 22
+	else
 		return 0;
 
-	/* Accepted form: zlib:1 up to zlib:9 and nothing left after the number */
-	if (str[4] == ':' && '1' <= str[5] && str[5] <= '9' && str[6] == 0)
-		return str[5] - '0';
+	/* Accepted form: zxxx:1 up to zxxx:9 and nothing left after the number */
+	str += 4;
+	if (*str == ':')
+		str++;
 
-	return BTRFS_ZLIB_DEFAULT_LEVEL;
+	if (kstrtoul(str, 10, &level))
+		return BTRFS_ZLIB_DEFAULT_LEVEL;
+
+	return (level > max) ? BTRFS_ZLIB_DEFAULT_LEVEL : level;
 }
