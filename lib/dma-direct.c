@@ -84,6 +84,13 @@ again:
 		__free_pages(page, page_order);
 		page = NULL;
 
+		if (IS_ENABLED(CONFIG_ZONE_DMA32) &&
+		    dev->coherent_dma_mask < DMA_BIT_MASK(64) &&
+		    !(gfp & (GFP_DMA32 | GFP_DMA))) {
+			gfp |= GFP_DMA32;
+			goto again;
+		}
+
 		if (IS_ENABLED(CONFIG_ZONE_DMA) &&
 		    dev->coherent_dma_mask < DMA_BIT_MASK(32) &&
 		    !(gfp & GFP_DMA)) {
@@ -180,6 +187,5 @@ const struct dma_map_ops dma_direct_ops = {
 	.map_sg			= dma_direct_map_sg,
 	.dma_supported		= dma_direct_supported,
 	.mapping_error		= dma_direct_mapping_error,
-	.is_phys		= 1,
 };
 EXPORT_SYMBOL(dma_direct_ops);

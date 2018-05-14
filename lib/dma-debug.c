@@ -41,6 +41,11 @@
 #define HASH_FN_SHIFT   13
 #define HASH_FN_MASK    (HASH_SIZE - 1)
 
+/* allow architectures to override this if absolutely required */
+#ifndef PREALLOC_DMA_DEBUG_ENTRIES
+#define PREALLOC_DMA_DEBUG_ENTRIES (1 << 16)
+#endif
+
 enum {
 	dma_debug_single,
 	dma_debug_page,
@@ -127,7 +132,7 @@ static u32 min_free_entries;
 static u32 nr_total_entries;
 
 /* number of preallocated entries requested by kernel cmdline */
-static u32 req_entries;
+static u32 nr_prealloc_entries = PREALLOC_DMA_DEBUG_ENTRIES;
 
 /* debugfs dentry's for the stuff above */
 static struct dentry *dma_debug_dent        __read_mostly;
@@ -439,7 +444,6 @@ void debug_dma_dump_mappings(struct device *dev)
 		spin_unlock_irqrestore(&bucket->lock, flags);
 	}
 }
-EXPORT_SYMBOL(debug_dma_dump_mappings);
 
 /*
  * For each mapping (initial cacheline in the case of
@@ -748,7 +752,6 @@ int dma_debug_resize_entries(u32 num_entries)
 
 	return ret;
 }
-EXPORT_SYMBOL(dma_debug_resize_entries);
 
 /*
  * DMA-API debugging init code
@@ -1004,10 +1007,7 @@ void dma_debug_add_bus(struct bus_type *bus)
 	bus_register_notifier(bus, nb);
 }
 
-/*
- * Let the architectures decide how many entries should be preallocated.
- */
-void dma_debug_init(u32 num_entries)
+static int dma_debug_init(void)
 {
 	int i;
 
@@ -1015,7 +1015,7 @@ void dma_debug_init(u32 num_entries)
 	 * called to set dma_debug_initialized
 	 */
 	if (global_disable)
-		return;
+		return 0;
 
 	for (i = 0; i < HASH_SIZE; ++i) {
 		INIT_LIST_HEAD(&dma_entry_hash[i].list);
@@ -1026,17 +1026,14 @@ void dma_debug_init(u32 num_entries)
 		pr_err("DMA-API: error creating debugfs entries - disabling\n");
 		global_disable = true;
 
-		return;
+		return 0;
 	}
 
-	if (req_entries)
-		num_entries = req_entries;
-
-	if (prealloc_memory(num_entries) != 0) {
+	if (prealloc_memory(nr_prealloc_entries) != 0) {
 		pr_err("DMA-API: debugging out of memory error - disabled\n");
 		global_disable = true;
 
-		return;
+		return 0;
 	}
 
 	nr_total_entries = num_free_entries;
@@ -1044,7 +1041,9 @@ void dma_debug_init(u32 num_entries)
 	dma_debug_initialized = true;
 
 	pr_info("DMA-API: debugging enabled by kernel config\n");
+	return 0;
 }
+core_initcall(dma_debug_init);
 
 static __init int dma_debug_cmdline(char *str)
 {
@@ -1061,16 +1060,10 @@ static __init int dma_debug_cmdline(char *str)
 
 static __init int dma_debug_entries_cmdline(char *str)
 {
-	int res;
-
 	if (!str)
 		return -EINVAL;
-
-	res = get_option(&str, &req_entries);
-
-	if (!res)
-		req_entries = 0;
-
+	if (!get_option(&str, &nr_prealloc_entries))
+		nr_prealloc_entries = PREALLOC_DMA_DEBUG_ENTRIES;
 	return 0;
 }
 
