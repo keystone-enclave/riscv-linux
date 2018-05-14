@@ -5430,6 +5430,46 @@ static int _btrfs_ioctl_send(struct file *file, void __user *argp, bool compat)
 	return ret;
 }
 
+static int btrfs_ioctl_clear_free(struct file *file, void __user *arg)
+{
+	struct btrfs_fs_info *fs_info;
+	struct btrfs_ioctl_clear_free_args args;
+	u64 total_bytes;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (copy_from_user(&args, arg, sizeof(args)))
+		return -EFAULT;
+
+	if (args.type >= BTRFS_NR_CLEAR_OP_TYPES)
+		return -EOPNOTSUPP;
+
+	ret = mnt_want_write_file(file);
+	if (ret)
+		return ret;
+
+	fs_info = btrfs_sb(file_inode(file)->i_sb);
+	total_bytes = btrfs_super_total_bytes(fs_info->super_copy);
+	if (args.start > total_bytes) {
+		ret = -EINVAL;
+		goto out_drop_write;
+	}
+
+	ret = btrfs_clear_free_space(fs_info->tree_root, &args);
+	if (ret < 0)
+		goto out_drop_write;
+
+	if (copy_to_user(arg, &args, sizeof(args)))
+		ret = -EFAULT;
+
+out_drop_write:
+	mnt_drop_write_file(file);
+
+	return 0;
+}
+
 long btrfs_ioctl(struct file *file, unsigned int
 		cmd, unsigned long arg)
 {
@@ -5570,6 +5610,8 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_fsgetxattr(file, argp);
 	case FS_IOC_FSSETXATTR:
 		return btrfs_ioctl_fssetxattr(file, argp);
+	case BTRFS_IOC_CLEAR_FREE:
+		return btrfs_ioctl_clear_free(file, argp);
 	}
 
 	return -ENOTTY;
