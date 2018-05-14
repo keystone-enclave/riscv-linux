@@ -5,6 +5,10 @@ next/soc
 		ARM: stm32: Select DMA, DMAMUX and MDMA support on STM32MP157C
 	omap/ti-sysc
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/ti-sysc-signed
+	brcm/soc
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/soc
+	samsung/soc
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.18
 
 next/dt
 	ux500/dts
@@ -18,6 +22,14 @@ next/dt
 	omap/dt-sdhci
 		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.18/dt-sdhci-signed
 		contains depends/sdhci-omap
+	brcm/dt
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/devicetree
+	gemini/dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-nomadik tags/gemini-dts-arm-soc
+	samsung/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-4.18
+	samsung/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt64-4.18
 
 next/drivers
 	patch
@@ -26,10 +38,22 @@ next/drivers
 		git://git.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/soc_drivers_for_4.18
 	omap/gpmc
 		https://github.com/rogerq/linux tags/gpmc-omap-for-v4.18
+	hisi/drivers
+		git://github.com/hisilicon/linux-hisi tags/hisi-drivers-for-4.18
+	brcm/drivers
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/drivers
+	samsung/drivers
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.18
 
 next/defconfig
 	patch
 		ARM: multi_v7_defconfig: Add STM32F7 I2C & STM32 USBPHYC support
+	brcm/defconfig
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/defconfig
+	brcm/defconfig-arm64
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.18/defconfig-arm64
+	samsung/defconfig
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-defconfig-4.18
 
 fixes
 	<no branch> (8b82b66e68b32dd8e22a04db6a0494bfdd65156f)
