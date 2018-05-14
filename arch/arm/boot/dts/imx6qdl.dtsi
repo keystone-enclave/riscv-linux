@@ -1,14 +1,7 @@
-/*
- * Copyright 2011 Freescale Semiconductor, Inc.
- * Copyright 2011 Linaro Ltd.
- *
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
- */
+// SPDX-License-Identifier: GPL-2.0+
+//
+// Copyright 2011 Freescale Semiconductor, Inc.
+// Copyright 2011 Linaro Ltd.
 
 #include <dt-bindings/clock/imx6qdl-clock.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
@@ -58,9 +51,6 @@
 	};
 
 	clocks {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
 		ckil {
 			compatible = "fsl,imx-ckil", "fixed-clock";
 			#clock-cells = <0>;
@@ -1187,8 +1177,6 @@
 			};
 
 			mipi_dsi: mipi@21e0000 {
-				#address-cells = <1>;
-				#size-cells = <0>;
 				reg = <0x021e0000 0x4000>;
 				status = "disabled";
 
@@ -1300,22 +1288,27 @@
 				#size-cells = <0>;
 				reg = <2>;
 
-				ipu1_di0_disp0: disp0-endpoint {
+				ipu1_di0_disp0: endpoint@0 {
+					reg = <0>;
 				};
 
-				ipu1_di0_hdmi: hdmi-endpoint {
+				ipu1_di0_hdmi: endpoint@1 {
+					reg = <1>;
 					remote-endpoint = <&hdmi_mux_0>;
 				};
 
-				ipu1_di0_mipi: mipi-endpoint {
+				ipu1_di0_mipi: endpoint@2 {
+					reg = <2>;
 					remote-endpoint = <&mipi_mux_0>;
 				};
 
-				ipu1_di0_lvds0: lvds0-endpoint {
+				ipu1_di0_lvds0: endpoint@3 {
+					reg = <3>;
 					remote-endpoint = <&lvds0_mux_0>;
 				};
 
-				ipu1_di0_lvds1: lvds1-endpoint {
+				ipu1_di0_lvds1: endpoint@4 {
+					reg = <4>;
 					remote-endpoint = <&lvds1_mux_0>;
 				};
 			};
@@ -1325,22 +1318,27 @@
 				#size-cells = <0>;
 				reg = <3>;
 
-				ipu1_di1_disp1: disp1-endpoint {
+				ipu1_di1_disp1: endpoint@0 {
+					reg = <0>;
 				};
 
-				ipu1_di1_hdmi: hdmi-endpoint {
+				ipu1_di1_hdmi: endpoint@1 {
+					reg = <1>;
 					remote-endpoint = <&hdmi_mux_1>;
 				};
 
-				ipu1_di1_mipi: mipi-endpoint {
+				ipu1_di1_mipi: endpoint@2 {
+					reg = <2>;
 					remote-endpoint = <&mipi_mux_1>;
 				};
 
-				ipu1_di1_lvds0: lvds0-endpoint {
+				ipu1_di1_lvds0: endpoint@3 {
+					reg = <3>;
 					remote-endpoint = <&lvds0_mux_1>;
 				};
 
-				ipu1_di1_lvds1: lvds1-endpoint {
+				ipu1_di1_lvds1: endpoint@4 {
+					reg = <4>;
 					remote-endpoint = <&lvds1_mux_1>;
 				};
 			};
