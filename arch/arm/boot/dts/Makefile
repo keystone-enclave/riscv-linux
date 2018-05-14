@@ -688,6 +688,7 @@ dtb-$(CONFIG_SOC_AM33XX) += \
 	am335x-pdu001.dtb \
 	am335x-pepper.dtb \
 	am335x-phycore-rdk.dtb \
+	am335x-pocketbeagle.dtb \
 	am335x-shc.dtb \
 	am335x-sbc-t335.dtb \
 	am335x-sl50.dtb \
@@ -1054,9 +1055,7 @@ dtb-$(CONFIG_ARCH_U8500) += \
 	ste-hrefprev60-stuib.dtb \
 	ste-hrefprev60-tvk.dtb \
 	ste-hrefv60plus-stuib.dtb \
-	ste-hrefv60plus-tvk.dtb \
-	ste-ccu8540.dtb \
-	ste-ccu9540.dtb
+	ste-hrefv60plus-tvk.dtb
 dtb-$(CONFIG_ARCH_UNIPHIER) += \
 	uniphier-ld4-ref.dtb \
 	uniphier-ld6b-ref.dtb \
