@@ -33,6 +33,7 @@
 #include <linux/cpuidle.h>
 #include <linux/cpu.h>
 #include <acpi/processor.h>
+#include <linux/kvm_para.h>
 
 /*
  * Include the apic definitions for x86 to have the APIC timer related defines
@@ -665,7 +666,8 @@ static void __cpuidle acpi_idle_do_entry(struct acpi_processor_cx *cx)
 		/* Dummy wait op - must do something useless after P_LVL2 read
 		   because chipsets cannot guarantee that STPCLK# signal
 		   gets asserted in time to freeze execution properly. */
-		inl(acpi_gbl_FADT.xpm_timer_block.address);
+		if (!kvm_para_available())
+			inl(acpi_gbl_FADT.xpm_timer_block.address);
 	}
 }
 
@@ -687,7 +689,8 @@ static int acpi_idle_play_dead(struct cpuidle_device *dev, int index)
 		else if (cx->entry_method == ACPI_CSTATE_SYSTEMIO) {
 			inb(cx->address);
 			/* See comment in acpi_idle_do_entry() */
-			inl(acpi_gbl_FADT.xpm_timer_block.address);
+			if (!kvm_para_available())
+				inl(acpi_gbl_FADT.xpm_timer_block.address);
 		} else
 			return -ENODEV;
 	}
