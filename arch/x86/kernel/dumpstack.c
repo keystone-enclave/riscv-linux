@@ -418,3 +418,22 @@ void show_regs(struct pt_regs *regs)
 	if (!user_mode(regs))
 		show_trace_log_lvl(current, regs, NULL, KERN_DEFAULT);
 }
+
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
+#define MIN_STACK_LEFT 256
+
+void __used check_alloca(unsigned long size)
+{
+	unsigned long sp = (unsigned long)&sp;
+	struct stack_info stack_info = {0};
+	unsigned long visit_mask = 0;
+	unsigned long stack_left;
+
+	BUG_ON(get_stack_info(&sp, current, &stack_info, &visit_mask));
+
+	stack_left = sp - (unsigned long)stack_info.begin;
+	BUG_ON(stack_left < MIN_STACK_LEFT ||
+				size >= stack_left - MIN_STACK_LEFT);
+}
+EXPORT_SYMBOL(check_alloca);
+#endif

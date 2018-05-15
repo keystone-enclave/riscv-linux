@@ -15,3 +15,6 @@ obj-y				+= vsyscall/
 
 obj-$(CONFIG_IA32_EMULATION)	+= entry_64_compat.o syscall_32.o
 
+obj-$(CONFIG_GCC_PLUGIN_STACKLEAK) += erase.o
+KASAN_SANITIZE_erase.o		:= n
+

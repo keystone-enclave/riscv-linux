@@ -776,3 +776,36 @@ out_mm:
 out:
 	return res;
 }
+
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
+void __used track_stack(void)
+{
+	/*
+	 * N.B. The arch-specific part of the STACKLEAK feature fills the
+	 * kernel stack with the poison value, which has the register width.
+	 * That code assumes that the value of thread.lowest_stack is aligned
+	 * on the register width boundary.
+	 *
+	 * That is true for x86 and x86_64 because of the kernel stack
+	 * alignment on these platforms (for details, see cc_stack_align in
+	 * arch/x86/Makefile). Take care of that when you port STACKLEAK to
+	 * new platforms.
+	 */
+	unsigned long sp = (unsigned long)&sp;
+
+	/*
+	 * Having CONFIG_STACKLEAK_TRACK_MIN_SIZE larger than
+	 * STACKLEAK_POISON_CHECK_DEPTH makes the poison search in
+	 * erase_kstack() unreliable. Let's prevent that.
+	 */
+	BUILD_BUG_ON(CONFIG_STACKLEAK_TRACK_MIN_SIZE >
+						STACKLEAK_POISON_CHECK_DEPTH);
+
+	if (sp < current->thread.lowest_stack &&
+	    sp >= (unsigned long)task_stack_page(current) +
+					sizeof(unsigned long)) {
+		current->thread.lowest_stack = sp;
+	}
+}
+EXPORT_SYMBOL(track_stack);
+#endif /* CONFIG_GCC_PLUGIN_STACKLEAK */

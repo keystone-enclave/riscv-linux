@@ -329,7 +329,21 @@ For 32-bit we have the following conventions - kernel is built with
 
 #endif
 
+.macro ERASE_KSTACK_NOCLOBBER
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
+	PUSH_AND_CLEAR_REGS
+	call erase_kstack
+	POP_REGS
+#endif
+.endm
+
 #endif /* CONFIG_X86_64 */
+
+.macro ERASE_KSTACK
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
+	call erase_kstack
+#endif
+.endm
 
 /*
  * This does 'call enter_from_user_mode' unless we can avoid it based on

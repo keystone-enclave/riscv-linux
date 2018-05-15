@@ -342,4 +342,8 @@ unsigned long read_word_at_a_time(const void *addr)
 	compiletime_assert(__native_word(t),				\
 		"Need native word sized stores/loads for atomicity.")
 
+/* Poison value points to the unused hole in the virtual memory map */
+#define STACKLEAK_POISON -0xBEEF
+#define STACKLEAK_POISON_CHECK_DEPTH 128
+
 #endif /* __LINUX_COMPILER_H */
