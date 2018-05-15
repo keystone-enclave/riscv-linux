@@ -191,12 +191,35 @@ xfs_alloc_vextent(
  * Free an extent.
  */
 int				/* error */
-xfs_free_extent(
+__xfs_free_extent(
 	struct xfs_trans	*tp,	/* transaction pointer */
 	xfs_fsblock_t		bno,	/* starting block number of extent */
 	xfs_extlen_t		len,	/* length of extent */
 	struct xfs_owner_info	*oinfo,	/* extent owner */
-	enum xfs_ag_resv_type	type);	/* block reservation type */
+	enum xfs_ag_resv_type	type,	/* block reservation type */
+	bool			skip_discard);
+
+static inline int
+xfs_free_extent(
+	struct xfs_trans	*tp,
+	xfs_fsblock_t		bno,
+	xfs_extlen_t		len,
+	struct xfs_owner_info	*oinfo,
+	enum xfs_ag_resv_type	type)
+{
+	return __xfs_free_extent(tp, bno, len, oinfo, type, false);
+}
+
+static inline int
+xfs_free_extent_nodiscard(
+	struct xfs_trans	*tp,
+	xfs_fsblock_t		bno,
+	xfs_extlen_t		len,
+	struct xfs_owner_info	*oinfo,
+	enum xfs_ag_resv_type	type)
+{
+	return __xfs_free_extent(tp, bno, len, oinfo, type, true);
+}
 
 int				/* error */
 xfs_alloc_lookup_le(
@@ -223,6 +246,8 @@ int xfs_read_agf(struct xfs_mount *mp, struct xfs_trans *tp,
 			xfs_agnumber_t agno, int flags, struct xfs_buf **bpp);
 int xfs_alloc_read_agfl(struct xfs_mount *mp, struct xfs_trans *tp,
 			xfs_agnumber_t agno, struct xfs_buf **bpp);
+int xfs_free_agfl_block(struct xfs_trans *, xfs_agnumber_t, xfs_agblock_t,
+			struct xfs_buf *, struct xfs_owner_info *);
 int xfs_alloc_fix_freelist(struct xfs_alloc_arg *args, int flags);
 int xfs_free_extent_fix_freelist(struct xfs_trans *tp, xfs_agnumber_t agno,
 		struct xfs_buf **agbp);
