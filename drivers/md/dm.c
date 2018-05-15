@@ -1089,6 +1089,61 @@ static size_t dm_dax_copy_from_iter(struct dax_device *dax_dev, pgoff_t pgoff,
 	return ret;
 }
 
+static int dm_dax_dev_claim(struct dm_target *ti, struct dm_dev *dev,
+		sector_t start, sector_t len, void *owner)
+{
+	if (fs_dax_claim(dev->dax_dev, owner))
+		return 0;
+	/*
+	 * Outside of a kernel bug there is no reason a dax_dev should
+	 * fail a claim attempt. Device-mapper should have exclusive
+	 * ownership of the dm_dev and the filesystem should have
+	 * exclusive ownership of the dm_target.
+	 */
+	WARN_ON_ONCE(1);
+	return -ENXIO;
+}
+
+static int dm_dax_dev_release(struct dm_target *ti, struct dm_dev *dev,
+		sector_t start, sector_t len, void *owner)
+{
+	fs_dax_release(dev->dax_dev, owner);
+	return 0;
+}
+
+static void dm_dax_iterate_devices(struct dax_device *dax_dev,
+		iterate_devices_callout_fn fn, void *arg)
+{
+	struct mapped_device *md = dax_get_private(dax_dev);
+	struct dm_table *map;
+	struct dm_target *ti;
+	int i, srcu_idx;
+
+	map = dm_get_live_table(md, &srcu_idx);
+
+	for (i = 0; i < dm_table_get_num_targets(map); i++) {
+		ti = dm_table_get_target(map, i);
+
+		if (ti->type->iterate_devices)
+			ti->type->iterate_devices(ti, fn, arg);
+	}
+
+	dm_put_live_table(md, srcu_idx);
+}
+
+static struct dax_device *dm_dax_fs_claim(struct dax_device *dax_dev,
+		void *owner)
+{
+	dm_dax_iterate_devices(dax_dev, dm_dax_dev_claim, owner);
+	/* see comment in dm_dax_dev_claim about this unconditional return */
+	return dax_dev;
+}
+
+static void dm_dax_fs_release(struct dax_device *dax_dev, void *owner)
+{
+	dm_dax_iterate_devices(dax_dev, dm_dax_dev_release, owner);
+}
+
 /*
  * A target may call dm_accept_partial_bio only from the map routine.  It is
  * allowed for all bio types except REQ_PREFLUSH and REQ_OP_ZONE_RESET.
@@ -3134,6 +3189,8 @@ static const struct block_device_operations dm_blk_dops = {
 static const struct dax_operations dm_dax_ops = {
 	.direct_access = dm_dax_direct_access,
 	.copy_from_iter = dm_dax_copy_from_iter,
+	.fs_claim = dm_dax_fs_claim,
+	.fs_release = dm_dax_fs_release,
 };
 
 /*
