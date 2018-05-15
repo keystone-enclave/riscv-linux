@@ -3,8 +3,8 @@
 #
 # A depmod wrapper used by the toplevel Makefile
 
-if test $# -ne 3; then
-	echo "Usage: $0 /sbin/depmod <kernelrelease> <symbolprefix>" >&2
+if test $# -ne 2; then
+	echo "Usage: $0 /sbin/depmod <kernelrelease>" >&2
 	exit 1
 fi
 DEPMOD=$1
