@@ -554,6 +554,7 @@ struct pci_host_bridge *pci_alloc_host_bridge(size_t priv)
 	bridge->native_aer = 1;
 	bridge->native_hotplug = 1;
 	bridge->native_pme = 1;
+	bridge->native_ltr = 1;
 
 	return bridge;
 }
@@ -882,6 +883,45 @@ free:
 	return err;
 }
 
+static bool pci_bridge_child_ext_cfg_accessible(struct pci_dev *bridge)
+{
+	int pos;
+	u32 status;
+
+	/*
+	 * If extended config space isn't accessible on a bridge's primary
+	 * bus, we certainly can't access it on the secondary bus.
+	 */
+	if (bridge->bus->bus_flags & PCI_BUS_FLAGS_NO_EXTCFG)
+		return false;
+
+	/*
+	 * PCIe Root Ports and switch ports are PCIe on both sides, so if
+	 * extended config space is accessible on the primary, it's also
+	 * accessible on the secondary.
+	 */
+	if (pci_is_pcie(bridge) &&
+	    (pci_pcie_type(bridge) == PCI_EXP_TYPE_ROOT_PORT ||
+	     pci_pcie_type(bridge) == PCI_EXP_TYPE_UPSTREAM ||
+	     pci_pcie_type(bridge) == PCI_EXP_TYPE_DOWNSTREAM))
+		return true;
+
+	/*
+	 * For the other bridge types:
+	 *   - PCI-to-PCI bridges
+	 *   - PCIe-to-PCI/PCI-X forward bridges
+	 *   - PCI/PCI-X-to-PCIe reverse bridges
+	 * extended config space on the secondary side is only accessible
+	 * if the bridge supports PCI-X Mode 2.
+	 */
+	pos = pci_find_capability(bridge, PCI_CAP_ID_PCIX);
+	if (!pos)
+		return false;
+
+	pci_read_config_dword(bridge, pos + PCI_X_STATUS, &status);
+	return status & (PCI_X_STATUS_266MHZ | PCI_X_STATUS_533MHZ);
+}
+
 static struct pci_bus *pci_alloc_child_bus(struct pci_bus *parent,
 					   struct pci_dev *bridge, int busnr)
 {
@@ -922,6 +962,16 @@ static struct pci_bus *pci_alloc_child_bus(struct pci_bus *parent,
 	child->dev.parent = child->bridge;
 	pci_set_bus_of_node(child);
 	pci_set_bus_speed(child);
+
+	/*
+	 * Check whether extended config space is accessible on the child
+	 * bus.  Note that we currently assume it is always accessible on
+	 * the root bus.
+	 */
+	if (!pci_bridge_child_ext_cfg_accessible(bridge)) {
+		child->bus_flags |= PCI_BUS_FLAGS_NO_EXTCFG;
+		pci_info(child, "extended config space not accessible\n");
+	}
 
 	/* Set up default resource pointers and names */
 	for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM; i++) {
@@ -1392,6 +1442,9 @@ int pci_cfg_space_size(struct pci_dev *dev)
 	int pos;
 	u32 status;
 	u16 class;
+
+	if (dev->bus->bus_flags & PCI_BUS_FLAGS_NO_EXTCFG)
+		return PCI_CFG_SPACE_SIZE;
 
 	class = dev->class >> 8;
 	if (class == PCI_CLASS_BRIDGE_HOST)
@@ -1954,8 +2007,12 @@ static void pci_configure_relaxed_ordering(struct pci_dev *dev)
 static void pci_configure_ltr(struct pci_dev *dev)
 {
 #ifdef CONFIG_PCIEASPM
+	struct pci_host_bridge *host = pci_find_host_bridge(dev->bus);
 	u32 cap;
 	struct pci_dev *bridge;
+
+	if (!host->native_ltr)
+		return;
 
 	if (!pci_is_pcie(dev))
 		return;

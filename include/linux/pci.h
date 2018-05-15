@@ -217,6 +217,7 @@ enum pci_bus_flags {
 	PCI_BUS_FLAGS_NO_MSI	= (__force pci_bus_flags_t) 1,
 	PCI_BUS_FLAGS_NO_MMRBC	= (__force pci_bus_flags_t) 2,
 	PCI_BUS_FLAGS_NO_AERSID	= (__force pci_bus_flags_t) 4,
+	PCI_BUS_FLAGS_NO_EXTCFG	= (__force pci_bus_flags_t) 8,
 };
 
 /* Values from Link Status register, PCIe r3.1, sec 7.8.8 */
@@ -406,6 +407,9 @@ struct pci_dev {
 	struct bin_attribute *res_attr[DEVICE_COUNT_RESOURCE]; /* sysfs file for resources */
 	struct bin_attribute *res_attr_wc[DEVICE_COUNT_RESOURCE]; /* sysfs file for WC mapping of resources */
 
+#ifdef CONFIG_HOTPLUG_PCI_PCIE
+	unsigned int	broken_cmd_compl:1;	/* No compl for some cmds */
+#endif
 #ifdef CONFIG_PCIE_PTM
 	unsigned int	ptm_root:1;
 	unsigned int	ptm_enabled:1;
@@ -473,6 +477,7 @@ struct pci_host_bridge {
 	unsigned int	native_aer:1;		/* OS may use PCIe AER */
 	unsigned int	native_hotplug:1;	/* OS may use PCIe hotplug */
 	unsigned int	native_pme:1;		/* OS may use PCIe PME */
+	unsigned int	native_ltr:1;		/* OS may use PCIe LTR */
 	/* Resource alignment requirements */
 	resource_size_t (*align_resource)(struct pci_dev *dev,
 			const struct resource *res,
@@ -1954,6 +1959,7 @@ int pci_num_vf(struct pci_dev *dev);
 int pci_vfs_assigned(struct pci_dev *dev);
 int pci_sriov_set_totalvfs(struct pci_dev *dev, u16 numvfs);
 int pci_sriov_get_totalvfs(struct pci_dev *dev);
+int pci_sriov_configure_simple(struct pci_dev *dev, int nr_virtfn);
 resource_size_t pci_iov_resource_size(struct pci_dev *dev, int resno);
 void pci_vf_drivers_autoprobe(struct pci_dev *dev, bool probe);
 
@@ -1986,6 +1992,7 @@ static inline int pci_sriov_set_totalvfs(struct pci_dev *dev, u16 numvfs)
 { return 0; }
 static inline int pci_sriov_get_totalvfs(struct pci_dev *dev)
 { return 0; }
+#define pci_sriov_configure_simple	NULL
 static inline resource_size_t pci_iov_resource_size(struct pci_dev *dev, int resno)
 { return 0; }
 static inline void pci_vf_drivers_autoprobe(struct pci_dev *dev, bool probe) { }
