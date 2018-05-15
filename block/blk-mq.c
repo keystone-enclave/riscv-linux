@@ -309,7 +309,8 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 	RB_CLEAR_NODE(&rq->rb_node);
 	rq->rq_disk = NULL;
 	rq->part = NULL;
-	rq->start_time = jiffies;
+	rq->start_time_ns = ktime_get_ns();
+	rq->io_start_time_ns = 0;
 	rq->nr_phys_segments = 0;
 #if defined(CONFIG_BLK_DEV_INTEGRITY)
 	rq->nr_integrity_segments = 0;
@@ -328,8 +329,6 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 
 #ifdef CONFIG_BLK_CGROUP
 	rq->rl = NULL;
-	set_start_time_ns(rq);
-	rq->io_start_time_ns = 0;
 #endif
 
 	data->ctx->rq_dispatched[op_is_sync(op)]++;
@@ -361,9 +360,11 @@ static struct request *blk_mq_get_request(struct request_queue *q,
 
 		/*
 		 * Flush requests are special and go directly to the
-		 * dispatch list.
+		 * dispatch list. Don't include reserved tags in the
+		 * limiting, as it isn't useful.
 		 */
-		if (!op_is_flush(op) && e->type->ops.mq.limit_depth)
+		if (!op_is_flush(op) && e->type->ops.mq.limit_depth &&
+		    !(data->flags & BLK_MQ_REQ_RESERVED))
 			e->type->ops.mq.limit_depth(op, data);
 	}
 
@@ -488,7 +489,7 @@ void blk_mq_free_request(struct request *rq)
 	if (unlikely(laptop_mode && !blk_rq_is_passthrough(rq)))
 		laptop_io_completion(q->backing_dev_info);
 
-	wbt_done(q->rq_wb, &rq->issue_stat);
+	wbt_done(q->rq_wb, rq);
 
 	if (blk_rq_rl(rq))
 		blk_put_rl(blk_rq_rl(rq));
@@ -505,10 +506,17 @@ EXPORT_SYMBOL_GPL(blk_mq_free_request);
 
 inline void __blk_mq_end_request(struct request *rq, blk_status_t error)
 {
-	blk_account_io_done(rq);
+	u64 now = ktime_get_ns();
+
+	if (rq->rq_flags & RQF_STATS) {
+		blk_mq_poll_stats_start(rq->q);
+		blk_stat_add(rq, now);
+	}
+
+	blk_account_io_done(rq, now);
 
 	if (rq->end_io) {
-		wbt_done(rq->q->rq_wb, &rq->issue_stat);
+		wbt_done(rq->q->rq_wb, rq);
 		rq->end_io(rq, error);
 	} else {
 		if (unlikely(blk_bidi_rq(rq)))
@@ -544,10 +552,6 @@ static void __blk_mq_complete_request(struct request *rq)
 
 	if (rq->internal_tag != -1)
 		blk_mq_sched_completed_request(rq);
-	if (rq->rq_flags & RQF_STATS) {
-		blk_mq_poll_stats_start(rq->q);
-		blk_stat_add(rq);
-	}
 
 	if (!test_bit(QUEUE_FLAG_SAME_COMP, &rq->q->queue_flags)) {
 		rq->q->softirq_done_fn(rq);
@@ -669,9 +673,12 @@ void blk_mq_start_request(struct request *rq)
 	trace_block_rq_issue(q, rq);
 
 	if (test_bit(QUEUE_FLAG_STATS, &q->queue_flags)) {
-		blk_stat_set_issue(&rq->issue_stat, blk_rq_sectors(rq));
+		rq->io_start_time_ns = ktime_get_ns();
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
+		rq->throtl_size = blk_rq_sectors(rq);
+#endif
 		rq->rq_flags |= RQF_STATS;
-		wbt_issue(q->rq_wb, &rq->issue_stat);
+		wbt_issue(q->rq_wb, rq);
 	}
 
 	WARN_ON_ONCE(blk_mq_rq_state(rq) != MQ_RQ_IDLE);
@@ -719,7 +726,7 @@ static void __blk_mq_requeue_request(struct request *rq)
 	blk_mq_put_driver_tag(rq);
 
 	trace_block_rq_requeue(q, rq);
-	wbt_requeue(q->rq_wb, &rq->issue_stat);
+	wbt_requeue(q->rq_wb, rq);
 
 	if (blk_mq_rq_state(rq) != MQ_RQ_IDLE) {
 		blk_mq_rq_update_state(rq, MQ_RQ_IDLE);
@@ -1882,7 +1889,7 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 		return BLK_QC_T_NONE;
 	}
 
-	wbt_track(&rq->issue_stat, wb_acct);
+	wbt_track(rq, wb_acct);
 
 	cookie = request_to_qc_t(data.hctx, rq);
 

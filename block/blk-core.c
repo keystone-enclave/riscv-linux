@@ -196,8 +196,7 @@ void blk_rq_init(struct request_queue *q, struct request *rq)
 	RB_CLEAR_NODE(&rq->rb_node);
 	rq->tag = -1;
 	rq->internal_tag = -1;
-	rq->start_time = jiffies;
-	set_start_time_ns(rq);
+	rq->start_time_ns = ktime_get_ns();
 	rq->part = NULL;
 	seqcount_init(&rq->gstate_seq);
 	u64_stats_init(&rq->aborted_gstate_sync);
@@ -280,6 +279,10 @@ static void req_bio_endio(struct request *rq, struct bio *bio,
 	bio_advance(bio, nbytes);
 
 	/* don't actually finish bio if it's part of flush sequence */
+	/*
+	 * XXX this code looks suspicious - it's not consistent with advancing
+	 * req->bio in caller
+	 */
 	if (bio->bi_iter.bi_size == 0 && !(rq->rq_flags & RQF_FLUSH_SEQ))
 		bio_endio(bio);
 }
@@ -360,7 +363,6 @@ EXPORT_SYMBOL(blk_start_queue_async);
 void blk_start_queue(struct request_queue *q)
 {
 	lockdep_assert_held(q->queue_lock);
-	WARN_ON(!in_interrupt() && !irqs_disabled());
 	WARN_ON_ONCE(q->mq_ops);
 
 	queue_flag_clear(QUEUE_FLAG_STOPPED, q);
@@ -1334,6 +1336,7 @@ int blk_update_nr_requests(struct request_queue *q, unsigned int nr)
  * @op: operation and flags
  * @bio: bio to allocate request for (can be %NULL)
  * @flags: BLQ_MQ_REQ_* flags
+ * @gfp_mask: allocator flags
  *
  * Get a free request from @q.  This function may fail under memory
  * pressure or if @q is dead.
@@ -1343,7 +1346,7 @@ int blk_update_nr_requests(struct request_queue *q, unsigned int nr)
  * Returns request pointer on success, with @q->queue_lock *not held*.
  */
 static struct request *__get_request(struct request_list *rl, unsigned int op,
-				     struct bio *bio, blk_mq_req_flags_t flags)
+		struct bio *bio, blk_mq_req_flags_t flags, gfp_t gfp_mask)
 {
 	struct request_queue *q = rl->q;
 	struct request *rq;
@@ -1352,8 +1355,6 @@ static struct request *__get_request(struct request_list *rl, unsigned int op,
 	struct io_cq *icq = NULL;
 	const bool is_sync = op_is_sync(op);
 	int may_queue;
-	gfp_t gfp_mask = flags & BLK_MQ_REQ_NOWAIT ? GFP_ATOMIC :
-			 __GFP_DIRECT_RECLAIM;
 	req_flags_t rq_flags = RQF_ALLOCED;
 
 	lockdep_assert_held(q->queue_lock);
@@ -1517,8 +1518,9 @@ rq_starved:
  * @op: operation and flags
  * @bio: bio to allocate request for (can be %NULL)
  * @flags: BLK_MQ_REQ_* flags.
+ * @gfp: allocator flags
  *
- * Get a free request from @q.  If %__GFP_DIRECT_RECLAIM is set in @gfp_mask,
+ * Get a free request from @q.  If %BLK_MQ_REQ_NOWAIT is set in @flags,
  * this function keeps retrying under memory pressure and fails iff @q is dead.
  *
  * Must be called with @q->queue_lock held and,
@@ -1526,7 +1528,7 @@ rq_starved:
  * Returns request pointer on success, with @q->queue_lock *not held*.
  */
 static struct request *get_request(struct request_queue *q, unsigned int op,
-				   struct bio *bio, blk_mq_req_flags_t flags)
+		struct bio *bio, blk_mq_req_flags_t flags, gfp_t gfp)
 {
 	const bool is_sync = op_is_sync(op);
 	DEFINE_WAIT(wait);
@@ -1538,7 +1540,7 @@ static struct request *get_request(struct request_queue *q, unsigned int op,
 
 	rl = blk_get_rl(q, bio);	/* transferred to @rq on success */
 retry:
-	rq = __get_request(rl, op, bio, flags);
+	rq = __get_request(rl, op, bio, flags, gfp);
 	if (!IS_ERR(rq))
 		return rq;
 
@@ -1579,8 +1581,7 @@ static struct request *blk_old_get_request(struct request_queue *q,
 				unsigned int op, blk_mq_req_flags_t flags)
 {
 	struct request *rq;
-	gfp_t gfp_mask = flags & BLK_MQ_REQ_NOWAIT ? GFP_ATOMIC :
-			 __GFP_DIRECT_RECLAIM;
+	gfp_t gfp_mask = flags & BLK_MQ_REQ_NOWAIT ? GFP_ATOMIC : GFP_NOIO;
 	int ret = 0;
 
 	WARN_ON_ONCE(q->mq_ops);
@@ -1592,7 +1593,7 @@ static struct request *blk_old_get_request(struct request_queue *q,
 	if (ret)
 		return ERR_PTR(ret);
 	spin_lock_irq(q->queue_lock);
-	rq = get_request(q, op, NULL, flags);
+	rq = get_request(q, op, NULL, flags, gfp_mask);
 	if (IS_ERR(rq)) {
 		spin_unlock_irq(q->queue_lock);
 		blk_queue_exit(q);
@@ -1607,13 +1608,13 @@ static struct request *blk_old_get_request(struct request_queue *q,
 }
 
 /**
- * blk_get_request_flags - allocate a request
+ * blk_get_request - allocate a request
  * @q: request queue to allocate a request for
  * @op: operation (REQ_OP_*) and REQ_* flags, e.g. REQ_SYNC.
  * @flags: BLK_MQ_REQ_* flags, e.g. BLK_MQ_REQ_NOWAIT.
  */
-struct request *blk_get_request_flags(struct request_queue *q, unsigned int op,
-				      blk_mq_req_flags_t flags)
+struct request *blk_get_request(struct request_queue *q, unsigned int op,
+				blk_mq_req_flags_t flags)
 {
 	struct request *req;
 
@@ -1631,14 +1632,6 @@ struct request *blk_get_request_flags(struct request_queue *q, unsigned int op,
 	}
 
 	return req;
-}
-EXPORT_SYMBOL(blk_get_request_flags);
-
-struct request *blk_get_request(struct request_queue *q, unsigned int op,
-				gfp_t gfp_mask)
-{
-	return blk_get_request_flags(q, op, gfp_mask & __GFP_DIRECT_RECLAIM ?
-				     0 : BLK_MQ_REQ_NOWAIT);
 }
 EXPORT_SYMBOL(blk_get_request);
 
@@ -1660,7 +1653,7 @@ void blk_requeue_request(struct request_queue *q, struct request *rq)
 	blk_delete_timer(rq);
 	blk_clear_rq_complete(rq);
 	trace_block_rq_requeue(q, rq);
-	wbt_requeue(q->rq_wb, &rq->issue_stat);
+	wbt_requeue(q->rq_wb, rq);
 
 	if (rq->rq_flags & RQF_QUEUED)
 		blk_queue_end_tag(q, rq);
@@ -1767,7 +1760,7 @@ void __blk_put_request(struct request_queue *q, struct request *req)
 	/* this is a bio leak */
 	WARN_ON(req->bio != NULL);
 
-	wbt_done(q->rq_wb, &req->issue_stat);
+	wbt_done(q->rq_wb, req);
 
 	/*
 	 * Request may not have originated from ll_rw_blk. if not,
@@ -2066,7 +2059,7 @@ get_rq:
 	 * Returns with the queue unlocked.
 	 */
 	blk_queue_enter_live(q);
-	req = get_request(q, bio->bi_opf, bio, 0);
+	req = get_request(q, bio->bi_opf, bio, 0, GFP_NOIO);
 	if (IS_ERR(req)) {
 		blk_queue_exit(q);
 		__wbt_done(q->rq_wb, wb_acct);
@@ -2078,7 +2071,7 @@ get_rq:
 		goto out_unlock;
 	}
 
-	wbt_track(&req->issue_stat, wb_acct);
+	wbt_track(req, wb_acct);
 
 	/*
 	 * After dropping the lock and possibly sleeping here, our request
@@ -2727,7 +2720,7 @@ void blk_account_io_completion(struct request *req, unsigned int bytes)
 	}
 }
 
-void blk_account_io_done(struct request *req)
+void blk_account_io_done(struct request *req, u64 now)
 {
 	/*
 	 * Account IO completion.  flush_rq isn't accounted as a
@@ -2735,11 +2728,12 @@ void blk_account_io_done(struct request *req)
 	 * containing request is enough.
 	 */
 	if (blk_do_io_stat(req) && !(req->rq_flags & RQF_FLUSH_SEQ)) {
-		unsigned long duration = jiffies - req->start_time;
+		unsigned long duration;
 		const int rw = rq_data_dir(req);
 		struct hd_struct *part;
 		int cpu;
 
+		duration = nsecs_to_jiffies(now - req->start_time_ns);
 		cpu = part_stat_lock();
 		part = req->part;
 
@@ -2970,10 +2964,8 @@ static void blk_dequeue_request(struct request *rq)
 	 * and to it is freed is accounted as io that is in progress at
 	 * the driver side.
 	 */
-	if (blk_account_rq(rq)) {
+	if (blk_account_rq(rq))
 		q->in_flight[rq_is_sync(rq)]++;
-		set_io_start_time_ns(rq);
-	}
 }
 
 /**
@@ -2992,9 +2984,12 @@ void blk_start_request(struct request *req)
 	blk_dequeue_request(req);
 
 	if (test_bit(QUEUE_FLAG_STATS, &req->q->queue_flags)) {
-		blk_stat_set_issue(&req->issue_stat, blk_rq_sectors(req));
+		req->io_start_time_ns = ktime_get_ns();
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
+		req->throtl_size = blk_rq_sectors(req);
+#endif
 		req->rq_flags |= RQF_STATS;
-		wbt_issue(req->q->rq_wb, &req->issue_stat);
+		wbt_issue(req->q->rq_wb, req);
 	}
 
 	BUG_ON(blk_rq_is_complete(req));
@@ -3092,8 +3087,10 @@ bool blk_update_request(struct request *req, blk_status_t error,
 		struct bio *bio = req->bio;
 		unsigned bio_bytes = min(bio->bi_iter.bi_size, nr_bytes);
 
-		if (bio_bytes == bio->bi_iter.bi_size)
+		if (bio_bytes == bio->bi_iter.bi_size) {
 			req->bio = bio->bi_next;
+			bio->bi_next = NULL;
+		}
 
 		/* Completion has already been traced */
 		bio_clear_flag(bio, BIO_TRACE_COMPLETION);
@@ -3190,12 +3187,13 @@ EXPORT_SYMBOL_GPL(blk_unprep_request);
 void blk_finish_request(struct request *req, blk_status_t error)
 {
 	struct request_queue *q = req->q;
+	u64 now = ktime_get_ns();
 
 	lockdep_assert_held(req->q->queue_lock);
 	WARN_ON_ONCE(q->mq_ops);
 
 	if (req->rq_flags & RQF_STATS)
-		blk_stat_add(req);
+		blk_stat_add(req, now);
 
 	if (req->rq_flags & RQF_QUEUED)
 		blk_queue_end_tag(q, req);
@@ -3210,10 +3208,10 @@ void blk_finish_request(struct request *req, blk_status_t error)
 	if (req->rq_flags & RQF_DONTPREP)
 		blk_unprep_request(req);
 
-	blk_account_io_done(req);
+	blk_account_io_done(req, now);
 
 	if (req->end_io) {
-		wbt_done(req->q->rq_wb, &req->issue_stat);
+		wbt_done(req->q->rq_wb, req);
 		req->end_io(req, error);
 	} else {
 		if (blk_bidi_rq(req))
@@ -3519,7 +3517,7 @@ int blk_rq_prep_clone(struct request *rq, struct request *rq_src,
 	struct bio *bio, *bio_src;
 
 	if (!bs)
-		bs = fs_bio_set;
+		bs = &fs_bio_set;
 
 	__rq_for_each_bio(bio_src, rq_src) {
 		bio = bio_clone_fast(bio_src, gfp_mask, bs);
@@ -3630,7 +3628,7 @@ static void queue_unplugged(struct request_queue *q, unsigned int depth,
 		blk_run_queue_async(q);
 	else
 		__blk_run_queue(q);
-	spin_unlock(q->queue_lock);
+	spin_unlock_irq(q->queue_lock);
 }
 
 static void flush_plug_callbacks(struct blk_plug *plug, bool from_schedule)
@@ -3678,7 +3676,6 @@ EXPORT_SYMBOL(blk_check_plugged);
 void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 {
 	struct request_queue *q;
-	unsigned long flags;
 	struct request *rq;
 	LIST_HEAD(list);
 	unsigned int depth;
@@ -3698,11 +3695,6 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	q = NULL;
 	depth = 0;
 
-	/*
-	 * Save and disable interrupts here, to avoid doing it for every
-	 * queue lock we have to take.
-	 */
-	local_irq_save(flags);
 	while (!list_empty(&list)) {
 		rq = list_entry_rq(list.next);
 		list_del_init(&rq->queuelist);
@@ -3715,7 +3707,7 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 				queue_unplugged(q, depth, from_schedule);
 			q = rq->q;
 			depth = 0;
-			spin_lock(q->queue_lock);
+			spin_lock_irq(q->queue_lock);
 		}
 
 		/*
@@ -3742,8 +3734,6 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	 */
 	if (q)
 		queue_unplugged(q, depth, from_schedule);
-
-	local_irq_restore(flags);
 }
 
 void blk_finish_plug(struct blk_plug *plug)

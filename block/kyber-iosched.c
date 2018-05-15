@@ -378,6 +378,7 @@ static void kyber_exit_sched(struct elevator_queue *e)
 
 static int kyber_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 {
+	struct kyber_queue_data *kqd = hctx->queue->elevator->elevator_data;
 	struct kyber_hctx_data *khd;
 	int i;
 
@@ -400,6 +401,8 @@ static int kyber_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 	khd->batching = 0;
 
 	hctx->sched_data = khd;
+	sbitmap_queue_min_shallow_depth(&hctx->sched_tags->bitmap_tags,
+					kqd->async_depth);
 
 	return 0;
 }
@@ -485,11 +488,11 @@ static void kyber_completed_request(struct request *rq)
 	if (blk_stat_is_active(kqd->cb))
 		return;
 
-	now = __blk_stat_time(ktime_to_ns(ktime_get()));
-	if (now < blk_stat_time(&rq->issue_stat))
+	now = ktime_get_ns();
+	if (now < rq->io_start_time_ns)
 		return;
 
-	latency = now - blk_stat_time(&rq->issue_stat);
+	latency = now - rq->io_start_time_ns;
 
 	if (latency > target)
 		blk_stat_activate_msecs(kqd->cb, 10);

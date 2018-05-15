@@ -487,46 +487,6 @@ static struct request *bfq_choose_req(struct bfq_data *bfqd,
 }
 
 /*
- * See the comments on bfq_limit_depth for the purpose of
- * the depths set in the function.
- */
-static void bfq_update_depths(struct bfq_data *bfqd, struct sbitmap_queue *bt)
-{
-	bfqd->sb_shift = bt->sb.shift;
-
-	/*
-	 * In-word depths if no bfq_queue is being weight-raised:
-	 * leaving 25% of tags only for sync reads.
-	 *
-	 * In next formulas, right-shift the value
-	 * (1U<<bfqd->sb_shift), instead of computing directly
-	 * (1U<<(bfqd->sb_shift - something)), to be robust against
-	 * any possible value of bfqd->sb_shift, without having to
-	 * limit 'something'.
-	 */
-	/* no more than 50% of tags for async I/O */
-	bfqd->word_depths[0][0] = max((1U<<bfqd->sb_shift)>>1, 1U);
-	/*
-	 * no more than 75% of tags for sync writes (25% extra tags
-	 * w.r.t. async I/O, to prevent async I/O from starving sync
-	 * writes)
-	 */
-	bfqd->word_depths[0][1] = max(((1U<<bfqd->sb_shift) * 3)>>2, 1U);
-
-	/*
-	 * In-word depths in case some bfq_queue is being weight-
-	 * raised: leaving ~63% of tags for sync reads. This is the
-	 * highest percentage for which, in our tests, application
-	 * start-up times didn't suffer from any regression due to tag
-	 * shortage.
-	 */
-	/* no more than ~18% of tags for async I/O */
-	bfqd->word_depths[1][0] = max(((1U<<bfqd->sb_shift) * 3)>>4, 1U);
-	/* no more than ~37% of tags for sync writes (~20% extra tags) */
-	bfqd->word_depths[1][1] = max(((1U<<bfqd->sb_shift) * 6)>>4, 1U);
-}
-
-/*
  * Async I/O can easily starve sync I/O (both sync reads and sync
  * writes), by consuming all tags. Similarly, storms of sync writes,
  * such as those that sync(2) may trigger, can starve sync reads.
@@ -535,24 +495,10 @@ static void bfq_update_depths(struct bfq_data *bfqd, struct sbitmap_queue *bt)
  */
 static void bfq_limit_depth(unsigned int op, struct blk_mq_alloc_data *data)
 {
-	struct blk_mq_tags *tags = blk_mq_tags_from_data(data);
 	struct bfq_data *bfqd = data->q->elevator->elevator_data;
-	struct sbitmap_queue *bt;
 
 	if (op_is_sync(op) && !op_is_write(op))
 		return;
-
-	if (data->flags & BLK_MQ_REQ_RESERVED) {
-		if (unlikely(!tags->nr_reserved_tags)) {
-			WARN_ON_ONCE(1);
-			return;
-		}
-		bt = &tags->breserved_tags;
-	} else
-		bt = &tags->bitmap_tags;
-
-	if (unlikely(bfqd->sb_shift != bt->sb.shift))
-		bfq_update_depths(bfqd, bt);
 
 	data->shallow_depth =
 		bfqd->word_depths[!!bfqd->wr_busy_queues][op_is_sync(op)];
@@ -1858,6 +1804,8 @@ static int bfq_request_merge(struct request_queue *q, struct request **req,
 	return ELEVATOR_NO_MERGE;
 }
 
+static struct bfq_queue *bfq_init_rq(struct request *rq);
+
 static void bfq_request_merged(struct request_queue *q, struct request *req,
 			       enum elv_merge type)
 {
@@ -1866,7 +1814,7 @@ static void bfq_request_merged(struct request_queue *q, struct request *req,
 	    blk_rq_pos(req) <
 	    blk_rq_pos(container_of(rb_prev(&req->rb_node),
 				    struct request, rb_node))) {
-		struct bfq_queue *bfqq = RQ_BFQQ(req);
+		struct bfq_queue *bfqq = bfq_init_rq(req);
 		struct bfq_data *bfqd = bfqq->bfqd;
 		struct request *prev, *next_rq;
 
@@ -1894,7 +1842,8 @@ static void bfq_request_merged(struct request_queue *q, struct request *req,
 static void bfq_requests_merged(struct request_queue *q, struct request *rq,
 				struct request *next)
 {
-	struct bfq_queue *bfqq = RQ_BFQQ(rq), *next_bfqq = RQ_BFQQ(next);
+	struct bfq_queue *bfqq = bfq_init_rq(rq),
+		*next_bfqq = bfq_init_rq(next);
 
 	if (!RB_EMPTY_NODE(&rq->rb_node))
 		goto end;
@@ -4540,14 +4489,12 @@ static inline void bfq_update_insert_stats(struct request_queue *q,
 					   unsigned int cmd_flags) {}
 #endif
 
-static void bfq_prepare_request(struct request *rq, struct bio *bio);
-
 static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 			       bool at_head)
 {
 	struct request_queue *q = hctx->queue;
 	struct bfq_data *bfqd = q->elevator->elevator_data;
-	struct bfq_queue *bfqq = RQ_BFQQ(rq);
+	struct bfq_queue *bfqq;
 	bool idle_timer_disabled = false;
 	unsigned int cmd_flags;
 
@@ -4562,24 +4509,13 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	blk_mq_sched_request_inserted(rq);
 
 	spin_lock_irq(&bfqd->lock);
+	bfqq = bfq_init_rq(rq);
 	if (at_head || blk_rq_is_passthrough(rq)) {
 		if (at_head)
 			list_add(&rq->queuelist, &bfqd->dispatch);
 		else
 			list_add_tail(&rq->queuelist, &bfqd->dispatch);
-	} else {
-		if (WARN_ON_ONCE(!bfqq)) {
-			/*
-			 * This should never happen. Most likely rq is
-			 * a requeued regular request, being
-			 * re-inserted without being first
-			 * re-prepared. Do a prepare, to avoid
-			 * failure.
-			 */
-			bfq_prepare_request(rq, rq->bio);
-			bfqq = RQ_BFQQ(rq);
-		}
-
+	} else { /* bfqq is assumed to be non null here */
 		idle_timer_disabled = __bfq_insert_request(bfqd, rq);
 		/*
 		 * Update bfqq, because, if a queue merge has occurred
@@ -4778,8 +4714,8 @@ static void bfq_finish_requeue_request(struct request *rq)
 
 	if (rq->rq_flags & RQF_STARTED)
 		bfqg_stats_update_completion(bfqq_group(bfqq),
-					     rq_start_time_ns(rq),
-					     rq_io_start_time_ns(rq),
+					     rq->start_time_ns,
+					     rq->io_start_time_ns,
 					     rq->cmd_flags);
 
 	if (likely(rq->rq_flags & RQF_STARTED)) {
@@ -4922,11 +4858,48 @@ static struct bfq_queue *bfq_get_bfqq_handle_split(struct bfq_data *bfqd,
 }
 
 /*
- * Allocate bfq data structures associated with this request.
+ * Only reset private fields. The actual request preparation will be
+ * performed by bfq_init_rq, when rq is either inserted or merged. See
+ * comments on bfq_init_rq for the reason behind this delayed
+ * preparation.
  */
 static void bfq_prepare_request(struct request *rq, struct bio *bio)
 {
+	/*
+	 * Regardless of whether we have an icq attached, we have to
+	 * clear the scheduler pointers, as they might point to
+	 * previously allocated bic/bfqq structs.
+	 */
+	rq->elv.priv[0] = rq->elv.priv[1] = NULL;
+}
+
+/*
+ * If needed, init rq, allocate bfq data structures associated with
+ * rq, and increment reference counters in the destination bfq_queue
+ * for rq. Return the destination bfq_queue for rq, or NULL is rq is
+ * not associated with any bfq_queue.
+ *
+ * This function is invoked by the functions that perform rq insertion
+ * or merging. One may have expected the above preparation operations
+ * to be performed in bfq_prepare_request, and not delayed to when rq
+ * is inserted or merged. The rationale behind this delayed
+ * preparation is that, after the prepare_request hook is invoked for
+ * rq, rq may still be transformed into a request with no icq, i.e., a
+ * request not associated with any queue. No bfq hook is invoked to
+ * signal this tranformation. As a consequence, should these
+ * preparation operations be performed when the prepare_request hook
+ * is invoked, and should rq be transformed one moment later, bfq
+ * would end up in an inconsistent state, because it would have
+ * incremented some queue counters for an rq destined to
+ * transformation, without any chance to correctly lower these
+ * counters back. In contrast, no transformation can still happen for
+ * rq after rq has been inserted or merged. So, it is safe to execute
+ * these preparation operations when rq is finally inserted or merged.
+ */
+static struct bfq_queue *bfq_init_rq(struct request *rq)
+{
 	struct request_queue *q = rq->q;
+	struct bio *bio = rq->bio;
 	struct bfq_data *bfqd = q->elevator->elevator_data;
 	struct bfq_io_cq *bic;
 	const int is_sync = rq_is_sync(rq);
@@ -4934,19 +4907,20 @@ static void bfq_prepare_request(struct request *rq, struct bio *bio)
 	bool new_queue = false;
 	bool bfqq_already_existing = false, split = false;
 
+	if (unlikely(!rq->elv.icq))
+		return NULL;
+
 	/*
-	 * Even if we don't have an icq attached, we should still clear
-	 * the scheduler pointers, as they might point to previously
-	 * allocated bic/bfqq structs.
+	 * Assuming that elv.priv[1] is set only if everything is set
+	 * for this rq. This holds true, because this function is
+	 * invoked only for insertion or merging, and, after such
+	 * events, a request cannot be manipulated any longer before
+	 * being removed from bfq.
 	 */
-	if (!rq->elv.icq) {
-		rq->elv.priv[0] = rq->elv.priv[1] = NULL;
-		return;
-	}
+	if (rq->elv.priv[1])
+		return rq->elv.priv[1];
 
 	bic = icq_to_bic(rq->elv.icq);
-
-	spin_lock_irq(&bfqd->lock);
 
 	bfq_check_ioprio_change(bic, bio);
 
@@ -5006,7 +4980,7 @@ static void bfq_prepare_request(struct request *rq, struct bio *bio)
 	if (unlikely(bfq_bfqq_just_created(bfqq)))
 		bfq_handle_burst(bfqd, bfqq);
 
-	spin_unlock_irq(&bfqd->lock);
+	return bfqq;
 }
 
 static void bfq_idle_slice_timer_body(struct bfq_queue *bfqq)
@@ -5103,6 +5077,64 @@ void bfq_put_async_queues(struct bfq_data *bfqd, struct bfq_group *bfqg)
 			__bfq_put_async_bfqq(bfqd, &bfqg->async_bfqq[i][j]);
 
 	__bfq_put_async_bfqq(bfqd, &bfqg->async_idle_bfqq);
+}
+
+/*
+ * See the comments on bfq_limit_depth for the purpose of
+ * the depths set in the function. Return minimum shallow depth we'll use.
+ */
+static unsigned int bfq_update_depths(struct bfq_data *bfqd,
+				      struct sbitmap_queue *bt)
+{
+	unsigned int i, j, min_shallow = UINT_MAX;
+
+	/*
+	 * In-word depths if no bfq_queue is being weight-raised:
+	 * leaving 25% of tags only for sync reads.
+	 *
+	 * In next formulas, right-shift the value
+	 * (1U<<bt->sb.shift), instead of computing directly
+	 * (1U<<(bt->sb.shift - something)), to be robust against
+	 * any possible value of bt->sb.shift, without having to
+	 * limit 'something'.
+	 */
+	/* no more than 50% of tags for async I/O */
+	bfqd->word_depths[0][0] = max((1U << bt->sb.shift) >> 1, 1U);
+	/*
+	 * no more than 75% of tags for sync writes (25% extra tags
+	 * w.r.t. async I/O, to prevent async I/O from starving sync
+	 * writes)
+	 */
+	bfqd->word_depths[0][1] = max(((1U << bt->sb.shift) * 3) >> 2, 1U);
+
+	/*
+	 * In-word depths in case some bfq_queue is being weight-
+	 * raised: leaving ~63% of tags for sync reads. This is the
+	 * highest percentage for which, in our tests, application
+	 * start-up times didn't suffer from any regression due to tag
+	 * shortage.
+	 */
+	/* no more than ~18% of tags for async I/O */
+	bfqd->word_depths[1][0] = max(((1U << bt->sb.shift) * 3) >> 4, 1U);
+	/* no more than ~37% of tags for sync writes (~20% extra tags) */
+	bfqd->word_depths[1][1] = max(((1U << bt->sb.shift) * 6) >> 4, 1U);
+
+	for (i = 0; i < 2; i++)
+		for (j = 0; j < 2; j++)
+			min_shallow = min(min_shallow, bfqd->word_depths[i][j]);
+
+	return min_shallow;
+}
+
+static int bfq_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int index)
+{
+	struct bfq_data *bfqd = hctx->queue->elevator->elevator_data;
+	struct blk_mq_tags *tags = hctx->sched_tags;
+	unsigned int min_shallow;
+
+	min_shallow = bfq_update_depths(bfqd, &tags->bitmap_tags);
+	sbitmap_queue_min_shallow_depth(&tags->bitmap_tags, min_shallow);
+	return 0;
 }
 
 static void bfq_exit_queue(struct elevator_queue *e)
@@ -5526,6 +5558,7 @@ static struct elevator_type iosched_bfq_mq = {
 		.requests_merged	= bfq_requests_merged,
 		.request_merged		= bfq_request_merged,
 		.has_work		= bfq_has_work,
+		.init_hctx		= bfq_init_hctx,
 		.init_sched		= bfq_init_queue,
 		.exit_sched		= bfq_exit_queue,
 	},

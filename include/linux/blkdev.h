@@ -205,9 +205,20 @@ struct request {
 
 	struct gendisk *rq_disk;
 	struct hd_struct *part;
-	unsigned long start_time;
-	struct blk_issue_stat issue_stat;
-	/* Number of scatter-gather DMA addr+len pairs after
+	/* Time that I/O was submitted to the kernel. */
+	u64 start_time_ns;
+	/* Time that I/O was submitted to the device. */
+	u64 io_start_time_ns;
+
+#ifdef CONFIG_BLK_WBT
+	unsigned short wbt_flags;
+#endif
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
+	unsigned short throtl_size;
+#endif
+
+	/*
+	 * Number of scatter-gather DMA addr+len pairs after
 	 * physical address coalescing is performed.
 	 */
 	unsigned short nr_phys_segments;
@@ -267,8 +278,6 @@ struct request {
 
 #ifdef CONFIG_BLK_CGROUP
 	struct request_list *rl;		/* rl this rq is alloced from */
-	unsigned long long start_time_ns;
-	unsigned long long io_start_time_ns;    /* when passed to hardware */
 #endif
 };
 
@@ -967,11 +976,8 @@ extern void blk_rq_init(struct request_queue *q, struct request *rq);
 extern void blk_init_request_from_bio(struct request *req, struct bio *bio);
 extern void blk_put_request(struct request *);
 extern void __blk_put_request(struct request_queue *, struct request *);
-extern struct request *blk_get_request_flags(struct request_queue *,
-					     unsigned int op,
-					     blk_mq_req_flags_t flags);
 extern struct request *blk_get_request(struct request_queue *, unsigned int op,
-				       gfp_t gfp_mask);
+				       blk_mq_req_flags_t flags);
 extern void blk_requeue_request(struct request_queue *, struct request *);
 extern int blk_lld_busy(struct request_queue *q);
 extern int blk_rq_prep_clone(struct request *rq, struct request *rq_src,
@@ -1787,48 +1793,6 @@ static inline bool req_gap_front_merge(struct request *req, struct bio *bio)
 int kblockd_schedule_work(struct work_struct *work);
 int kblockd_schedule_work_on(int cpu, struct work_struct *work);
 int kblockd_mod_delayed_work_on(int cpu, struct delayed_work *dwork, unsigned long delay);
-
-#ifdef CONFIG_BLK_CGROUP
-/*
- * This should not be using sched_clock(). A real patch is in progress
- * to fix this up, until that is in place we need to disable preemption
- * around sched_clock() in this function and set_io_start_time_ns().
- */
-static inline void set_start_time_ns(struct request *req)
-{
-	preempt_disable();
-	req->start_time_ns = sched_clock();
-	preempt_enable();
-}
-
-static inline void set_io_start_time_ns(struct request *req)
-{
-	preempt_disable();
-	req->io_start_time_ns = sched_clock();
-	preempt_enable();
-}
-
-static inline uint64_t rq_start_time_ns(struct request *req)
-{
-        return req->start_time_ns;
-}
-
-static inline uint64_t rq_io_start_time_ns(struct request *req)
-{
-        return req->io_start_time_ns;
-}
-#else
-static inline void set_start_time_ns(struct request *req) {}
-static inline void set_io_start_time_ns(struct request *req) {}
-static inline uint64_t rq_start_time_ns(struct request *req)
-{
-	return 0;
-}
-static inline uint64_t rq_io_start_time_ns(struct request *req)
-{
-	return 0;
-}
-#endif
 
 #define MODULE_ALIAS_BLOCKDEV(major,minor) \
 	MODULE_ALIAS("block-major-" __stringify(major) "-" __stringify(minor))
