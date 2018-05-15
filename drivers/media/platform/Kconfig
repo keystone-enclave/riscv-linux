@@ -42,7 +42,7 @@ config VIDEO_SH_VOU
 
 config VIDEO_VIU
 	tristate "Freescale VIU Video Driver"
-	depends on VIDEO_V4L2 && PPC_MPC512x
+	depends on VIDEO_V4L2 && (PPC_MPC512x || COMPILE_TEST) && I2C
 	select VIDEOBUF_DMA_CONTIG
 	default y
 	---help---
@@ -62,10 +62,11 @@ config VIDEO_MUX
 
 config VIDEO_OMAP3
 	tristate "OMAP 3 Camera support"
-	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API && ARCH_OMAP3
+	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API
+	depends on (ARCH_OMAP3 && OMAP_IOMMU) || COMPILE_TEST
+	depends on COMMON_CLK
 	depends on HAS_DMA && OF
-	depends on OMAP_IOMMU
-	select ARM_DMA_USE_IOMMU
+	select ARM_DMA_USE_IOMMU if OMAP_IOMMU
 	select VIDEOBUF2_DMA_CONTIG
 	select MFD_SYSCON
 	select V4L2_FWNODE
@@ -558,7 +559,7 @@ config VIDEO_MESON_AO_CEC
 
 config CEC_GPIO
 	tristate "Generic GPIO-based CEC driver"
-	depends on PREEMPT
+	depends on PREEMPT || COMPILE_TEST
 	select CEC_CORE
 	select CEC_PIN
 	select GPIOLIB

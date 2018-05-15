@@ -1253,7 +1253,7 @@ static int atomisp_qbuf(struct file *file, void *fh, struct v4l2_buffer *buf)
 		attributes.type = HRT_USR_PTR;
 #endif
 		ret = atomisp_css_frame_map(&handle, &frame_info,
-				       (void *)buf->m.userptr,
+				       (void __user *)buf->m.userptr,
 				       0, &attributes);
 		if (ret) {
 			dev_err(isp->dev, "Failed to map user buffer\n");
@@ -2748,8 +2748,7 @@ static long atomisp_vidioc_default(struct file *file, void *fh,
 	bool acc_node;
 	int err;
 
-	acc_node = !strncmp(vdev->name, "ATOMISP ISP ACC",
-			sizeof(vdev->name));
+	acc_node = !strcmp(vdev->name, "ATOMISP ISP ACC");
 	if (acc_node)
 		asd = atomisp_to_acc_pipe(vdev)->asd;
 	else

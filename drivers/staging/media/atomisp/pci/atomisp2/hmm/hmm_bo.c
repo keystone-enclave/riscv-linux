@@ -319,7 +319,7 @@ static void __bo_take_off_handling(struct hmm_buffer_object *bo)
 	 *	to take off this bo, we just set take the "prev/next" pointers
 	 *	to NULL, the free rbtree stays unchaged
 	 */
-	} else {
+	} else if (bo->prev != NULL && bo->next != NULL) {
 		bo->next->prev = bo->prev;
 		bo->prev->next = bo->next;
 		bo->next = NULL;
@@ -977,7 +977,7 @@ static int get_pfnmap_pages(struct task_struct *tsk, struct mm_struct *mm,
  * Convert user space virtual address into pages list
  */
 static int alloc_user_pages(struct hmm_buffer_object *bo,
-			      void *userptr, bool cached)
+			    const void __user *userptr, bool cached)
 {
 	int page_nr;
 	int i;
@@ -1081,7 +1081,7 @@ static void free_user_pages(struct hmm_buffer_object *bo)
  */
 int hmm_bo_alloc_pages(struct hmm_buffer_object *bo,
 		       enum hmm_bo_type type, int from_highmem,
-		       void *userptr, bool cached)
+		       const void __user *userptr, bool cached)
 {
 	int ret = -EINVAL;
 

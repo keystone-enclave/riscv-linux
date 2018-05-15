@@ -982,6 +982,25 @@ static int mceusb_set_tx_carrier(struct rc_dev *dev, u32 carrier)
 	return 0;
 }
 
+static int mceusb_set_timeout(struct rc_dev *dev, unsigned int timeout)
+{
+	u8 cmdbuf[4] = { MCE_CMD_PORT_IR, MCE_CMD_SETIRTIMEOUT, 0, 0 };
+	struct mceusb_dev *ir = dev->priv;
+	unsigned int units;
+
+	units = DIV_ROUND_CLOSEST(timeout, US_TO_NS(MCE_TIME_UNIT));
+
+	cmdbuf[2] = units >> 8;
+	cmdbuf[3] = units;
+
+	mce_async_out(ir, cmdbuf, sizeof(cmdbuf));
+
+	/* get receiver timeout value */
+	mce_async_out(ir, GET_RX_TIMEOUT, sizeof(GET_RX_TIMEOUT));
+
+	return 0;
+}
+
 /*
  * Select or deselect the 2nd receiver port.
  * Second receiver is learning mode, wide-band, short-range receiver.
@@ -1182,7 +1201,12 @@ static void mceusb_process_ir_data(struct mceusb_dev *ir, int buf_len)
 			if (ir->rem) {
 				ir->parser_state = PARSE_IRDATA;
 			} else {
-				ir_raw_event_reset(ir->rc);
+				init_ir_raw_event(&rawir);
+				rawir.timeout = 1;
+				rawir.duration = ir->rc->timeout;
+				if (ir_raw_event_store_with_filter(ir->rc,
+								   &rawir))
+					event = true;
 				ir->pulse_tunit = 0;
 				ir->pulse_count = 0;
 			}
@@ -1415,7 +1439,10 @@ static struct rc_dev *mceusb_init_rc_dev(struct mceusb_dev *ir)
 	rc->dev.parent = dev;
 	rc->priv = ir;
 	rc->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
+	rc->min_timeout = US_TO_NS(MCE_TIME_UNIT);
 	rc->timeout = MS_TO_NS(100);
+	rc->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
+	rc->s_timeout = mceusb_set_timeout;
 	if (!ir->flags.no_tx) {
 		rc->s_tx_mask = mceusb_set_tx_mask;
 		rc->s_tx_carrier = mceusb_set_tx_carrier;

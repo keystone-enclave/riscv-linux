@@ -26,7 +26,7 @@
 #include <media/v4l2-subdev.h>
 
 #include "vsp1.h"
-#include "vsp1_bru.h"
+#include "vsp1_brx.h"
 #include "vsp1_clu.h"
 #include "vsp1_dl.h"
 #include "vsp1_drm.h"
@@ -63,7 +63,7 @@ static irqreturn_t vsp1_irq_handler(int irq, void *data)
 		vsp1_write(vsp1, VI6_WPF_IRQ_STA(i), ~status & mask);
 
 		if (status & VI6_WFP_IRQ_STA_DFE) {
-			vsp1_pipeline_frame_end(wpf->pipe);
+			vsp1_pipeline_frame_end(wpf->entity.pipe);
 			ret = IRQ_HANDLED;
 		}
 	}
@@ -269,7 +269,7 @@ static int vsp1_create_entities(struct vsp1_device *vsp1)
 
 	/* Instantiate all the entities. */
 	if (vsp1->info->features & VSP1_HAS_BRS) {
-		vsp1->brs = vsp1_bru_create(vsp1, VSP1_ENTITY_BRS);
+		vsp1->brs = vsp1_brx_create(vsp1, VSP1_ENTITY_BRS);
 		if (IS_ERR(vsp1->brs)) {
 			ret = PTR_ERR(vsp1->brs);
 			goto done;
@@ -279,7 +279,7 @@ static int vsp1_create_entities(struct vsp1_device *vsp1)
 	}
 
 	if (vsp1->info->features & VSP1_HAS_BRU) {
-		vsp1->bru = vsp1_bru_create(vsp1, VSP1_ENTITY_BRU);
+		vsp1->bru = vsp1_brx_create(vsp1, VSP1_ENTITY_BRU);
 		if (IS_ERR(vsp1->bru)) {
 			ret = PTR_ERR(vsp1->bru);
 			goto done;

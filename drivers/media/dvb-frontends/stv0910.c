@@ -1220,6 +1220,12 @@ static int probe(struct stv *state)
 	write_reg(state, RSTV0910_P1_I2CRPT, state->i2crpt);
 	write_reg(state, RSTV0910_P2_I2CRPT, state->i2crpt);
 
+	write_reg(state, RSTV0910_P1_TSINSDELM, 0x17);
+	write_reg(state, RSTV0910_P1_TSINSDELL, 0xff);
+
+	write_reg(state, RSTV0910_P2_TSINSDELM, 0x17);
+	write_reg(state, RSTV0910_P2_TSINSDELL, 0xff);
+
 	init_diseqc(state);
 	return 0;
 }
@@ -1320,7 +1326,7 @@ static int read_snr(struct dvb_frontend *fe)
 
 	if (!get_signal_to_noise(state, &snrval)) {
 		p->cnr.stat[0].scale = FE_SCALE_DECIBEL;
-		p->cnr.stat[0].uvalue = 100 * snrval; /* fix scale */
+		p->cnr.stat[0].svalue = 100 * snrval; /* fix scale */
 	} else {
 		p->cnr.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
 	}
@@ -1633,7 +1639,7 @@ static int tune(struct dvb_frontend *fe, bool re_tune,
 	return 0;
 }
 
-static int get_algo(struct dvb_frontend *fe)
+static enum dvbfe_algo get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
 }

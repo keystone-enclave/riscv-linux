@@ -20,7 +20,7 @@
 #include <media/v4l2-subdev.h>
 
 #include "vsp1.h"
-#include "vsp1_bru.h"
+#include "vsp1_brx.h"
 #include "vsp1_dl.h"
 #include "vsp1_entity.h"
 #include "vsp1_hgo.h"
@@ -185,44 +185,29 @@ const struct vsp1_format_info *vsp1_get_format_info(struct vsp1_device *vsp1,
 
 void vsp1_pipeline_reset(struct vsp1_pipeline *pipe)
 {
+	struct vsp1_entity *entity;
 	unsigned int i;
 
-	if (pipe->bru) {
-		struct vsp1_bru *bru = to_bru(&pipe->bru->subdev);
+	if (pipe->brx) {
+		struct vsp1_brx *brx = to_brx(&pipe->brx->subdev);
 
-		for (i = 0; i < ARRAY_SIZE(bru->inputs); ++i)
-			bru->inputs[i].rpf = NULL;
+		for (i = 0; i < ARRAY_SIZE(brx->inputs); ++i)
+			brx->inputs[i].rpf = NULL;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(pipe->inputs); ++i) {
-		if (pipe->inputs[i]) {
-			pipe->inputs[i]->pipe = NULL;
-			pipe->inputs[i] = NULL;
-		}
-	}
+	for (i = 0; i < ARRAY_SIZE(pipe->inputs); ++i)
+		pipe->inputs[i] = NULL;
 
-	if (pipe->output) {
-		pipe->output->pipe = NULL;
-		pipe->output = NULL;
-	}
+	pipe->output = NULL;
 
-	if (pipe->hgo) {
-		struct vsp1_hgo *hgo = to_hgo(&pipe->hgo->subdev);
-
-		hgo->histo.pipe = NULL;
-	}
-
-	if (pipe->hgt) {
-		struct vsp1_hgt *hgt = to_hgt(&pipe->hgt->subdev);
-
-		hgt->histo.pipe = NULL;
-	}
+	list_for_each_entry(entity, &pipe->entities, list_pipe)
+		entity->pipe = NULL;
 
 	INIT_LIST_HEAD(&pipe->entities);
 	pipe->state = VSP1_PIPELINE_STOPPED;
 	pipe->buffers_ready = 0;
 	pipe->num_inputs = 0;
-	pipe->bru = NULL;
+	pipe->brx = NULL;
 	pipe->hgo = NULL;
 	pipe->hgt = NULL;
 	pipe->lif = NULL;
@@ -330,17 +315,17 @@ bool vsp1_pipeline_ready(struct vsp1_pipeline *pipe)
 
 void vsp1_pipeline_frame_end(struct vsp1_pipeline *pipe)
 {
-	bool completed;
+	unsigned int flags;
 
 	if (pipe == NULL)
 		return;
 
 	/*
 	 * If the DL commit raced with the frame end interrupt, the commit ends
-	 * up being postponed by one frame. @completed represents whether the
+	 * up being postponed by one frame. The returned flags tell whether the
 	 * active frame was finished or postponed.
 	 */
-	completed = vsp1_dlm_irq_frame_end(pipe->output->dlm);
+	flags = vsp1_dlm_irq_frame_end(pipe->output->dlm);
 
 	if (pipe->hgo)
 		vsp1_hgo_frame_end(pipe->hgo);
@@ -353,7 +338,7 @@ void vsp1_pipeline_frame_end(struct vsp1_pipeline *pipe)
 	 * frame_end to account for vblank events.
 	 */
 	if (pipe->frame_end)
-		pipe->frame_end(pipe, completed);
+		pipe->frame_end(pipe, flags);
 
 	pipe->sequence++;
 }
@@ -423,7 +408,7 @@ void vsp1_pipelines_suspend(struct vsp1_device *vsp1)
 		if (wpf == NULL)
 			continue;
 
-		pipe = wpf->pipe;
+		pipe = wpf->entity.pipe;
 		if (pipe == NULL)
 			continue;
 
@@ -440,7 +425,7 @@ void vsp1_pipelines_suspend(struct vsp1_device *vsp1)
 		if (wpf == NULL)
 			continue;
 
-		pipe = wpf->pipe;
+		pipe = wpf->entity.pipe;
 		if (pipe == NULL)
 			continue;
 
@@ -465,7 +450,7 @@ void vsp1_pipelines_resume(struct vsp1_device *vsp1)
 		if (wpf == NULL)
 			continue;
 
-		pipe = wpf->pipe;
+		pipe = wpf->entity.pipe;
 		if (pipe == NULL)
 			continue;
 
