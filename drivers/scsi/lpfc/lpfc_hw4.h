@@ -2,7 +2,7 @@
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
  * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
- * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
+ * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
  * Copyright (C) 2009-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.broadcom.com                                                *
@@ -3924,6 +3924,7 @@ struct lpfc_acqe_link {
 #define LPFC_ASYNC_LINK_FAULT_NONE	0x0
 #define LPFC_ASYNC_LINK_FAULT_LOCAL	0x1
 #define LPFC_ASYNC_LINK_FAULT_REMOTE	0x2
+#define LPFC_ASYNC_LINK_FAULT_LR_LRR	0x3
 #define lpfc_acqe_logical_link_speed_SHIFT	16
 #define lpfc_acqe_logical_link_speed_MASK	0x0000FFFF
 #define lpfc_acqe_logical_link_speed_WORD	word1
@@ -4627,6 +4628,9 @@ union lpfc_wqe128 {
 	struct fcp_treceive64_wqe fcp_treceive;
 	struct send_frame_wqe send_frame;
 };
+
+#define MAGIC_NUMER_G6 0xFEAA0003
+#define MAGIC_NUMER_G7 0xFEAA0005
 
 struct lpfc_grp_hdr {
 	uint32_t size;

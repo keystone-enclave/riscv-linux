@@ -2,7 +2,7 @@
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
  * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
- * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
+ * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.broadcom.com                                                *
@@ -59,6 +59,7 @@ struct lpfc_nvme_lport {
 	atomic_t xmt_fcp_bad_ndlp;
 	atomic_t xmt_fcp_qdepth;
 	atomic_t xmt_fcp_wqerr;
+	atomic_t xmt_fcp_err;
 	atomic_t xmt_fcp_abort;
 	atomic_t xmt_ls_abort;
 	atomic_t xmt_ls_err;

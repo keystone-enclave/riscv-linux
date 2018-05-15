@@ -196,6 +196,7 @@ struct hisi_sas_slot {
 	dma_addr_t cmd_hdr_dma;
 	struct work_struct abort_slot;
 	struct timer_list internal_abort_timer;
+	bool is_internal;
 };
 
 struct hisi_sas_tmf_task {
@@ -409,7 +410,7 @@ struct hisi_sas_command_table_ssp {
 	union {
 		struct {
 			struct ssp_command_iu task;
-			u32 prot[6];
+			u32 prot[7];
 		};
 		struct ssp_tmf_iu ssp_task;
 		struct xfer_rdy_iu xfer_rdy;
@@ -462,4 +463,5 @@ extern void hisi_sas_kill_tasklets(struct hisi_hba *hisi_hba);
 extern bool hisi_sas_notify_phy_event(struct hisi_sas_phy *phy,
 				enum hisi_sas_phy_event event);
 extern void hisi_sas_release_tasks(struct hisi_hba *hisi_hba);
+extern u8 hisi_sas_get_prog_phy_linkrate_mask(enum sas_linkrate max);
 #endif

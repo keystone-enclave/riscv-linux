@@ -1216,7 +1216,22 @@ static void init_reg_v2_hw(struct hisi_hba *hisi_hba)
 	}
 
 	for (i = 0; i < hisi_hba->n_phy; i++) {
-		hisi_sas_phy_write32(hisi_hba, i, PROG_PHY_LINK_RATE, 0x855);
+		struct hisi_sas_phy *phy = &hisi_hba->phy[i];
+		struct asd_sas_phy *sas_phy = &phy->sas_phy;
+		u32 prog_phy_link_rate = 0x800;
+
+		if (!sas_phy->phy || (sas_phy->phy->maximum_linkrate <
+				SAS_LINK_RATE_1_5_GBPS)) {
+			prog_phy_link_rate = 0x855;
+		} else {
+			enum sas_linkrate max = sas_phy->phy->maximum_linkrate;
+
+			prog_phy_link_rate =
+				hisi_sas_get_prog_phy_linkrate_mask(max) |
+				0x800;
+		}
+		hisi_sas_phy_write32(hisi_hba, i, PROG_PHY_LINK_RATE,
+			prog_phy_link_rate);
 		hisi_sas_phy_write32(hisi_hba, i, SAS_PHY_CTRL, sas_phy_ctrl);
 		hisi_sas_phy_write32(hisi_hba, i, SL_TOUT_CFG, 0x7d7d7d7d);
 		hisi_sas_phy_write32(hisi_hba, i, SL_CONTROL, 0x0);
@@ -1585,13 +1600,10 @@ static enum sas_linkrate phy_get_max_linkrate_v2_hw(void)
 static void phy_set_linkrate_v2_hw(struct hisi_hba *hisi_hba, int phy_no,
 		struct sas_phy_linkrates *r)
 {
-	u32 prog_phy_link_rate =
-		hisi_sas_phy_read32(hisi_hba, phy_no, PROG_PHY_LINK_RATE);
 	struct hisi_sas_phy *phy = &hisi_hba->phy[phy_no];
 	struct asd_sas_phy *sas_phy = &phy->sas_phy;
-	int i;
 	enum sas_linkrate min, max;
-	u32 rate_mask = 0;
+	u32 prog_phy_link_rate = 0x800;
 
 	if (r->maximum_linkrate == SAS_LINK_RATE_UNKNOWN) {
 		max = sas_phy->phy->maximum_linkrate;
@@ -1604,14 +1616,7 @@ static void phy_set_linkrate_v2_hw(struct hisi_hba *hisi_hba, int phy_no,
 
 	sas_phy->phy->maximum_linkrate = max;
 	sas_phy->phy->minimum_linkrate = min;
-
-	max -= SAS_LINK_RATE_1_5_GBPS;
-
-	for (i = 0; i <= max; i++)
-		rate_mask |= 1 << (i * 2);
-
-	prog_phy_link_rate &= ~0xff;
-	prog_phy_link_rate |= rate_mask;
+	prog_phy_link_rate |= hisi_sas_get_prog_phy_linkrate_mask(max);
 
 	disable_phy_v2_hw(hisi_hba, phy_no);
 	msleep(100);
@@ -2380,38 +2385,30 @@ slot_complete_v2_hw(struct hisi_hba *hisi_hba, struct hisi_sas_slot *slot)
 	struct device *dev = hisi_hba->dev;
 	struct task_status_struct *ts;
 	struct domain_device *device;
+	struct sas_ha_struct *ha;
 	enum exec_status sts;
 	struct hisi_sas_complete_v2_hdr *complete_queue =
 			hisi_hba->complete_hdr[slot->cmplt_queue];
 	struct hisi_sas_complete_v2_hdr *complete_hdr =
 			&complete_queue[slot->cmplt_queue_slot];
 	unsigned long flags;
-	int aborted;
+	bool is_internal = slot->is_internal;
 
 	if (unlikely(!task || !task->lldd_task || !task->dev))
 		return -EINVAL;
 
 	ts = &task->task_status;
 	device = task->dev;
+	ha = device->port->ha;
 	sas_dev = device->lldd_dev;
 
 	spin_lock_irqsave(&task->task_state_lock, flags);
-	aborted = task->task_state_flags & SAS_TASK_STATE_ABORTED;
 	task->task_state_flags &=
 		~(SAS_TASK_STATE_PENDING | SAS_TASK_AT_INITIATOR);
 	spin_unlock_irqrestore(&task->task_state_lock, flags);
 
 	memset(ts, 0, sizeof(*ts));
 	ts->resp = SAS_TASK_COMPLETE;
-
-	if (unlikely(aborted)) {
-		dev_dbg(dev, "slot_complete: task(%p) aborted\n", task);
-		ts->stat = SAS_ABORTED_TASK;
-		spin_lock_irqsave(&hisi_hba->lock, flags);
-		hisi_sas_slot_task_free(hisi_hba, task, slot);
-		spin_unlock_irqrestore(&hisi_hba->lock, flags);
-		return ts->stat;
-	}
 
 	if (unlikely(!sas_dev)) {
 		dev_dbg(dev, "slot complete: port has no device\n");
@@ -2523,13 +2520,27 @@ slot_complete_v2_hw(struct hisi_hba *hisi_hba, struct hisi_sas_slot *slot)
 	}
 
 out:
+	hisi_sas_slot_task_free(hisi_hba, task, slot);
+	sts = ts->stat;
 	spin_lock_irqsave(&task->task_state_lock, flags);
+	if (task->task_state_flags & SAS_TASK_STATE_ABORTED) {
+		spin_unlock_irqrestore(&task->task_state_lock, flags);
+		dev_info(dev, "slot complete: task(%p) aborted\n", task);
+		return SAS_ABORTED_TASK;
+	}
 	task->task_state_flags |= SAS_TASK_STATE_DONE;
 	spin_unlock_irqrestore(&task->task_state_lock, flags);
-	spin_lock_irqsave(&hisi_hba->lock, flags);
-	hisi_sas_slot_task_free(hisi_hba, task, slot);
-	spin_unlock_irqrestore(&hisi_hba->lock, flags);
-	sts = ts->stat;
+
+	if (!is_internal && (task->task_proto != SAS_PROTOCOL_SMP)) {
+		spin_lock_irqsave(&device->done_lock, flags);
+		if (test_bit(SAS_HA_FROZEN, &ha->state)) {
+			spin_unlock_irqrestore(&device->done_lock, flags);
+			dev_info(dev, "slot complete: task(%p) ignored\n ",
+				 task);
+			return sts;
+		}
+		spin_unlock_irqrestore(&device->done_lock, flags);
+	}
 
 	if (task->task_done)
 		task->task_done(task);
@@ -3151,14 +3162,12 @@ static void cq_tasklet_v2_hw(unsigned long val)
 	struct hisi_sas_complete_v2_hdr *complete_queue;
 	u32 rd_point = cq->rd_point, wr_point, dev_id;
 	int queue = cq->id;
-	struct hisi_sas_dq *dq = &hisi_hba->dq[queue];
 
 	if (unlikely(hisi_hba->reject_stp_links_msk))
 		phys_try_accept_stp_links_v2_hw(hisi_hba);
 
 	complete_queue = hisi_hba->complete_hdr[queue];
 
-	spin_lock(&dq->lock);
 	wr_point = hisi_sas_read32(hisi_hba, COMPL_Q_0_WR_PTR +
 				   (0x14 * queue));
 
@@ -3208,7 +3217,6 @@ static void cq_tasklet_v2_hw(unsigned long val)
 	/* update rd_point */
 	cq->rd_point = rd_point;
 	hisi_sas_write32(hisi_hba, COMPL_Q_0_RD_PTR + (0x14 * queue), rd_point);
-	spin_unlock(&dq->lock);
 }
 
 static irqreturn_t cq_interrupt_v2_hw(int irq_no, void *p)

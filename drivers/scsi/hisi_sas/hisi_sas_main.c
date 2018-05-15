@@ -135,6 +135,22 @@ int hisi_sas_get_ncq_tag(struct sas_task *task, u32 *tag)
 }
 EXPORT_SYMBOL_GPL(hisi_sas_get_ncq_tag);
 
+/*
+ * This function assumes linkrate mask fits in 8 bits, which it
+ * does for all HW versions supported.
+ */
+u8 hisi_sas_get_prog_phy_linkrate_mask(enum sas_linkrate max)
+{
+	u16 rate = 0;
+	int i;
+
+	max -= SAS_LINK_RATE_1_5_GBPS;
+	for (i = 0; i <= max; i++)
+		rate |= 1 << (i * 2);
+	return rate;
+}
+EXPORT_SYMBOL_GPL(hisi_sas_get_prog_phy_linkrate_mask);
+
 static struct hisi_hba *dev_to_hisi_hba(struct domain_device *device)
 {
 	return device->port->ha->lldd_ha;
@@ -382,6 +398,8 @@ static int hisi_sas_task_prep(struct sas_task *task, struct hisi_sas_dq
 	slot->cmd_hdr = &cmd_hdr_base[dlvry_queue_slot];
 	slot->task = task;
 	slot->port = port;
+	if (is_tmf)
+		slot->is_internal = true;
 	task->lldd_task = slot;
 	INIT_WORK(&slot->abort_slot, hisi_sas_slot_abort);
 
@@ -1128,6 +1146,9 @@ static int hisi_sas_controller_reset(struct hisi_hba *hisi_hba)
 	old_state = hisi_hba->hw->get_phys_state(hisi_hba);
 
 	scsi_block_requests(shost);
+	if (timer_pending(&hisi_hba->timer))
+		del_timer_sync(&hisi_hba->timer);
+
 	set_bit(HISI_SAS_REJECT_CMD_BIT, &hisi_hba->flags);
 	rc = hisi_hba->hw->soft_reset(hisi_hba);
 	if (rc) {
@@ -1164,20 +1185,25 @@ static int hisi_sas_abort_task(struct sas_task *task)
 	struct hisi_sas_tmf_task tmf_task;
 	struct domain_device *device = task->dev;
 	struct hisi_sas_device *sas_dev = device->lldd_dev;
-	struct hisi_hba *hisi_hba = dev_to_hisi_hba(task->dev);
-	struct device *dev = hisi_hba->dev;
+	struct hisi_hba *hisi_hba;
+	struct device *dev;
 	int rc = TMF_RESP_FUNC_FAILED;
 	unsigned long flags;
 
-	if (!sas_dev) {
-		dev_warn(dev, "Device has been removed\n");
+	if (!sas_dev)
 		return TMF_RESP_FUNC_FAILED;
-	}
 
+	hisi_hba = dev_to_hisi_hba(task->dev);
+	dev = hisi_hba->dev;
+
+	spin_lock_irqsave(&task->task_state_lock, flags);
 	if (task->task_state_flags & SAS_TASK_STATE_DONE) {
+		spin_unlock_irqrestore(&task->task_state_lock, flags);
 		rc = TMF_RESP_FUNC_COMPLETE;
 		goto out;
 	}
+	task->task_state_flags |= SAS_TASK_STATE_ABORTED;
+	spin_unlock_irqrestore(&task->task_state_lock, flags);
 
 	sas_dev->dev_status = HISI_SAS_DEV_EH;
 	if (task->lldd_task && task->task_proto & SAS_PROTOCOL_SSP) {
@@ -1482,6 +1508,7 @@ hisi_sas_internal_abort_task_exec(struct hisi_hba *hisi_hba, int device_id,
 	slot->cmd_hdr = &cmd_hdr_base[dlvry_queue_slot];
 	slot->task = task;
 	slot->port = port;
+	slot->is_internal = true;
 	task->lldd_task = slot;
 
 	slot->buf = dma_pool_alloc(hisi_hba->buffer_pool,
