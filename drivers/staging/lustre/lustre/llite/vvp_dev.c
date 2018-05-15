@@ -390,6 +390,13 @@ struct vvp_pgcache_id {
 	struct lu_object_header *vpi_obj;
 };
 
+struct seq_private {
+	struct ll_sb_info	*sbi;
+	struct lu_env		*env;
+	u16			refcheck;
+	struct cl_object	*clob;
+};
+
 static void vvp_pgcache_id_unpack(loff_t pos, struct vvp_pgcache_id *id)
 {
 	BUILD_BUG_ON(sizeof(pos) != sizeof(__u64));
@@ -452,19 +459,20 @@ static struct cl_object *vvp_pgcache_obj(const struct lu_env *env,
 	return NULL;
 }
 
-static loff_t vvp_pgcache_find(const struct lu_env *env,
-			       struct lu_device *dev, loff_t pos)
+static struct page *vvp_pgcache_find(const struct lu_env *env,
+				     struct lu_device *dev,
+				     struct cl_object **clobp, loff_t *pos)
 {
 	struct cl_object     *clob;
 	struct lu_site       *site;
 	struct vvp_pgcache_id id;
 
 	site = dev->ld_site;
-	vvp_pgcache_id_unpack(pos, &id);
+	vvp_pgcache_id_unpack(*pos, &id);
 
 	while (1) {
 		if (id.vpi_bucket >= CFS_HASH_NHLIST(site->ls_obj_hash))
-			return ~0ULL;
+			return NULL;
 		clob = vvp_pgcache_obj(env, dev, &id);
 		if (clob) {
 			struct inode *inode = vvp_object_inode(clob);
@@ -476,20 +484,22 @@ static loff_t vvp_pgcache_find(const struct lu_env *env,
 			if (nr > 0) {
 				id.vpi_index = vmpage->index;
 				/* Cant support over 16T file */
-				nr = !(vmpage->index > 0xffffffff);
+				if (vmpage->index <= 0xffffffff) {
+					*clobp = clob;
+					*pos = vvp_pgcache_id_pack(&id);
+					return vmpage;
+				}
 				put_page(vmpage);
 			}
 
 			lu_object_ref_del(&clob->co_lu, "dump", current);
 			cl_object_put(env, clob);
-			if (nr > 0)
-				return vvp_pgcache_id_pack(&id);
 		}
 		/* to the next object. */
 		++id.vpi_depth;
 		id.vpi_depth &= 0xf;
 		if (id.vpi_depth == 0 && ++id.vpi_bucket == 0)
-			return ~0ULL;
+			return NULL;
 		id.vpi_index = 0;
 	}
 }
@@ -531,96 +541,53 @@ static void vvp_pgcache_page_show(const struct lu_env *env,
 
 static int vvp_pgcache_show(struct seq_file *f, void *v)
 {
-	loff_t		   pos;
-	struct ll_sb_info       *sbi;
-	struct cl_object	*clob;
-	struct lu_env	   *env;
-	struct vvp_pgcache_id    id;
-	u16 refcheck;
-	int		      result;
+	struct seq_private	*priv = f->private;
+	struct page		*vmpage = v;
+	struct cl_page		*page;
 
-	env = cl_env_get(&refcheck);
-	if (!IS_ERR(env)) {
-		pos = *(loff_t *)v;
-		vvp_pgcache_id_unpack(pos, &id);
-		sbi = f->private;
-		clob = vvp_pgcache_obj(env, &sbi->ll_cl->cd_lu_dev, &id);
-		if (clob) {
-			struct inode *inode = vvp_object_inode(clob);
-			struct cl_page *page = NULL;
-			struct page *vmpage;
+	seq_printf(f, "%8lx@" DFID ": ", vmpage->index,
+		   PFID(lu_object_fid(&priv->clob->co_lu)));
+	lock_page(vmpage);
+	page = cl_vmpage_page(vmpage, priv->clob);
+	unlock_page(vmpage);
+	put_page(vmpage);
 
-			result = find_get_pages_contig(inode->i_mapping,
-						       id.vpi_index, 1,
-						       &vmpage);
-			if (result > 0) {
-				lock_page(vmpage);
-				page = cl_vmpage_page(vmpage, clob);
-				unlock_page(vmpage);
-				put_page(vmpage);
-			}
-
-			seq_printf(f, "%8x@" DFID ": ", id.vpi_index,
-				   PFID(lu_object_fid(&clob->co_lu)));
-			if (page) {
-				vvp_pgcache_page_show(env, f, page);
-				cl_page_put(env, page);
-			} else {
-				seq_puts(f, "missing\n");
-			}
-			lu_object_ref_del(&clob->co_lu, "dump", current);
-			cl_object_put(env, clob);
-		} else {
-			seq_printf(f, "%llx missing\n", pos);
-		}
-		cl_env_put(env, &refcheck);
-		result = 0;
+	if (page) {
+		vvp_pgcache_page_show(priv->env, f, page);
+		cl_page_put(priv->env, page);
 	} else {
-		result = PTR_ERR(env);
+		seq_puts(f, "missing\n");
 	}
-	return result;
+	lu_object_ref_del(&priv->clob->co_lu, "dump", current);
+	cl_object_put(priv->env, priv->clob);
+
+	return 0;
 }
 
 static void *vvp_pgcache_start(struct seq_file *f, loff_t *pos)
 {
-	struct ll_sb_info *sbi;
-	struct lu_env     *env;
-	u16 refcheck;
+	struct seq_private	*priv = f->private;
+	struct page *ret;
 
-	sbi = f->private;
+	if (priv->sbi->ll_site->ls_obj_hash->hs_cur_bits >
+	    64 - PGC_OBJ_SHIFT)
+		ret = ERR_PTR(-EFBIG);
+	else
+		ret = vvp_pgcache_find(priv->env, &priv->sbi->ll_cl->cd_lu_dev,
+				       &priv->clob, pos);
 
-	env = cl_env_get(&refcheck);
-	if (!IS_ERR(env)) {
-		sbi = f->private;
-		if (sbi->ll_site->ls_obj_hash->hs_cur_bits >
-		    64 - PGC_OBJ_SHIFT) {
-			pos = ERR_PTR(-EFBIG);
-		} else {
-			*pos = vvp_pgcache_find(env, &sbi->ll_cl->cd_lu_dev,
-						*pos);
-			if (*pos == ~0ULL)
-				pos = NULL;
-		}
-		cl_env_put(env, &refcheck);
-	}
-	return pos;
+	return ret;
 }
 
 static void *vvp_pgcache_next(struct seq_file *f, void *v, loff_t *pos)
 {
-	struct ll_sb_info *sbi;
-	struct lu_env     *env;
-	u16 refcheck;
+	struct seq_private *priv = f->private;
+	struct page *ret;
 
-	env = cl_env_get(&refcheck);
-	if (!IS_ERR(env)) {
-		sbi = f->private;
-		*pos = vvp_pgcache_find(env, &sbi->ll_cl->cd_lu_dev, *pos + 1);
-		if (*pos == ~0ULL)
-			pos = NULL;
-		cl_env_put(env, &refcheck);
-	}
-	return pos;
+	*pos += 1;
+	ret = vvp_pgcache_find(priv->env, &priv->sbi->ll_cl->cd_lu_dev,
+			       &priv->clob, pos);
+	return ret;
 }
 
 static void vvp_pgcache_stop(struct seq_file *f, void *v)
@@ -637,17 +604,30 @@ static const struct seq_operations vvp_pgcache_ops = {
 
 static int vvp_dump_pgcache_seq_open(struct inode *inode, struct file *filp)
 {
-	struct seq_file *seq;
-	int rc;
+	struct seq_private *priv;
 
-	rc = seq_open(filp, &vvp_pgcache_ops);
-	if (rc)
-		return rc;
+	priv = __seq_open_private(filp, &vvp_pgcache_ops, sizeof(*priv));
+	if (!priv)
+		return -ENOMEM;
 
-	seq = filp->private_data;
-	seq->private = inode->i_private;
+	priv->sbi = inode->i_private;
+	priv->env = cl_env_get(&priv->refcheck);
+	if (IS_ERR(priv->env)) {
+		int err = PTR_ERR(priv->env);
 
+		seq_release_private(inode, filp);
+		return err;
+	}
 	return 0;
+}
+
+static int vvp_dump_pgcache_seq_release(struct inode *inode, struct file *file)
+{
+	struct seq_file *seq = file->private_data;
+	struct seq_private *priv = seq->private;
+
+	cl_env_put(priv->env, &priv->refcheck);
+	return seq_release_private(inode, file);
 }
 
 const struct file_operations vvp_dump_pgcache_file_ops = {
@@ -655,5 +635,5 @@ const struct file_operations vvp_dump_pgcache_file_ops = {
 	.open    = vvp_dump_pgcache_seq_open,
 	.read    = seq_read,
 	.llseek	 = seq_lseek,
-	.release = seq_release,
+	.release = vvp_dump_pgcache_seq_release,
 };

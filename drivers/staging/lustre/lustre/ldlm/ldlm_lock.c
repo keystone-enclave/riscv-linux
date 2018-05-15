@@ -243,7 +243,7 @@ static void ldlm_lock_add_to_lru_nolock(struct ldlm_lock *lock)
 {
 	struct ldlm_namespace *ns = ldlm_lock_to_ns(lock);
 
-	lock->l_last_used = cfs_time_current();
+	lock->l_last_used = jiffies;
 	LASSERT(list_empty(&lock->l_lru));
 	LASSERT(lock->l_resource->lr_type != LDLM_FLOCK);
 	list_add_tail(&lock->l_lru, &ns->ns_unused_list);
@@ -317,18 +317,6 @@ static int ldlm_lock_destroy_internal(struct ldlm_lock *lock)
 		return 0;
 	}
 	ldlm_set_destroyed(lock);
-
-	if (lock->l_export && lock->l_export->exp_lock_hash) {
-		/* NB: it's safe to call cfs_hash_del() even lock isn't
-		 * in exp_lock_hash.
-		 */
-		/* In the function below, .hs_keycmp resolves to
-		 * ldlm_export_lock_keycmp()
-		 */
-		/* coverity[overrun-buffer-val] */
-		cfs_hash_del(lock->l_export->exp_lock_hash,
-			     &lock->l_remote_handle, &lock->l_exp_hash);
-	}
 
 	ldlm_lock_remove_from_lru(lock);
 	class_handle_unhash(&lock->l_handle);
@@ -419,8 +407,6 @@ static struct ldlm_lock *ldlm_lock_new(struct ldlm_resource *resource)
 	lock->l_blocking_lock = NULL;
 	INIT_LIST_HEAD(&lock->l_sl_mode);
 	INIT_LIST_HEAD(&lock->l_sl_policy);
-	INIT_HLIST_NODE(&lock->l_exp_hash);
-	INIT_HLIST_NODE(&lock->l_exp_flock_hash);
 
 	lprocfs_counter_incr(ldlm_res_to_ns(resource)->ns_stats,
 			     LDLM_NSS_LOCKS);
@@ -1565,8 +1551,10 @@ struct ldlm_lock *ldlm_lock_create(struct ldlm_namespace *ns,
 		return ERR_CAST(res);
 
 	lock = ldlm_lock_new(res);
-	if (!lock)
+	if (!lock) {
+		ldlm_resource_putref(res);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	lock->l_req_mode = mode;
 	lock->l_ast_data = data;
@@ -1608,6 +1596,8 @@ out:
 	LDLM_LOCK_RELEASE(lock);
 	return ERR_PTR(rc);
 }
+
+
 
 /**
  * Enqueue (request) a lock.

@@ -765,7 +765,7 @@ lnet_router_checker_event(struct lnet_event *event)
 	 * we ping alive routers to try to detect router death before
 	 * apps get burned).
 	 */
-	lnet_notify_locked(lp, 1, !event->status, cfs_time_current());
+	lnet_notify_locked(lp, 1, !event->status, jiffies);
 
 	/*
 	 * The router checker will wake up very shortly and do the
@@ -976,13 +976,13 @@ static void
 lnet_ping_router_locked(struct lnet_peer *rtr)
 {
 	struct lnet_rc_data *rcd = NULL;
-	unsigned long now = cfs_time_current();
+	unsigned long now = jiffies;
 	int secs;
 
 	lnet_peer_addref_locked(rtr);
 
 	if (rtr->lp_ping_deadline && /* ping timed out? */
-	    cfs_time_after(now, rtr->lp_ping_deadline))
+	    time_after(now, rtr->lp_ping_deadline))
 		lnet_notify_locked(rtr, 1, 0, now);
 
 	/* Run any outstanding notifications */
@@ -1010,8 +1010,7 @@ lnet_ping_router_locked(struct lnet_peer *rtr)
 	       rtr->lp_alive, rtr->lp_alive_count, rtr->lp_ping_timestamp);
 
 	if (secs && !rtr->lp_ping_notsent &&
-	    cfs_time_after(now, cfs_time_add(rtr->lp_ping_timestamp,
-					     secs * HZ))) {
+	    time_after(now, rtr->lp_ping_timestamp + secs * HZ)) {
 		int rc;
 		struct lnet_process_id id;
 		struct lnet_handle_md mdh;
@@ -1027,7 +1026,7 @@ lnet_ping_router_locked(struct lnet_peer *rtr)
 
 		if (!rtr->lp_ping_deadline) {
 			rtr->lp_ping_deadline =
-				cfs_time_shift(router_ping_timeout);
+				jiffies + router_ping_timeout * HZ;
 		}
 
 		lnet_net_unlock(rtr->lp_cpt);
@@ -1730,7 +1729,7 @@ int
 lnet_notify(struct lnet_ni *ni, lnet_nid_t nid, int alive, unsigned long when)
 {
 	struct lnet_peer *lp = NULL;
-	unsigned long now = cfs_time_current();
+	unsigned long now = jiffies;
 	int cpt = lnet_cpt_of_nid(nid);
 
 	LASSERT(!in_interrupt());
@@ -1749,11 +1748,11 @@ lnet_notify(struct lnet_ni *ni, lnet_nid_t nid, int alive, unsigned long when)
 	}
 
 	/* can't do predictions... */
-	if (cfs_time_after(when, now)) {
+	if (time_after(when, now)) {
 		CWARN("Ignoring prediction from %s of %s %s %ld seconds in the future\n",
 		      !ni ? "userspace" : libcfs_nid2str(ni->ni_nid),
 		      libcfs_nid2str(nid), alive ? "up" : "down",
-		      cfs_duration_sec(cfs_time_sub(when, now)));
+		      (when - now) / HZ);
 		return -EINVAL;
 	}
 

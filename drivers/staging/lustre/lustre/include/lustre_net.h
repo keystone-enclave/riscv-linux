@@ -67,6 +67,8 @@
 #include <obd_support.h>
 #include <uapi/linux/lustre/lustre_ver.h>
 
+#include <linux/rhashtable.h>
+
 /* MD flags we _always_ use */
 #define PTLRPC_MD_OPTIONS  0
 
@@ -286,7 +288,7 @@ struct ptlrpc_replay_async_args {
  */
 struct ptlrpc_connection {
 	/** linkage for connections hash table */
-	struct hlist_node	c_hash;
+	struct rhash_head	c_hash;
 	/** Our own lnet nid for this connection */
 	lnet_nid_t	      c_self;
 	/** Remote side nid for this connection */
@@ -556,7 +558,7 @@ struct ptlrpc_cli_req {
 	/** optional time limit for send attempts */
 	long				 cr_delay_limit;
 	/** time request was first queued */
-	time_t				 cr_queued_time;
+	unsigned long			 cr_queued_time;
 	/** request sent timeval */
 	struct timespec64		 cr_sent_tv;
 	/** time for request really sent out */
@@ -2253,9 +2255,8 @@ static inline int ptlrpc_req_get_repsize(struct ptlrpc_request *req)
 static inline int ptlrpc_send_limit_expired(struct ptlrpc_request *req)
 {
 	if (req->rq_delay_limit != 0 &&
-	    time_before(cfs_time_add(req->rq_queued_time,
-				     req->rq_delay_limit * HZ),
-			cfs_time_current())) {
+	    time_before(req->rq_queued_time + req->rq_delay_limit * HZ,
+			jiffies)) {
 		return 1;
 	}
 	return 0;

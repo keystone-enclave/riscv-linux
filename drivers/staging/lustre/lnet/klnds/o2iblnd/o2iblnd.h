@@ -568,6 +568,8 @@ struct kib_peer {
 	lnet_nid_t       ibp_nid;         /* who's on the other end(s) */
 	struct lnet_ni	*ibp_ni;         /* LNet interface */
 	struct list_head ibp_conns;       /* all active connections */
+	struct kib_conn	*ibp_next_conn;  /* next connection to send on for
+					  * round robin */
 	struct list_head ibp_tx_queue;    /* msgs waiting for a conn */
 	__u64            ibp_incarnation; /* incarnation of peer */
 	/* when (in jiffies) I was last alive */
@@ -581,7 +583,7 @@ struct kib_peer {
 	/* current active connection attempts */
 	unsigned short		ibp_connecting;
 	/* reconnect this peer later */
-	unsigned short		ibp_reconnecting:1;
+	unsigned char		ibp_reconnecting;
 	/* counter of how many times we triggered a conn race */
 	unsigned char		ibp_races;
 	/* # consecutive reconnection attempts to this peer */
@@ -744,19 +746,28 @@ kiblnd_peer_active(struct kib_peer *peer)
 static inline struct kib_conn *
 kiblnd_get_conn_locked(struct kib_peer *peer)
 {
+	struct list_head *next;
+
 	LASSERT(!list_empty(&peer->ibp_conns));
 
-	/* just return the first connection */
-	return list_entry(peer->ibp_conns.next, struct kib_conn, ibc_list);
+	/* Advance to next connection, be sure to skip the head node */
+	if (!peer->ibp_next_conn ||
+	    peer->ibp_next_conn->ibc_list.next == &peer->ibp_conns)
+		next = peer->ibp_conns.next;
+	else
+		next = peer->ibp_next_conn->ibc_list.next;
+	peer->ibp_next_conn = list_entry(next, struct kib_conn, ibc_list);
+
+	return peer->ibp_next_conn;
 }
 
 static inline int
 kiblnd_send_keepalive(struct kib_conn *conn)
 {
 	return (*kiblnd_tunables.kib_keepalive > 0) &&
-		cfs_time_after(jiffies, conn->ibc_last_send +
-			       msecs_to_jiffies(*kiblnd_tunables.kib_keepalive *
-						MSEC_PER_SEC));
+		time_after(jiffies, conn->ibc_last_send +
+			   msecs_to_jiffies(*kiblnd_tunables.kib_keepalive *
+					    MSEC_PER_SEC));
 }
 
 static inline int

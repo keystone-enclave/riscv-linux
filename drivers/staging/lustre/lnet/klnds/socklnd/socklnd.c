@@ -1276,7 +1276,7 @@ ksocknal_create_conn(struct lnet_ni *ni, struct ksock_route *route,
 	}
 
 	conn->ksnc_peer = peer;		 /* conn takes my ref on peer */
-	peer->ksnp_last_alive = cfs_time_current();
+	peer->ksnp_last_alive = jiffies;
 	peer->ksnp_send_keepalive = 0;
 	peer->ksnp_error = 0;
 
@@ -1284,10 +1284,10 @@ ksocknal_create_conn(struct lnet_ni *ni, struct ksock_route *route,
 	sched->kss_nconns++;
 	conn->ksnc_scheduler = sched;
 
-	conn->ksnc_tx_last_post = cfs_time_current();
+	conn->ksnc_tx_last_post = jiffies;
 	/* Set the deadline for the outgoing HELLO to drain */
 	conn->ksnc_tx_bufnob = sock->sk->sk_wmem_queued;
-	conn->ksnc_tx_deadline = cfs_time_shift(*ksocknal_tunables.ksnd_timeout);
+	conn->ksnc_tx_deadline = jiffies + *ksocknal_tunables.ksnd_timeout * HZ;
 	mb();   /* order with adding to peer's conn list */
 
 	list_add(&conn->ksnc_list, &peer->ksnp_conns);
@@ -1682,8 +1682,7 @@ ksocknal_destroy_conn(struct ksock_conn *conn)
 		       libcfs_id2str(conn->ksnc_peer->ksnp_id), conn->ksnc_type,
 		       &conn->ksnc_ipaddr, conn->ksnc_port,
 		       iov_iter_count(&conn->ksnc_rx_to), conn->ksnc_rx_nob_left,
-		       cfs_duration_sec(cfs_time_sub(cfs_time_current(),
-						     last_rcv)));
+		       (jiffies - last_rcv) / HZ);
 		lnet_finalize(conn->ksnc_peer->ksnp_ni,
 			      conn->ksnc_cookie, -EIO);
 		break;
@@ -1832,7 +1831,7 @@ ksocknal_query(struct lnet_ni *ni, lnet_nid_t nid, unsigned long *when)
 {
 	int connect = 1;
 	unsigned long last_alive = 0;
-	unsigned long now = cfs_time_current();
+	unsigned long now = jiffies;
 	struct ksock_peer *peer = NULL;
 	rwlock_t *glock = &ksocknal_data.ksnd_global_lock;
 	struct lnet_process_id id = {
@@ -1853,7 +1852,7 @@ ksocknal_query(struct lnet_ni *ni, lnet_nid_t nid, unsigned long *when)
 			if (bufnob < conn->ksnc_tx_bufnob) {
 				/* something got ACKed */
 				conn->ksnc_tx_deadline =
-					cfs_time_shift(*ksocknal_tunables.ksnd_timeout);
+					jiffies + *ksocknal_tunables.ksnd_timeout * HZ;
 				peer->ksnp_last_alive = now;
 				conn->ksnc_tx_bufnob = bufnob;
 			}
@@ -1871,7 +1870,7 @@ ksocknal_query(struct lnet_ni *ni, lnet_nid_t nid, unsigned long *when)
 
 	CDEBUG(D_NET, "Peer %s %p, alive %ld secs ago, connect %d\n",
 	       libcfs_nid2str(nid), peer,
-	       last_alive ? cfs_duration_sec(now - last_alive) : -1,
+	       last_alive ? (now - last_alive) / HZ : -1,
 	       connect);
 
 	if (!connect)

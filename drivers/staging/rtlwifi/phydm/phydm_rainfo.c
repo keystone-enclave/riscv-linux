@@ -1,18 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2016  Realtek Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * The full GNU General Public License is included in this distribution in the
- * file called LICENSE.
  *
  * Contact Information:
  * wlanfae <wlanfae@realtek.com>
@@ -996,7 +985,7 @@ static void phydm_ra_common_info_update(void *dm_void)
 		}
 		ODM_RT_TRACE(
 			dm, ODM_COMP_RATE_ADAPTIVE,
-			"MACID[%d], Highest Tx order Update for power traking: %d\n",
+			"MACID[%d], Highest Tx order Update for power tracking: %d\n",
 			(ra_tab->highest_client_tx_rate_order),
 			(ra_tab->highest_client_tx_order));
 	}

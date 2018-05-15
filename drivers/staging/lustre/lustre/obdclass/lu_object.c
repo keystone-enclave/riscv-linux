@@ -56,6 +56,27 @@
 #include <lu_ref.h>
 #include <linux/list.h>
 
+struct lu_site_bkt_data {
+	/**
+	 * LRU list, updated on each access to object. Protected by
+	 * bucket lock of lu_site::ls_obj_hash.
+	 *
+	 * "Cold" end of LRU is lu_site::ls_lru.next. Accessed object are
+	 * moved to the lu_site::ls_lru.prev (this is due to the non-existence
+	 * of list_for_each_entry_safe_reverse()).
+	 */
+	struct list_head		lsb_lru;
+	/**
+	 * Wait-queue signaled when an object in this site is ultimately
+	 * destroyed (lu_object_free()). It is used by lu_object_find() to
+	 * wait before re-trying when object in the process of destruction is
+	 * found in the hash table.
+	 *
+	 * \see htable_lookup().
+	 */
+	wait_queue_head_t	       lsb_marche_funebre;
+};
+
 enum {
 	LU_CACHE_PERCENT_MAX	 = 50,
 	LU_CACHE_PERCENT_DEFAULT = 20
@@ -87,6 +108,18 @@ MODULE_PARM_DESC(lu_cache_nr, "Maximum number of objects in lu_object cache");
 
 static void lu_object_free(const struct lu_env *env, struct lu_object *o);
 static __u32 ls_stats_read(struct lprocfs_stats *stats, int idx);
+
+wait_queue_head_t *
+lu_site_wq_from_fid(struct lu_site *site, struct lu_fid *fid)
+{
+	struct cfs_hash_bd bd;
+	struct lu_site_bkt_data *bkt;
+
+	cfs_hash_bd_get(site->ls_obj_hash, fid, &bd);
+	bkt = cfs_hash_bd_extra_get(site->ls_obj_hash, &bd);
+	return &bkt->lsb_marche_funebre;
+}
+EXPORT_SYMBOL(lu_site_wq_from_fid);
 
 /**
  * Decrease reference counter on object. If last reference is freed, return
@@ -151,10 +184,9 @@ void lu_object_put(const struct lu_env *env, struct lu_object *o)
 	if (!lu_object_is_dying(top)) {
 		LASSERT(list_empty(&top->loh_lru));
 		list_add_tail(&top->loh_lru, &bkt->lsb_lru);
-		bkt->lsb_lru_len++;
 		percpu_counter_inc(&site->ls_lru_len_counter);
-		CDEBUG(D_INODE, "Add %p to site lru. hash: %p, bkt: %p, lru_len: %ld\n",
-		       o, site->ls_obj_hash, bkt, bkt->lsb_lru_len);
+		CDEBUG(D_INODE, "Add %p to site lru. hash: %p, bkt: %p\n",
+		       o, site->ls_obj_hash, bkt);
 		cfs_hash_bd_unlock(site->ls_obj_hash, &bd, 1);
 		return;
 	}
@@ -202,7 +234,6 @@ void lu_object_unhash(const struct lu_env *env, struct lu_object *o)
 
 			list_del_init(&top->loh_lru);
 			bkt = cfs_hash_bd_extra_get(obj_hash, &bd);
-			bkt->lsb_lru_len--;
 			percpu_counter_dec(&site->ls_lru_len_counter);
 		}
 		cfs_hash_bd_del_locked(obj_hash, &bd, &top->loh_hash);
@@ -288,7 +319,7 @@ next:
  */
 static void lu_object_free(const struct lu_env *env, struct lu_object *o)
 {
-	struct lu_site_bkt_data *bkt;
+	wait_queue_head_t *wq;
 	struct lu_site	  *site;
 	struct lu_object	*scan;
 	struct list_head	      *layers;
@@ -296,7 +327,7 @@ static void lu_object_free(const struct lu_env *env, struct lu_object *o)
 
 	site   = o->lo_dev->ld_site;
 	layers = &o->lo_header->loh_layers;
-	bkt    = lu_site_bkt_from_fid(site, &o->lo_header->loh_fid);
+	wq     = lu_site_wq_from_fid(site, &o->lo_header->loh_fid);
 	/*
 	 * First call ->loo_object_delete() method to release all resources.
 	 */
@@ -319,13 +350,13 @@ static void lu_object_free(const struct lu_env *env, struct lu_object *o)
 		 * lives as long as possible and ->loo_object_free() methods
 		 * can look at its contents.
 		 */
-		o = container_of0(splice.prev, struct lu_object, lo_linkage);
+		o = container_of(splice.prev, struct lu_object, lo_linkage);
 		list_del_init(&o->lo_linkage);
 		o->lo_ops->loo_object_free(env, o);
 	}
 
-	if (waitqueue_active(&bkt->lsb_marche_funebre))
-		wake_up_all(&bkt->lsb_marche_funebre);
+	if (waitqueue_active(wq))
+		wake_up_all(wq);
 }
 
 /**
@@ -386,7 +417,6 @@ int lu_site_purge_objects(const struct lu_env *env, struct lu_site *s,
 			cfs_hash_bd_del_locked(s->ls_obj_hash,
 					       &bd2, &h->loh_hash);
 			list_move(&h->loh_lru, &dispose);
-			bkt->lsb_lru_len--;
 			percpu_counter_dec(&s->ls_lru_len_counter);
 			if (did_sth == 0)
 				did_sth = 1;
@@ -404,8 +434,8 @@ int lu_site_purge_objects(const struct lu_env *env, struct lu_site *s,
 		 * races due to the reasons described in lu_object_put().
 		 */
 		while (!list_empty(&dispose)) {
-			h = container_of0(dispose.next,
-					  struct lu_object_header, loh_lru);
+			h = container_of(dispose.next,
+					 struct lu_object_header, loh_lru);
 			list_del_init(&h->loh_lru);
 			lu_object_free(env, lu_object_top(h));
 			lprocfs_counter_incr(s->ls_stats, LU_SS_LRU_PURGED);
@@ -554,16 +584,24 @@ void lu_object_print(const struct lu_env *env, void *cookie,
 }
 EXPORT_SYMBOL(lu_object_print);
 
+/*
+ * NOTE: htable_lookup() is called with the relevant
+ * hash bucket locked, but might drop and re-acquire the lock.
+ */
 static struct lu_object *htable_lookup(struct lu_site *s,
 				       struct cfs_hash_bd *bd,
 				       const struct lu_fid *f,
-				       wait_queue_entry_t *waiter,
 				       __u64 *version)
 {
+	struct cfs_hash		*hs = s->ls_obj_hash;
 	struct lu_site_bkt_data *bkt;
 	struct lu_object_header *h;
 	struct hlist_node	*hnode;
-	__u64  ver = cfs_hash_bd_version_get(bd);
+	__u64 ver;
+	wait_queue_entry_t waiter;
+
+retry:
+	ver = cfs_hash_bd_version_get(bd);
 
 	if (*version == ver)
 		return ERR_PTR(-ENOENT);
@@ -579,13 +617,12 @@ static struct lu_object *htable_lookup(struct lu_site *s,
 		return ERR_PTR(-ENOENT);
 	}
 
-	h = container_of0(hnode, struct lu_object_header, loh_hash);
+	h = container_of(hnode, struct lu_object_header, loh_hash);
 	if (likely(!lu_object_is_dying(h))) {
 		cfs_hash_get(s->ls_obj_hash, hnode);
 		lprocfs_counter_incr(s->ls_stats, LU_SS_CACHE_HIT);
 		if (!list_empty(&h->loh_lru)) {
 			list_del_init(&h->loh_lru);
-			bkt->lsb_lru_len--;
 			percpu_counter_dec(&s->ls_lru_len_counter);
 		}
 		return lu_object_top(h);
@@ -597,11 +634,15 @@ static struct lu_object *htable_lookup(struct lu_site *s,
 	 * drained), and moreover, lookup has to wait until object is freed.
 	 */
 
-	init_waitqueue_entry(waiter, current);
-	add_wait_queue(&bkt->lsb_marche_funebre, waiter);
+	init_waitqueue_entry(&waiter, current);
+	add_wait_queue(&bkt->lsb_marche_funebre, &waiter);
 	set_current_state(TASK_UNINTERRUPTIBLE);
 	lprocfs_counter_incr(s->ls_stats, LU_SS_CACHE_DEATH_RACE);
-	return ERR_PTR(-EAGAIN);
+	cfs_hash_bd_unlock(hs, bd, 1);
+	schedule();
+	remove_wait_queue(&bkt->lsb_marche_funebre, &waiter);
+	cfs_hash_bd_lock(hs, bd, 1);
+	goto retry;
 }
 
 /**
@@ -641,37 +682,15 @@ static void lu_object_limit(const struct lu_env *env, struct lu_device *dev)
 			      false);
 }
 
-static struct lu_object *lu_object_new(const struct lu_env *env,
-				       struct lu_device *dev,
-				       const struct lu_fid *f,
-				       const struct lu_object_conf *conf)
-{
-	struct lu_object	*o;
-	struct cfs_hash	      *hs;
-	struct cfs_hash_bd	    bd;
-
-	o = lu_object_alloc(env, dev, f, conf);
-	if (IS_ERR(o))
-		return o;
-
-	hs = dev->ld_site->ls_obj_hash;
-	cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
-	cfs_hash_bd_add_locked(hs, &bd, &o->lo_header->loh_hash);
-	cfs_hash_bd_unlock(hs, &bd, 1);
-
-	lu_object_limit(env, dev);
-
-	return o;
-}
-
 /**
- * Core logic of lu_object_find*() functions.
+ * Much like lu_object_find(), but top level device of object is specifically
+ * \a dev rather than top level device of the site. This interface allows
+ * objects of different "stacking" to be created within the same site.
  */
-static struct lu_object *lu_object_find_try(const struct lu_env *env,
-					    struct lu_device *dev,
-					    const struct lu_fid *f,
-					    const struct lu_object_conf *conf,
-					    wait_queue_entry_t *waiter)
+struct lu_object *lu_object_find_at(const struct lu_env *env,
+				    struct lu_device *dev,
+				    const struct lu_fid *f,
+				    const struct lu_object_conf *conf)
 {
 	struct lu_object      *o;
 	struct lu_object      *shadow;
@@ -697,20 +716,19 @@ static struct lu_object *lu_object_find_try(const struct lu_env *env,
 	 * It is unnecessary to perform lookup-alloc-lookup-insert, instead,
 	 * just alloc and insert directly.
 	 *
-	 * If dying object is found during index search, add @waiter to the
-	 * site wait-queue and return ERR_PTR(-EAGAIN).
 	 */
-	if (conf && conf->loc_flags & LOC_F_NEW)
-		return lu_object_new(env, dev, f, conf);
-
 	s  = dev->ld_site;
 	hs = s->ls_obj_hash;
-	cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
-	o = htable_lookup(s, &bd, f, waiter, &version);
-	cfs_hash_bd_unlock(hs, &bd, 1);
-	if (!IS_ERR(o) || PTR_ERR(o) != -ENOENT)
-		return o;
 
+	cfs_hash_bd_get(hs, f, &bd);
+	if (!(conf && conf->loc_flags & LOC_F_NEW)) {
+		cfs_hash_bd_lock(hs, &bd, 1);
+		o = htable_lookup(s, &bd, f, &version);
+		cfs_hash_bd_unlock(hs, &bd, 1);
+
+		if (!IS_ERR(o) || PTR_ERR(o) != -ENOENT)
+			return o;
+	}
 	/*
 	 * Allocate new object. This may result in rather complicated
 	 * operations, including fld queries, inode loading, etc.
@@ -723,7 +741,10 @@ static struct lu_object *lu_object_find_try(const struct lu_env *env,
 
 	cfs_hash_bd_lock(hs, &bd, 1);
 
-	shadow = htable_lookup(s, &bd, f, waiter, &version);
+	if (conf && conf->loc_flags & LOC_F_NEW)
+		shadow = ERR_PTR(-ENOENT);
+	else
+		shadow = htable_lookup(s, &bd, f, &version);
 	if (likely(PTR_ERR(shadow) == -ENOENT)) {
 		cfs_hash_bd_add_locked(hs, &bd, &o->lo_header->loh_hash);
 		cfs_hash_bd_unlock(hs, &bd, 1);
@@ -737,34 +758,6 @@ static struct lu_object *lu_object_find_try(const struct lu_env *env,
 	cfs_hash_bd_unlock(hs, &bd, 1);
 	lu_object_free(env, o);
 	return shadow;
-}
-
-/**
- * Much like lu_object_find(), but top level device of object is specifically
- * \a dev rather than top level device of the site. This interface allows
- * objects of different "stacking" to be created within the same site.
- */
-struct lu_object *lu_object_find_at(const struct lu_env *env,
-				    struct lu_device *dev,
-				    const struct lu_fid *f,
-				    const struct lu_object_conf *conf)
-{
-	struct lu_site_bkt_data *bkt;
-	struct lu_object	*obj;
-	wait_queue_entry_t	   wait;
-
-	while (1) {
-		obj = lu_object_find_try(env, dev, f, conf, &wait);
-		if (obj != ERR_PTR(-EAGAIN))
-			return obj;
-		/*
-		 * lu_object_find_try() already added waiter into the
-		 * wait queue.
-		 */
-		schedule();
-		bkt = lu_site_bkt_from_fid(dev->ld_site, (void *)f);
-		remove_wait_queue(&bkt->lsb_marche_funebre, &wait);
-	}
 }
 EXPORT_SYMBOL(lu_object_find_at);
 
@@ -1327,7 +1320,7 @@ enum {
 
 static struct lu_context_key *lu_keys[LU_CONTEXT_KEY_NR] = { NULL, };
 
-static DEFINE_SPINLOCK(lu_keys_guard);
+static DEFINE_RWLOCK(lu_keys_guard);
 static atomic_t lu_key_initing_cnt = ATOMIC_INIT(0);
 
 /**
@@ -1351,7 +1344,7 @@ int lu_context_key_register(struct lu_context_key *key)
 	LASSERT(key->lct_tags != 0);
 
 	result = -ENFILE;
-	spin_lock(&lu_keys_guard);
+	write_lock(&lu_keys_guard);
 	for (i = 0; i < ARRAY_SIZE(lu_keys); ++i) {
 		if (!lu_keys[i]) {
 			key->lct_index = i;
@@ -1363,7 +1356,7 @@ int lu_context_key_register(struct lu_context_key *key)
 			break;
 		}
 	}
-	spin_unlock(&lu_keys_guard);
+	write_unlock(&lu_keys_guard);
 	return result;
 }
 EXPORT_SYMBOL(lu_context_key_register);
@@ -1396,8 +1389,8 @@ void lu_context_key_degister(struct lu_context_key *key)
 
 	lu_context_key_quiesce(key);
 
+	write_lock(&lu_keys_guard);
 	++key_set_version;
-	spin_lock(&lu_keys_guard);
 	key_fini(&lu_shrink_env.le_ctx, key->lct_index);
 
 	/**
@@ -1405,18 +1398,18 @@ void lu_context_key_degister(struct lu_context_key *key)
 	 * run lu_context_key::lct_fini() method.
 	 */
 	while (atomic_read(&key->lct_used) > 1) {
-		spin_unlock(&lu_keys_guard);
+		write_unlock(&lu_keys_guard);
 		CDEBUG(D_INFO, "%s: \"%s\" %p, %d\n",
 		       __func__, module_name(key->lct_owner),
 		       key, atomic_read(&key->lct_used));
 		schedule();
-		spin_lock(&lu_keys_guard);
+		write_lock(&lu_keys_guard);
 	}
 	if (lu_keys[key->lct_index]) {
 		lu_keys[key->lct_index] = NULL;
 		lu_ref_fini(&key->lct_reference);
 	}
-	spin_unlock(&lu_keys_guard);
+	write_unlock(&lu_keys_guard);
 
 	LASSERTF(atomic_read(&key->lct_used) == 1,
 		 "key has instances: %d\n",
@@ -1536,7 +1529,7 @@ void lu_context_key_quiesce(struct lu_context_key *key)
 		/*
 		 * XXX memory barrier has to go here.
 		 */
-		spin_lock(&lu_keys_guard);
+		write_lock(&lu_keys_guard);
 		key->lct_tags |= LCT_QUIESCENT;
 
 		/**
@@ -1544,27 +1537,30 @@ void lu_context_key_quiesce(struct lu_context_key *key)
 		 * have completed.
 		 */
 		while (atomic_read(&lu_key_initing_cnt) > 0) {
-			spin_unlock(&lu_keys_guard);
+			write_unlock(&lu_keys_guard);
 			CDEBUG(D_INFO, "%s: \"%s\" %p, %d (%d)\n",
 			       __func__,
 			       module_name(key->lct_owner),
 			       key, atomic_read(&key->lct_used),
 			atomic_read(&lu_key_initing_cnt));
 			schedule();
-			spin_lock(&lu_keys_guard);
+			write_lock(&lu_keys_guard);
 		}
 
 		list_for_each_entry(ctx, &lu_context_remembered, lc_remember)
 			key_fini(ctx, key->lct_index);
-		spin_unlock(&lu_keys_guard);
+
 		++key_set_version;
+		write_unlock(&lu_keys_guard);
 	}
 }
 
 void lu_context_key_revive(struct lu_context_key *key)
 {
+	write_lock(&lu_keys_guard);
 	key->lct_tags &= ~LCT_QUIESCENT;
 	++key_set_version;
+	write_unlock(&lu_keys_guard);
 }
 
 static void keys_fini(struct lu_context *ctx)
@@ -1583,6 +1579,7 @@ static void keys_fini(struct lu_context *ctx)
 
 static int keys_fill(struct lu_context *ctx)
 {
+	unsigned int pre_version;
 	unsigned int i;
 
 	/*
@@ -1594,10 +1591,12 @@ static int keys_fill(struct lu_context *ctx)
 	 * An atomic_t variable is still used, in order not to reacquire the
 	 * lock when decrementing the counter.
 	 */
-	spin_lock(&lu_keys_guard);
+	read_lock(&lu_keys_guard);
 	atomic_inc(&lu_key_initing_cnt);
-	spin_unlock(&lu_keys_guard);
+	pre_version = key_set_version;
+	read_unlock(&lu_keys_guard);
 
+refill:
 	LINVRNT(ctx->lc_value);
 	for (i = 0; i < ARRAY_SIZE(lu_keys); ++i) {
 		struct lu_context_key *key;
@@ -1638,9 +1637,17 @@ static int keys_fill(struct lu_context *ctx)
 			if (key->lct_exit)
 				ctx->lc_tags |= LCT_HAS_EXIT;
 		}
-		ctx->lc_version = key_set_version;
 	}
+
+	read_lock(&lu_keys_guard);
+	if (pre_version != key_set_version) {
+		pre_version = key_set_version;
+		read_unlock(&lu_keys_guard);
+		goto refill;
+	}
+	ctx->lc_version = key_set_version;
 	atomic_dec(&lu_key_initing_cnt);
+	read_unlock(&lu_keys_guard);
 	return 0;
 }
 
@@ -1665,9 +1672,9 @@ int lu_context_init(struct lu_context *ctx, __u32 tags)
 	ctx->lc_state = LCS_INITIALIZED;
 	ctx->lc_tags = tags;
 	if (tags & LCT_REMEMBER) {
-		spin_lock(&lu_keys_guard);
+		write_lock(&lu_keys_guard);
 		list_add(&ctx->lc_remember, &lu_context_remembered);
-		spin_unlock(&lu_keys_guard);
+		write_unlock(&lu_keys_guard);
 	} else {
 		INIT_LIST_HEAD(&ctx->lc_remember);
 	}
@@ -1693,10 +1700,10 @@ void lu_context_fini(struct lu_context *ctx)
 		keys_fini(ctx);
 
 	} else { /* could race with key degister */
-		spin_lock(&lu_keys_guard);
+		write_lock(&lu_keys_guard);
 		keys_fini(ctx);
 		list_del_init(&ctx->lc_remember);
-		spin_unlock(&lu_keys_guard);
+		write_unlock(&lu_keys_guard);
 	}
 }
 EXPORT_SYMBOL(lu_context_fini);
@@ -1721,10 +1728,11 @@ void lu_context_exit(struct lu_context *ctx)
 	LINVRNT(ctx->lc_state == LCS_ENTERED);
 	ctx->lc_state = LCS_LEFT;
 	if (ctx->lc_tags & LCT_HAS_EXIT && ctx->lc_value) {
+		/* could race with key quiescency */
+		if (ctx->lc_tags & LCT_REMEMBER)
+			read_lock(&lu_keys_guard);
+
 		for (i = 0; i < ARRAY_SIZE(lu_keys); ++i) {
-			/* could race with key quiescency */
-			if (ctx->lc_tags & LCT_REMEMBER)
-				spin_lock(&lu_keys_guard);
 			if (ctx->lc_value[i]) {
 				struct lu_context_key *key;
 
@@ -1733,9 +1741,10 @@ void lu_context_exit(struct lu_context *ctx)
 					key->lct_exit(ctx,
 						      key, ctx->lc_value[i]);
 			}
-			if (ctx->lc_tags & LCT_REMEMBER)
-				spin_unlock(&lu_keys_guard);
 		}
+
+		if (ctx->lc_tags & LCT_REMEMBER)
+			read_unlock(&lu_keys_guard);
 	}
 }
 EXPORT_SYMBOL(lu_context_exit);
@@ -1747,7 +1756,14 @@ EXPORT_SYMBOL(lu_context_exit);
  */
 int lu_context_refill(struct lu_context *ctx)
 {
-	return likely(ctx->lc_version == key_set_version) ? 0 : keys_fill(ctx);
+	read_lock(&lu_keys_guard);
+	if (likely(ctx->lc_version == key_set_version)) {
+		read_unlock(&lu_keys_guard);
+		return 0;
+	}
+
+	read_unlock(&lu_keys_guard);
+	return keys_fill(ctx);
 }
 
 /**
@@ -1798,19 +1814,24 @@ struct lu_site_stats {
 	unsigned int	lss_busy;
 };
 
-static void lu_site_stats_get(struct cfs_hash *hs,
+static void lu_site_stats_get(const struct lu_site *s,
 			      struct lu_site_stats *stats, int populated)
 {
+	struct cfs_hash *hs = s->ls_obj_hash;
 	struct cfs_hash_bd bd;
 	unsigned int i;
+	/*
+	 * percpu_counter_sum_positive() won't accept a const pointer
+	 * as it does modify the struct by taking a spinlock
+	 */
+	struct lu_site *s2 = (struct lu_site *)s;
 
+	stats->lss_busy += cfs_hash_size_get(hs) -
+		percpu_counter_sum_positive(&s2->ls_lru_len_counter);
 	cfs_hash_for_each_bucket(hs, &bd, i) {
-		struct lu_site_bkt_data *bkt = cfs_hash_bd_extra_get(hs, &bd);
 		struct hlist_head	*hhead;
 
 		cfs_hash_bd_lock(hs, &bd, 1);
-		stats->lss_busy  +=
-			cfs_hash_bd_count_get(&bd) - bkt->lsb_lru_len;
 		stats->lss_total += cfs_hash_bd_count_get(&bd);
 		stats->lss_max_search = max((int)stats->lss_max_search,
 					    cfs_hash_bd_depmax_get(&bd));
@@ -2003,7 +2024,7 @@ int lu_site_stats_print(const struct lu_site *s, struct seq_file *m)
 	struct lu_site_stats stats;
 
 	memset(&stats, 0, sizeof(stats));
-	lu_site_stats_get(s->ls_obj_hash, &stats, 1);
+	lu_site_stats_get(s, &stats, 1);
 
 	seq_printf(m, "%d/%d %d/%ld %d %d %d %d %d %d %d\n",
 		   stats.lss_busy,

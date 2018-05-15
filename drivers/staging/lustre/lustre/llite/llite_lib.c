@@ -257,7 +257,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 	 * available
 	 */
 	err = obd_statfs(NULL, sbi->ll_md_exp, osfs,
-			 cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS),
+			 get_jiffies_64() - OBD_STATFS_CACHE_SECONDS * HZ,
 			 OBD_STATFS_FOR_MDT0);
 	if (err)
 		goto out_md_fid;
@@ -400,11 +400,11 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 		LCONSOLE_ERROR_MSG(0x150,
 				   "An OST (dt %s) is performing recovery, of which this client is not a part.  Please wait for recovery to complete, abort, or time out.\n",
 				   dt);
-		goto out_md;
+		goto out_md_fid;
 	} else if (err) {
 		CERROR("%s: Cannot connect to %s: rc = %d\n",
 		       sbi->ll_dt_exp->exp_obd->obd_name, dt, err);
-		goto out_md;
+		goto out_md_fid;
 	}
 
 	sbi->ll_dt_exp->exp_connect_data = *data;
@@ -1675,7 +1675,7 @@ int ll_statfs(struct dentry *de, struct kstatfs *sfs)
 
 	/* Some amount of caching on the client is allowed */
 	rc = ll_statfs_internal(sb, &osfs,
-				cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS),
+				get_jiffies_64() - OBD_STATFS_CACHE_SECONDS * HZ,
 				0);
 	if (rc)
 		return rc;

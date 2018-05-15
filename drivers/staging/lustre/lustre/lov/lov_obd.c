@@ -795,15 +795,11 @@ int lov_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 
 	init_rwsem(&lov->lov_notify_lock);
 
-	lov->lov_pools_hash_body = cfs_hash_create("POOLS", HASH_POOLS_CUR_BITS,
-						   HASH_POOLS_MAX_BITS,
-						   HASH_POOLS_BKT_BITS, 0,
-						   CFS_HASH_MIN_THETA,
-						   CFS_HASH_MAX_THETA,
-						   &pool_hash_operations,
-						   CFS_HASH_DEFAULT);
 	INIT_LIST_HEAD(&lov->lov_pool_list);
 	lov->lov_pool_count = 0;
+	rc = lov_pool_hash_init(&lov->lov_pools_hash_body);
+	if (rc)
+		goto out;
 	rc = lov_ost_pool_init(&lov->lov_packed, 0);
 	if (rc)
 		goto out;
@@ -839,7 +835,7 @@ static int lov_cleanup(struct obd_device *obd)
 		/* coverity[overrun-buffer-val] */
 		lov_pool_del(obd, pool->pool_name);
 	}
-	cfs_hash_putref(lov->lov_pools_hash_body);
+	lov_pool_hash_destroy(&lov->lov_pools_hash_body);
 	lov_ost_pool_free(&lov->lov_packed);
 
 	lprocfs_obd_cleanup(obd);
@@ -1063,7 +1059,7 @@ static int lov_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
 
 		/* got statfs data */
 		rc = obd_statfs(NULL, lov->lov_tgts[index]->ltd_exp, &stat_buf,
-				cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS),
+				get_jiffies_64() - OBD_STATFS_CACHE_SECONDS * HZ,
 				flags);
 		if (rc)
 			return rc;

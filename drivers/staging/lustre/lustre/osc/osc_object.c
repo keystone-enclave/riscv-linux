@@ -58,7 +58,7 @@ static struct lu_object *osc2lu(struct osc_object *osc)
 static struct osc_object *lu2osc(const struct lu_object *obj)
 {
 	LINVRNT(osc_is_object(obj));
-	return container_of0(obj, struct osc_object, oo_cl.co_lu);
+	return container_of(obj, struct osc_object, oo_cl.co_lu);
 }
 
 /*****************************************************************************
@@ -300,7 +300,7 @@ drop_lock:
 
 void osc_object_set_contended(struct osc_object *obj)
 {
-	obj->oo_contention_time = cfs_time_current();
+	obj->oo_contention_time = jiffies;
 	/* mb(); */
 	obj->oo_contended = 1;
 }
@@ -314,7 +314,7 @@ int osc_object_is_contended(struct osc_object *obj)
 {
 	struct osc_device *dev = lu2osc_dev(obj->oo_cl.co_lu.lo_dev);
 	int osc_contention_time = dev->od_contention_time;
-	unsigned long cur_time = cfs_time_current();
+	unsigned long cur_time = jiffies;
 	unsigned long retry_time;
 
 	if (OBD_FAIL_CHECK(OBD_FAIL_OSC_OBJECT_CONTENTION))
@@ -327,9 +327,8 @@ int osc_object_is_contended(struct osc_object *obj)
 	 * I like copy-paste. the code is copied from
 	 * ll_file_is_contended.
 	 */
-	retry_time = cfs_time_add(obj->oo_contention_time,
-				  osc_contention_time * HZ);
-	if (cfs_time_after(cur_time, retry_time)) {
+	retry_time = obj->oo_contention_time + osc_contention_time * HZ;
+	if (time_after(cur_time, retry_time)) {
 		osc_object_clear_contended(obj);
 		return 0;
 	}

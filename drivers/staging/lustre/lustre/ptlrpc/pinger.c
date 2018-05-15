@@ -108,7 +108,7 @@ static void ptlrpc_update_next_ping(struct obd_import *imp, int soon)
 				  at_get(&imp->imp_at.iat_net_latency));
 		time = min(time, dtime);
 	}
-	imp->imp_next_ping = cfs_time_shift(time);
+	imp->imp_next_ping = jiffies + time * HZ;
 }
 
 static inline int imp_is_deactive(struct obd_import *imp)
@@ -120,9 +120,9 @@ static inline int imp_is_deactive(struct obd_import *imp)
 static inline int ptlrpc_next_reconnect(struct obd_import *imp)
 {
 	if (imp->imp_server_timeout)
-		return cfs_time_shift(obd_timeout / 2);
+		return jiffies + obd_timeout / 2 * HZ;
 	else
-		return cfs_time_shift(obd_timeout);
+		return jiffies + obd_timeout * HZ;
 }
 
 static long pinger_check_timeout(unsigned long time)
@@ -141,8 +141,7 @@ static long pinger_check_timeout(unsigned long time)
 	}
 	mutex_unlock(&pinger_mutex);
 
-	return cfs_time_sub(cfs_time_add(time, timeout * HZ),
-					 cfs_time_current());
+	return time + timeout * HZ - jiffies;
 }
 
 static bool ir_up;
@@ -181,7 +180,7 @@ static void ptlrpc_pinger_process_import(struct obd_import *imp,
 
 	imp->imp_force_verify = 0;
 
-	if (cfs_time_aftereq(imp->imp_next_ping - 5 * CFS_TICK, this_ping) &&
+	if (time_after_eq(imp->imp_next_ping - 5 * CFS_TICK, this_ping) &&
 	    !force) {
 		spin_unlock(&imp->imp_lock);
 		return;
@@ -223,7 +222,7 @@ static DECLARE_DELAYED_WORK(ping_work, ptlrpc_pinger_main);
 
 static void ptlrpc_pinger_main(struct work_struct *ws)
 {
-	unsigned long this_ping = cfs_time_current();
+	unsigned long this_ping = jiffies;
 	long time_to_next_wake;
 	struct timeout_item *item;
 	struct obd_import *imp;
@@ -237,9 +236,8 @@ static void ptlrpc_pinger_main(struct work_struct *ws)
 			ptlrpc_pinger_process_import(imp, this_ping);
 			/* obd_timeout might have changed */
 			if (imp->imp_pingable && imp->imp_next_ping &&
-			    cfs_time_after(imp->imp_next_ping,
-					   cfs_time_add(this_ping,
-							PING_INTERVAL * HZ)))
+			    time_after(imp->imp_next_ping,
+				       this_ping + PING_INTERVAL * HZ))
 				ptlrpc_update_next_ping(imp, 0);
 		}
 		mutex_unlock(&pinger_mutex);
@@ -253,10 +251,9 @@ static void ptlrpc_pinger_main(struct work_struct *ws)
 		 * we will SKIP the next ping at next_ping, and the
 		 * ping will get sent 2 timeouts from now!  Beware.
 		 */
-		CDEBUG(D_INFO, "next wakeup in " CFS_DURATION_T " (%ld)\n",
+		CDEBUG(D_INFO, "next wakeup in %ld (%ld)\n",
 		       time_to_next_wake,
-		       cfs_time_add(this_ping,
-				    PING_INTERVAL * HZ));
+		       this_ping + PING_INTERVAL * HZ);
 	} while (time_to_next_wake <= 0);
 
 	queue_delayed_work(pinger_wq, &ping_work,

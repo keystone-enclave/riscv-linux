@@ -46,15 +46,16 @@
 
 const struct xattr_handler *get_xattr_type(const char *name)
 {
-	int i = 0;
+	int i;
 
-	while (ll_xattr_handlers[i]) {
-		size_t len = strlen(ll_xattr_handlers[i]->prefix);
+	for (i = 0; ll_xattr_handlers[i]; i++) {
+		const char *prefix = xattr_prefix(ll_xattr_handlers[i]);
+		size_t prefix_len = strlen(prefix);
 
-		if (!strncmp(ll_xattr_handlers[i]->prefix, name, len))
+		if (!strncmp(prefix, name, prefix_len))
 			return ll_xattr_handlers[i];
-		i++;
 	}
+
 	return NULL;
 }
 
@@ -81,20 +82,23 @@ static int xattr_type_filter(struct ll_sb_info *sbi,
 	return 0;
 }
 
-static int
-ll_xattr_set_common(const struct xattr_handler *handler,
-		    struct dentry *dentry, struct inode *inode,
-		    const char *name, const void *value, size_t size,
-		    int flags)
+static int ll_xattr_set_common(const struct xattr_handler *handler,
+			       struct dentry *dentry, struct inode *inode,
+			       const char *name, const void *value, size_t size,
+			       int flags)
 {
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
 	struct ptlrpc_request *req = NULL;
 	const char *pv = value;
 	char *fullname;
-	__u64 valid;
+	u64 valid;
 	int rc;
 
-	if (flags == XATTR_REPLACE) {
+	/* When setxattr() is called with a size of 0 the value is
+	 * unconditionally replaced by "". When removexattr() is
+	 * called we get a NULL value and XATTR_REPLACE for flags.
+	 */
+	if (!value && flags == XATTR_REPLACE) {
 		ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_REMOVEXATTR, 1);
 		valid = OBD_MD_FLXATTRRM;
 	} else {
@@ -117,11 +121,6 @@ ll_xattr_set_common(const struct xattr_handler *handler,
 	     (handler->flags == XATTR_LUSTRE_T && !strcmp(name, "lov"))))
 		return 0;
 
-	/* b15587: ignore security.capability xattr for now */
-	if ((handler->flags == XATTR_SECURITY_T &&
-	     !strcmp(name, "capability")))
-		return 0;
-
 	/* LU-549:  Disable security.selinux when selinux is disabled */
 	if (handler->flags == XATTR_SECURITY_T && !selinux_is_enabled() &&
 	    strcmp(name, "selinux") == 0)
@@ -141,12 +140,12 @@ ll_xattr_set_common(const struct xattr_handler *handler,
 			return -EPERM;
 	}
 
-	fullname = kasprintf(GFP_KERNEL, "%s%s\n", handler->prefix, name);
+	fullname = kasprintf(GFP_KERNEL, "%s%s", handler->prefix, name);
 	if (!fullname)
 		return -ENOMEM;
-	rc = md_setxattr(sbi->ll_md_exp, ll_inode2fid(inode),
-			 valid, fullname, pv, size, 0, flags,
-			 ll_i2suppgid(inode), &req);
+
+	rc = md_setxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid, fullname,
+			 pv, size, 0, flags, ll_i2suppgid(inode), &req);
 	kfree(fullname);
 	if (rc) {
 		if (rc == -EOPNOTSUPP && handler->flags == XATTR_USER_T) {
@@ -191,6 +190,95 @@ static int get_hsm_state(struct inode *inode, u32 *hus_states)
 	return rc;
 }
 
+static int ll_adjust_lum(struct inode *inode, struct lov_user_md *lump)
+{
+	int rc = 0;
+
+	if (!lump)
+		return 0;
+
+	/* Attributes that are saved via getxattr will always have
+	 * the stripe_offset as 0.  Instead, the MDS should be
+	 * allowed to pick the starting OST index.   b=17846
+	 */
+	if (lump->lmm_stripe_offset == 0)
+		lump->lmm_stripe_offset = -1;
+
+	/* Avoid anyone directly setting the RELEASED flag. */
+	if (lump->lmm_pattern & LOV_PATTERN_F_RELEASED) {
+		/* Only if we have a released flag check if the file
+		 * was indeed archived.
+		 */
+		u32 state = HS_NONE;
+
+		rc = get_hsm_state(inode, &state);
+		if (rc)
+			return rc;
+
+		if (!(state & HS_ARCHIVED)) {
+			CDEBUG(D_VFSTRACE,
+			       "hus_states state = %x, pattern = %x\n",
+				state, lump->lmm_pattern);
+			/*
+			 * Here the state is: real file is not
+			 * archived but user is requesting to set
+			 * the RELEASED flag so we mask off the
+			 * released flag from the request
+			 */
+			lump->lmm_pattern ^= LOV_PATTERN_F_RELEASED;
+		}
+	}
+
+	return rc;
+}
+
+static int ll_setstripe_ea(struct dentry *dentry, struct lov_user_md *lump,
+			   size_t size)
+{
+	struct inode *inode = d_inode(dentry);
+	int rc = 0;
+
+	/*
+	 * It is possible to set an xattr to a "" value of zero size.
+	 * For this case we are going to treat it as a removal.
+	 */
+	if (!size && lump)
+		lump = NULL;
+
+	rc = ll_adjust_lum(inode, lump);
+	if (rc)
+		return rc;
+
+	if (lump && S_ISREG(inode->i_mode)) {
+		u64 it_flags = FMODE_WRITE;
+		ssize_t lum_size;
+
+		lum_size = ll_lov_user_md_size(lump);
+		if (lum_size < 0 || size < lum_size)
+			return -ERANGE;
+
+		rc = ll_lov_setstripe_ea_info(inode, dentry, it_flags, lump,
+					      lum_size);
+		/**
+		 * b=10667: ignore -EEXIST.
+		 * Silently eat error on setting trusted.lov/lustre.lov
+		 * attribute for platforms that added the default option
+		 * to copy all attributes in 'cp' command. Both rsync and
+		 * tar --xattrs also will try to set LOVEA for existing
+		 * files.
+		 */
+		if (rc == -EEXIST)
+			rc = 0;
+	} else if (S_ISDIR(inode->i_mode)) {
+		if (size != 0 && size < sizeof(struct lov_user_md))
+			return -EINVAL;
+
+		rc = ll_dir_setstripe(inode, lump, 0);
+	}
+
+	return rc;
+}
+
 static int ll_xattr_set(const struct xattr_handler *handler,
 			struct dentry *dentry, struct inode *inode,
 			const char *name, const void *value, size_t size,
@@ -202,76 +290,20 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 	CDEBUG(D_VFSTRACE, "VFS Op:inode=" DFID "(%p), xattr %s\n",
 	       PFID(ll_inode2fid(inode)), inode, name);
 
+	/* lustre/trusted.lov.xxx would be passed through xattr API */
 	if (!strcmp(name, "lov")) {
-		struct lov_user_md *lump = (struct lov_user_md *)value;
 		int op_type = flags == XATTR_REPLACE ? LPROC_LL_REMOVEXATTR :
 						       LPROC_LL_SETXATTR;
-		int rc = 0;
 
 		ll_stats_ops_tally(ll_i2sbi(inode), op_type, 1);
 
-		if (size != 0 && size < sizeof(struct lov_user_md))
-			return -EINVAL;
-
-		/*
-		 * It is possible to set an xattr to a "" value of zero size.
-		 * For this case we are going to treat it as a removal.
-		 */
-		if (!size && lump)
-			lump = NULL;
-
-		/* Attributes that are saved via getxattr will always have
-		 * the stripe_offset as 0.  Instead, the MDS should be
-		 * allowed to pick the starting OST index.   b=17846
-		 */
-		if (lump && lump->lmm_stripe_offset == 0)
-			lump->lmm_stripe_offset = -1;
-
-		/* Avoid anyone directly setting the RELEASED flag. */
-		if (lump && (lump->lmm_pattern & LOV_PATTERN_F_RELEASED)) {
-			/* Only if we have a released flag check if the file
-			 * was indeed archived.
-			 */
-			u32 state = HS_NONE;
-
-			rc = get_hsm_state(inode, &state);
-			if (rc)
-				return rc;
-
-			if (!(state & HS_ARCHIVED)) {
-				CDEBUG(D_VFSTRACE,
-				       "hus_states state = %x, pattern = %x\n",
-				state, lump->lmm_pattern);
-				/*
-				 * Here the state is: real file is not
-				 * archived but user is requesting to set
-				 * the RELEASED flag so we mask off the
-				 * released flag from the request
-				 */
-				lump->lmm_pattern ^= LOV_PATTERN_F_RELEASED;
-			}
-		}
-
-		if (lump && S_ISREG(inode->i_mode)) {
-			__u64 it_flags = FMODE_WRITE;
-			int lum_size;
-
-			lum_size = ll_lov_user_md_size(lump);
-			if (lum_size < 0 || size < lum_size)
-				return 0; /* b=10667: ignore error */
-
-			rc = ll_lov_setstripe_ea_info(inode, dentry, it_flags,
-						      lump, lum_size);
-			/* b=10667: rc always be 0 here for now */
-			rc = 0;
-		} else if (S_ISDIR(inode->i_mode)) {
-			rc = ll_dir_setstripe(inode, lump, 0);
-		}
-
-		return rc;
-
+		return ll_setstripe_ea(dentry, (struct lov_user_md *)value,
+				       size);
 	} else if (!strcmp(name, "lma") || !strcmp(name, "link")) {
-		ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_SETXATTR, 1);
+		int op_type = flags == XATTR_REPLACE ? LPROC_LL_REMOVEXATTR :
+						       LPROC_LL_SETXATTR;
+
+		ll_stats_ops_tally(ll_i2sbi(inode), op_type, 1);
 		return 0;
 	}
 
@@ -279,9 +311,8 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 				   flags);
 }
 
-int
-ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
-	      size_t size, __u64 valid)
+int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
+		  size_t size, u64 valid)
 {
 	struct ll_inode_info *lli = ll_i2info(inode);
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
@@ -368,9 +399,6 @@ static int ll_xattr_get_common(const struct xattr_handler *handler,
 			       const char *name, void *buffer, size_t size)
 {
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
-#ifdef CONFIG_FS_POSIX_ACL
-	struct ll_inode_info *lli = ll_i2info(inode);
-#endif
 	char *fullname;
 	int rc;
 
@@ -383,10 +411,6 @@ static int ll_xattr_get_common(const struct xattr_handler *handler,
 	if (rc)
 		return rc;
 
-	/* b15587: ignore security.capability xattr for now */
-	if ((handler->flags == XATTR_SECURITY_T && !strcmp(name, "capability")))
-		return -ENODATA;
-
 	/* LU-549:  Disable security.selinux when selinux is disabled */
 	if (handler->flags == XATTR_SECURITY_T && !selinux_is_enabled() &&
 	    !strcmp(name, "selinux"))
@@ -398,6 +422,7 @@ static int ll_xattr_get_common(const struct xattr_handler *handler,
 	 * chance that cached ACL is uptodate.
 	 */
 	if (handler->flags == XATTR_ACL_ACCESS_T) {
+		struct ll_inode_info *lli = ll_i2info(inode);
 		struct posix_acl *acl;
 
 		spin_lock(&lli->lli_lock);
@@ -414,9 +439,10 @@ static int ll_xattr_get_common(const struct xattr_handler *handler,
 	if (handler->flags == XATTR_ACL_DEFAULT_T && !S_ISDIR(inode->i_mode))
 		return -ENODATA;
 #endif
-	fullname = kasprintf(GFP_KERNEL, "%s%s\n", handler->prefix, name);
+	fullname = kasprintf(GFP_KERNEL, "%s%s", handler->prefix, name);
 	if (!fullname)
 		return -ENOMEM;
+
 	rc = ll_xattr_list(inode, fullname, handler->flags, buffer, size,
 			   OBD_MD_FLXATTR);
 	kfree(fullname);
@@ -540,9 +566,10 @@ ssize_t ll_listxattr(struct dentry *dentry, char *buffer, size_t size)
 			   OBD_MD_FLXATTRLS);
 	if (rc < 0)
 		return rc;
+
 	/*
 	 * If we're being called to get the size of the xattr list
-	 * (buf_size == 0) then just assume that a lustre.lov xattr
+	 * (size == 0) then just assume that a lustre.lov xattr
 	 * exists.
 	 */
 	if (!size)
@@ -555,14 +582,14 @@ ssize_t ll_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		len = strnlen(xattr_name, rem - 1) + 1;
 		rem -= len;
 		if (!xattr_type_filter(sbi, get_xattr_type(xattr_name))) {
-			/* Skip OK xattr type leave it in buffer */
+			/* Skip OK xattr type, leave it in buffer. */
 			xattr_name += len;
 			continue;
 		}
 
 		/*
 		 * Move up remaining xattrs in buffer
-		 * removing the xattr that is not OK
+		 * removing the xattr that is not OK.
 		 */
 		memmove(xattr_name, xattr_name + len, rem);
 		rc -= len;
@@ -605,14 +632,14 @@ static const struct xattr_handler ll_security_xattr_handler = {
 };
 
 static const struct xattr_handler ll_acl_access_xattr_handler = {
-	.prefix = XATTR_NAME_POSIX_ACL_ACCESS,
+	.name = XATTR_NAME_POSIX_ACL_ACCESS,
 	.flags = XATTR_ACL_ACCESS_T,
 	.get = ll_xattr_get_common,
 	.set = ll_xattr_set_common,
 };
 
 static const struct xattr_handler ll_acl_default_xattr_handler = {
-	.prefix = XATTR_NAME_POSIX_ACL_DEFAULT,
+	.name = XATTR_NAME_POSIX_ACL_DEFAULT,
 	.flags = XATTR_ACL_DEFAULT_T,
 	.get = ll_xattr_get_common,
 	.set = ll_xattr_set_common,

@@ -362,6 +362,9 @@ struct ldlm_namespace {
 	/** Flag indicating if namespace is on client instead of server */
 	enum ldlm_side		ns_client;
 
+	/** name of this namespace */
+	char			*ns_name;
+
 	/** Resource hash table for namespace. */
 	struct cfs_hash		*ns_rs_hash;
 
@@ -630,16 +633,6 @@ struct ldlm_lock {
 	 */
 	struct ldlm_interval	*l_tree_node;
 	/**
-	 * Per export hash of locks.
-	 * Protected by per-bucket exp->exp_lock_hash locks.
-	 */
-	struct hlist_node	l_exp_hash;
-	/**
-	 * Per export hash of flock locks.
-	 * Protected by per-bucket exp->exp_flock_hash locks.
-	 */
-	struct hlist_node	l_exp_flock_hash;
-	/**
 	 * Requested mode.
 	 * Protected by lr_lock.
 	 */
@@ -888,7 +881,7 @@ static inline bool ldlm_has_layout(struct ldlm_lock *lock)
 static inline char *
 ldlm_ns_name(struct ldlm_namespace *ns)
 {
-	return ns->ns_rs_hash->hs_name;
+	return ns->ns_name;
 }
 
 static inline struct ldlm_namespace *
@@ -1200,7 +1193,7 @@ struct ldlm_resource *ldlm_resource_get(struct ldlm_namespace *ns,
 					struct ldlm_resource *parent,
 					const struct ldlm_res_id *,
 					enum ldlm_type type, int create);
-int ldlm_resource_putref(struct ldlm_resource *res);
+void ldlm_resource_putref(struct ldlm_resource *res);
 void ldlm_resource_add_lock(struct ldlm_resource *res,
 			    struct list_head *head,
 			    struct ldlm_lock *lock);
@@ -1227,7 +1220,6 @@ int ldlm_lock_change_resource(struct ldlm_namespace *, struct ldlm_lock *,
  * processing.
  * @{
  */
-int ldlm_completion_ast_async(struct ldlm_lock *lock, __u64 flags, void *data);
 int ldlm_completion_ast(struct ldlm_lock *lock, __u64 flags, void *data);
 /** @} ldlm_local_ast */
 

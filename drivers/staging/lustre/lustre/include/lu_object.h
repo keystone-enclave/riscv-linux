@@ -549,31 +549,7 @@ struct lu_object_header {
 };
 
 struct fld;
-
-struct lu_site_bkt_data {
-	/**
-	 * number of object in this bucket on the lsb_lru list.
-	 */
-	long			lsb_lru_len;
-	/**
-	 * LRU list, updated on each access to object. Protected by
-	 * bucket lock of lu_site::ls_obj_hash.
-	 *
-	 * "Cold" end of LRU is lu_site::ls_lru.next. Accessed object are
-	 * moved to the lu_site::ls_lru.prev (this is due to the non-existence
-	 * of list_for_each_entry_safe_reverse()).
-	 */
-	struct list_head		lsb_lru;
-	/**
-	 * Wait-queue signaled when an object in this site is ultimately
-	 * destroyed (lu_object_free()). It is used by lu_object_find() to
-	 * wait before re-trying when object in the process of destruction is
-	 * found in the hash table.
-	 *
-	 * \see htable_lookup().
-	 */
-	wait_queue_head_t	       lsb_marche_funebre;
-};
+struct lu_site_bkt_data;
 
 enum {
 	LU_SS_CREATED	 = 0,
@@ -642,14 +618,8 @@ struct lu_site {
 	struct percpu_counter	 ls_lru_len_counter;
 };
 
-static inline struct lu_site_bkt_data *
-lu_site_bkt_from_fid(struct lu_site *site, struct lu_fid *fid)
-{
-	struct cfs_hash_bd bd;
-
-	cfs_hash_bd_get(site->ls_obj_hash, fid, &bd);
-	return cfs_hash_bd_extra_get(site->ls_obj_hash, &bd);
-}
+wait_queue_head_t *
+lu_site_wq_from_fid(struct lu_site *site, struct lu_fid *fid);
 
 static inline struct seq_server_site *lu_site2seq(const struct lu_site *s)
 {
@@ -745,15 +715,15 @@ struct lu_object *lu_object_find_slice(const struct lu_env *env,
 static inline struct lu_object *lu_object_top(struct lu_object_header *h)
 {
 	LASSERT(!list_empty(&h->loh_layers));
-	return container_of0(h->loh_layers.next, struct lu_object, lo_linkage);
+	return list_first_entry(&h->loh_layers, struct lu_object, lo_linkage);
 }
 
 /**
  * Next sub-object in the layering
  */
-static inline struct lu_object *lu_object_next(const struct lu_object *o)
+static inline const struct lu_object *lu_object_next(const struct lu_object *o)
 {
-	return container_of0(o->lo_linkage.next, struct lu_object, lo_linkage);
+	return list_next_entry(o, lo_linkage);
 }
 
 /**

@@ -48,7 +48,7 @@ static int kiblnd_init_rdma(struct kib_conn *conn, struct kib_tx *tx, int type,
 			    __u64 dstcookie);
 static void kiblnd_queue_tx_locked(struct kib_tx *tx, struct kib_conn *conn);
 static void kiblnd_queue_tx(struct kib_tx *tx, struct kib_conn *conn);
-static void kiblnd_unmap_tx(struct lnet_ni *ni, struct kib_tx *tx);
+static void kiblnd_unmap_tx(struct kib_tx *tx);
 static void kiblnd_check_sends_locked(struct kib_conn *conn);
 
 static void
@@ -66,7 +66,7 @@ kiblnd_tx_done(struct lnet_ni *ni, struct kib_tx *tx)
 	LASSERT(!tx->tx_waiting);	      /* mustn't be awaiting peer response */
 	LASSERT(tx->tx_pool);
 
-	kiblnd_unmap_tx(ni, tx);
+	kiblnd_unmap_tx(tx);
 
 	/* tx may have up to 2 lnet msgs to finalise */
 	lntmsg[0] = tx->tx_lntmsg[0]; tx->tx_lntmsg[0] = NULL;
@@ -591,13 +591,9 @@ kiblnd_fmr_map_tx(struct kib_net *net, struct kib_tx *tx, struct kib_rdma_desc *
 	return 0;
 }
 
-static void kiblnd_unmap_tx(struct lnet_ni *ni, struct kib_tx *tx)
+static void kiblnd_unmap_tx(struct kib_tx *tx)
 {
-	struct kib_net *net = ni->ni_data;
-
-	LASSERT(net);
-
-	if (net->ibn_fmr_ps)
+	if (tx->fmr.fmr_pfmr || tx->fmr.fmr_frd)
 		kiblnd_fmr_pool_unmap(&tx->fmr, tx->tx_status);
 
 	if (tx->tx_nfrags) {
@@ -1250,7 +1246,6 @@ kiblnd_connect_peer(struct kib_peer *peer)
 
 	LASSERT(net);
 	LASSERT(peer->ibp_connecting > 0);
-	LASSERT(!peer->ibp_reconnecting);
 
 	cmid = kiblnd_rdma_create_id(kiblnd_cm_callback, peer, RDMA_PS_TCP,
 				     IB_QPT_RC);
@@ -1290,11 +1285,6 @@ kiblnd_connect_peer(struct kib_peer *peer)
 		goto failed2;
 	}
 
-	LASSERT(cmid->device);
-	CDEBUG(D_NET, "%s: connection bound to %s:%pI4h:%s\n",
-	       libcfs_nid2str(peer->ibp_nid), dev->ibd_ifname,
-	       &dev->ibd_ifip, cmid->device->name);
-
 	return;
 
  failed2:
@@ -1332,7 +1322,7 @@ kiblnd_reconnect_peer(struct kib_peer *peer)
 
 	LASSERT(!peer->ibp_accepting && !peer->ibp_connecting &&
 		list_empty(&peer->ibp_conns));
-	peer->ibp_reconnecting = 0;
+	peer->ibp_reconnecting--;
 
 	if (!kiblnd_peer_active(peer)) {
 		list_splice_init(&peer->ibp_tx_queue, &txs);
@@ -1365,6 +1355,8 @@ kiblnd_launch_tx(struct lnet_ni *ni, struct kib_tx *tx, lnet_nid_t nid)
 	rwlock_t *g_lock = &kiblnd_data.kib_global_lock;
 	unsigned long flags;
 	int rc;
+	int		   i;
+	struct lnet_ioctl_config_o2iblnd_tunables *tunables;
 
 	/*
 	 * If I get here, I've committed to send, so I complete the tx with
@@ -1461,7 +1453,8 @@ kiblnd_launch_tx(struct lnet_ni *ni, struct kib_tx *tx, lnet_nid_t nid)
 
 	/* Brand new peer */
 	LASSERT(!peer->ibp_connecting);
-	peer->ibp_connecting = 1;
+	tunables = &peer->ibp_ni->ni_lnd_tunables->lt_tun_u.lt_o2ib;
+	peer->ibp_connecting = tunables->lnd_conns_per_peer;
 
 	/* always called with a ref on ni, which prevents ni being shutdown */
 	LASSERT(!((struct kib_net *)ni->ni_data)->ibn_shutdown);
@@ -1474,7 +1467,8 @@ kiblnd_launch_tx(struct lnet_ni *ni, struct kib_tx *tx, lnet_nid_t nid)
 
 	write_unlock_irqrestore(g_lock, flags);
 
-	kiblnd_connect_peer(peer);
+	for (i = 0; i < tunables->lnd_conns_per_peer; i++)
+		kiblnd_connect_peer(peer);
 	kiblnd_peer_decref(peer);
 }
 
@@ -1853,8 +1847,8 @@ kiblnd_thread_fini(void)
 static void
 kiblnd_peer_alive(struct kib_peer *peer)
 {
-	/* This is racy, but everyone's only writing cfs_time_current() */
-	peer->ibp_last_alive = cfs_time_current();
+	/* This is racy, but everyone's only writing jiffies */
+	peer->ibp_last_alive = jiffies;
 	mb();
 }
 
@@ -1923,6 +1917,9 @@ kiblnd_close_conn_locked(struct kib_conn *conn, int error)
 	}
 
 	dev = ((struct kib_net *)peer->ibp_ni->ni_data)->ibn_dev;
+	if (peer->ibp_next_conn == conn)
+		/* clear next_conn so it won't be used */
+		peer->ibp_next_conn = NULL;
 	list_del(&conn->ibc_list);
 	/* connd (see below) takes over ibc_list's ref */
 
@@ -1968,13 +1965,14 @@ kiblnd_handle_early_rxs(struct kib_conn *conn)
 {
 	unsigned long flags;
 	struct kib_rx *rx;
-	struct kib_rx *tmp;
 
 	LASSERT(!in_interrupt());
 	LASSERT(conn->ibc_state >= IBLND_CONN_ESTABLISHED);
 
 	write_lock_irqsave(&kiblnd_data.kib_global_lock, flags);
-	list_for_each_entry_safe(rx, tmp, &conn->ibc_early_rxs, rx_list) {
+	while (!list_empty(&conn->ibc_early_rxs)) {
+		rx = list_entry(conn->ibc_early_rxs.next,
+				struct kib_rx, rx_list);
 		list_del(&rx->rx_list);
 		write_unlock_irqrestore(&kiblnd_data.kib_global_lock, flags);
 
@@ -2192,7 +2190,11 @@ kiblnd_connreq_done(struct kib_conn *conn, int status)
 	kiblnd_conn_addref(conn);
 	write_unlock_irqrestore(&kiblnd_data.kib_global_lock, flags);
 
-	/* Schedule blocked txs */
+	/* Schedule blocked txs
+	 * Note: if we are running with conns_per_peer > 1, these blocked
+	 * txs will all get scheduled to the first connection which gets
+	 * scheduled.  We won't be using round robin on this first batch.
+	 */
 	spin_lock(&conn->ibc_lock);
 	list_for_each_entry_safe(tx, tmp, &txs, tx_list) {
 		list_del(&tx->tx_list);
@@ -2561,7 +2563,6 @@ kiblnd_check_reconnect(struct kib_conn *conn, int version,
 
 	LASSERT(conn->ibc_state == IBLND_CONN_ACTIVE_CONNECT);
 	LASSERT(peer->ibp_connecting > 0);     /* 'conn' at least */
-	LASSERT(!peer->ibp_reconnecting);
 
 	if (cp) {
 		msg_size = cp->ibcp_max_msg_size;
@@ -2579,7 +2580,7 @@ kiblnd_check_reconnect(struct kib_conn *conn, int version,
 	 */
 	reconnect = (!list_empty(&peer->ibp_tx_queue) ||
 		     peer->ibp_version != version) &&
-		    peer->ibp_connecting == 1 &&
+		    peer->ibp_connecting &&
 		    !peer->ibp_accepting;
 	if (!reconnect) {
 		reason = "no need";
@@ -2640,7 +2641,7 @@ kiblnd_check_reconnect(struct kib_conn *conn, int version,
 	}
 
 	conn->ibc_reconnect = 1;
-	peer->ibp_reconnecting = 1;
+	peer->ibp_reconnecting++;
 	peer->ibp_version = version;
 	if (incarnation)
 		peer->ibp_incarnation = incarnation;
@@ -2996,8 +2997,19 @@ kiblnd_cm_callback(struct rdma_cm_id *cmid, struct rdma_cm_event *event)
 		} else {
 			rc = rdma_resolve_route(
 				cmid, *kiblnd_tunables.kib_timeout * 1000);
-			if (!rc)
+			if (!rc) {
+				struct kib_net *net = peer->ibp_ni->ni_data;
+				struct kib_dev *dev = net->ibn_dev;
+
+				CDEBUG(D_NET, "%s: connection bound to "\
+				       "%s:%pI4h:%s\n",
+				       libcfs_nid2str(peer->ibp_nid),
+				       dev->ibd_ifname,
+				       &dev->ibd_ifip, cmid->device->name);
+
 				return 0;
+			}
+
 			/* Can't initiate route resolution */
 			CERROR("Can't resolve route for %s: %d\n",
 			       libcfs_nid2str(peer->ibp_nid), rc);
@@ -3141,10 +3153,10 @@ kiblnd_check_txs_locked(struct kib_conn *conn, struct list_head *txs)
 			LASSERT(tx->tx_waiting || tx->tx_sending);
 		}
 
-		if (cfs_time_aftereq(jiffies, tx->tx_deadline)) {
+		if (time_after_eq(jiffies, tx->tx_deadline)) {
 			CERROR("Timed out tx: %s, %lu seconds\n",
 			       kiblnd_queue2str(conn, txs),
-			       cfs_duration_sec(jiffies - tx->tx_deadline));
+			       (jiffies - tx->tx_deadline) / HZ);
 			return 1;
 		}
 	}
@@ -3206,8 +3218,7 @@ kiblnd_check_conns(int idx)
 			if (timedout) {
 				CERROR("Timed out RDMA with %s (%lu): c: %u, oc: %u, rc: %u\n",
 				       libcfs_nid2str(peer->ibp_nid),
-				       cfs_duration_sec(cfs_time_current() -
-							peer->ibp_last_alive),
+				       (jiffies - peer->ibp_last_alive) / HZ,
 				       conn->ibc_credits,
 				       conn->ibc_outstanding_credits,
 				       conn->ibc_reserved_credits);
@@ -3681,7 +3692,7 @@ kiblnd_failover_thread(void *arg)
 
 		list_for_each_entry(dev, &kiblnd_data.kib_failed_devs,
 				    ibd_fail_list) {
-			if (time_before(cfs_time_current(),
+			if (time_before(jiffies,
 					dev->ibd_next_failover))
 				continue;
 			do_failover = 1;
@@ -3700,13 +3711,13 @@ kiblnd_failover_thread(void *arg)
 			LASSERT(dev->ibd_failover);
 			dev->ibd_failover = 0;
 			if (rc >= 0) { /* Device is OK or failover succeed */
-				dev->ibd_next_failover = cfs_time_shift(3);
+				dev->ibd_next_failover = jiffies + 3 * HZ;
 				continue;
 			}
 
 			/* failed to failover, retry later */
 			dev->ibd_next_failover =
-				cfs_time_shift(min(dev->ibd_failed_failover, 10));
+				jiffies + min(dev->ibd_failed_failover, 10) * HZ;
 			if (kiblnd_dev_can_failover(dev)) {
 				list_add_tail(&dev->ibd_fail_list,
 					      &kiblnd_data.kib_failed_devs);

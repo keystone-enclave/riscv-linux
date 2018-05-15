@@ -336,7 +336,7 @@ static void ptlrpc_at_timer(struct timer_list *t)
 	svcpt = from_timer(svcpt, t, scp_at_timer);
 
 	svcpt->scp_at_check = 1;
-	svcpt->scp_at_checktime = cfs_time_current();
+	svcpt->scp_at_checktime = jiffies;
 	wake_up(&svcpt->scp_waitq);
 }
 
@@ -922,7 +922,7 @@ static void ptlrpc_at_set_timer(struct ptlrpc_service_part *svcpt)
 	if (next <= 0) {
 		ptlrpc_at_timer(&svcpt->scp_at_timer);
 	} else {
-		mod_timer(&svcpt->scp_at_timer, cfs_time_shift(next));
+		mod_timer(&svcpt->scp_at_timer, jiffies + next * HZ);
 		CDEBUG(D_INFO, "armed %s at %+ds\n",
 		       svcpt->scp_service->srv_name, next);
 	}
@@ -1153,7 +1153,7 @@ static void ptlrpc_at_check_timed(struct ptlrpc_service_part *svcpt)
 		spin_unlock(&svcpt->scp_at_lock);
 		return;
 	}
-	delay = cfs_time_sub(cfs_time_current(), svcpt->scp_at_checktime);
+	delay = jiffies - svcpt->scp_at_checktime;
 	svcpt->scp_at_check = 0;
 
 	if (array->paa_count == 0) {

@@ -523,7 +523,7 @@ static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 	 *    affect the performance.
 	 */
 	if (lli->lli_glimpse_time != 0 &&
-	    time_before(cfs_time_shift(-1), lli->lli_glimpse_time)) {
+	    time_before(jiffies - 1 * HZ, lli->lli_glimpse_time)) {
 		up_write(&lli->lli_glimpse_sem);
 		lli->lli_agl_index = 0;
 		iput(inode);
@@ -535,7 +535,7 @@ static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 
 	cl_agl(inode);
 	lli->lli_agl_index = 0;
-	lli->lli_glimpse_time = cfs_time_current();
+	lli->lli_glimpse_time = jiffies;
 	up_write(&lli->lli_glimpse_sem);
 
 	CDEBUG(D_READA, "Handled (init) async glimpse: inode= "

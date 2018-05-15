@@ -116,9 +116,9 @@ static void ldlm_expired_completion_wait(struct ldlm_lock *lock, __u32 conn_cnt)
 			   (s64)lock->l_last_activity,
 			   (s64)(ktime_get_real_seconds() -
 				 lock->l_last_activity));
-		if (cfs_time_after(cfs_time_current(), next_dump)) {
+		if (time_after(jiffies, next_dump)) {
 			last_dump = next_dump;
-			next_dump = cfs_time_shift(300);
+			next_dump = jiffies + 300 * HZ;
 			ldlm_namespace_dump(D_DLMTRACE,
 					    ldlm_lock_to_ns(lock));
 			if (last_dump == 0)
@@ -190,29 +190,6 @@ static int ldlm_completion_tail(struct ldlm_lock *lock, void *data)
 	}
 	return result;
 }
-
-/**
- * Implementation of ->l_completion_ast() for a client, that doesn't wait
- * until lock is granted. Suitable for locks enqueued through ptlrpcd, of
- * other threads that cannot block for long.
- */
-int ldlm_completion_ast_async(struct ldlm_lock *lock, __u64 flags, void *data)
-{
-	if (flags == LDLM_FL_WAIT_NOREPROC) {
-		LDLM_DEBUG(lock, "client-side enqueue waiting on pending lock");
-		return 0;
-	}
-
-	if (!(flags & LDLM_FL_BLOCKED_MASK)) {
-		wake_up(&lock->l_waitq);
-		return ldlm_completion_tail(lock, data);
-	}
-
-	LDLM_DEBUG(lock,
-		   "client-side enqueue returned a blocked lock, going forward");
-	return 0;
-}
-EXPORT_SYMBOL(ldlm_completion_ast_async);
 
 /**
  * Generic LDLM "completion" AST. This is called in several cases:
@@ -428,19 +405,7 @@ int ldlm_cli_enqueue_fini(struct obd_export *exp, struct ptlrpc_request *req,
 	cleanup_phase = 0;
 
 	lock_res_and_lock(lock);
-	/* Key change rehash lock in per-export hash with new key */
-	if (exp->exp_lock_hash) {
-		/* In the function below, .hs_keycmp resolves to
-		 * ldlm_export_lock_keycmp()
-		 */
-		/* coverity[overrun-buffer-val] */
-		cfs_hash_rehash_key(exp->exp_lock_hash,
-				    &lock->l_remote_handle,
-				    &reply->lock_handle,
-				    &lock->l_exp_hash);
-	} else {
-		lock->l_remote_handle = reply->lock_handle;
-	}
+	lock->l_remote_handle = reply->lock_handle;
 
 	*flags = ldlm_flags_from_wire(reply->lock_flags);
 	lock->l_flags |= ldlm_flags_from_wire(reply->lock_flags &
@@ -1196,7 +1161,7 @@ static enum ldlm_policy_res ldlm_cancel_lrur_policy(struct ldlm_namespace *ns,
 						    int unused, int added,
 						    int count)
 {
-	unsigned long cur = cfs_time_current();
+	unsigned long cur = jiffies;
 	struct ldlm_pool *pl = &ns->ns_pool;
 	__u64 slv, lvf, lv;
 	unsigned long la;
@@ -1211,13 +1176,12 @@ static enum ldlm_policy_res ldlm_cancel_lrur_policy(struct ldlm_namespace *ns,
 	 * Despite of the LV, It doesn't make sense to keep the lock which
 	 * is unused for ns_max_age time.
 	 */
-	if (cfs_time_after(cfs_time_current(),
-			   cfs_time_add(lock->l_last_used, ns->ns_max_age)))
+	if (time_after(jiffies, lock->l_last_used + ns->ns_max_age))
 		return LDLM_POLICY_CANCEL_LOCK;
 
 	slv = ldlm_pool_get_slv(pl);
 	lvf = ldlm_pool_get_lvf(pl);
-	la = cfs_duration_sec(cfs_time_sub(cur, lock->l_last_used));
+	la = (cur - lock->l_last_used) / HZ;
 	lv = lvf * la * unused;
 
 	/* Inform pool about current CLV to see it via debugfs. */
@@ -1268,8 +1232,7 @@ static enum ldlm_policy_res ldlm_cancel_aged_policy(struct ldlm_namespace *ns,
 						    int count)
 {
 	if ((added >= count) &&
-	    time_before(cfs_time_current(),
-			cfs_time_add(lock->l_last_used, ns->ns_max_age)))
+	    time_before(jiffies, lock->l_last_used + ns->ns_max_age))
 		return LDLM_POLICY_KEEP_LOCK;
 
 	return LDLM_POLICY_CANCEL_LOCK;
@@ -1415,7 +1378,7 @@ static int ldlm_prepare_lru_list(struct ldlm_namespace *ns,
 				continue;
 
 			last_use = lock->l_last_used;
-			if (last_use == cfs_time_current())
+			if (last_use == jiffies)
 				continue;
 
 			/* Somebody is already doing CANCEL. No need for this
@@ -1907,18 +1870,7 @@ static int replay_lock_interpret(const struct lu_env *env,
 
 	/* Key change rehash lock in per-export hash with new key */
 	exp = req->rq_export;
-	if (exp && exp->exp_lock_hash) {
-		/* In the function below, .hs_keycmp resolves to
-		 * ldlm_export_lock_keycmp()
-		 */
-		/* coverity[overrun-buffer-val] */
-		cfs_hash_rehash_key(exp->exp_lock_hash,
-				    &lock->l_remote_handle,
-				    &reply->lock_handle,
-				    &lock->l_exp_hash);
-	} else {
-		lock->l_remote_handle = reply->lock_handle;
-	}
+	lock->l_remote_handle = reply->lock_handle;
 
 	LDLM_DEBUG(lock, "replayed lock:");
 	ptlrpc_import_recovery_state_machine(req->rq_import);

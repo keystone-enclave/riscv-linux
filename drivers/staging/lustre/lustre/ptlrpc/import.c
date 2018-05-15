@@ -463,7 +463,7 @@ static int import_select_connection(struct obd_import *imp)
 		 * the last successful attempt, go with this one
 		 */
 		if ((conn->oic_last_attempt == 0) ||
-		    cfs_time_beforeq_64(conn->oic_last_attempt,
+		    time_before_eq64(conn->oic_last_attempt,
 					imp->imp_last_success_conn)) {
 			imp_conn = conn;
 			tried_all = 0;
@@ -476,7 +476,7 @@ static int import_select_connection(struct obd_import *imp)
 		 */
 		if (!imp_conn)
 			imp_conn = conn;
-		else if (cfs_time_before_64(conn->oic_last_attempt,
+		else if (time_before64(conn->oic_last_attempt,
 					    imp_conn->oic_last_attempt))
 			imp_conn = conn;
 	}
@@ -508,7 +508,7 @@ static int import_select_connection(struct obd_import *imp)
 		       imp->imp_obd->obd_name, at_get(at));
 	}
 
-	imp_conn->oic_last_attempt = cfs_time_current_64();
+	imp_conn->oic_last_attempt = get_jiffies_64();
 
 	/* switch connection, don't mind if it's same as the current one */
 	ptlrpc_connection_put(imp->imp_connection);
@@ -1486,7 +1486,7 @@ int ptlrpc_disconnect_import(struct obd_import *imp, int noclose)
 	}
 
 	if (ptlrpc_import_in_recovery(imp)) {
-		long timeout;
+		unsigned long timeout;
 
 		if (AT_OFF) {
 			if (imp->imp_server_timeout)
@@ -1501,7 +1501,7 @@ int ptlrpc_disconnect_import(struct obd_import *imp, int noclose)
 
 		if (wait_event_idle_timeout(imp->imp_recovery_waitq,
 					    !ptlrpc_import_in_recovery(imp),
-					    cfs_timeout_cap(timeout)) == 0)
+					    max(timeout, CFS_TICK)) == 0)
 			l_wait_event_abortable(
 				imp->imp_recovery_waitq,
 				!ptlrpc_import_in_recovery(imp));

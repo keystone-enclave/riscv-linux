@@ -1043,7 +1043,7 @@ static void kiblnd_query(struct lnet_ni *ni, lnet_nid_t nid,
 			 unsigned long *when)
 {
 	unsigned long last_alive = 0;
-	unsigned long now = cfs_time_current();
+	unsigned long now = jiffies;
 	rwlock_t *glock = &kiblnd_data.kib_global_lock;
 	struct kib_peer *peer;
 	unsigned long flags;
@@ -1068,7 +1068,7 @@ static void kiblnd_query(struct lnet_ni *ni, lnet_nid_t nid,
 
 	CDEBUG(D_NET, "Peer %s %p, alive %ld secs ago\n",
 	       libcfs_nid2str(nid), peer,
-	       last_alive ? cfs_duration_sec(now - last_alive) : -1);
+	       last_alive ? (now - last_alive) / HZ : -1);
 }
 
 static void kiblnd_free_pages(struct kib_pages *p)
@@ -1446,7 +1446,7 @@ static int kiblnd_create_fmr_pool(struct kib_fmr_poolset *fps,
 	if (rc)
 		goto out_fpo;
 
-	fpo->fpo_deadline = cfs_time_shift(IBLND_POOL_DEADLINE);
+	fpo->fpo_deadline = jiffies + IBLND_POOL_DEADLINE * HZ;
 	fpo->fpo_owner = fps;
 	*pp_fpo = fpo;
 
@@ -1522,7 +1522,7 @@ static int kiblnd_fmr_pool_is_idle(struct kib_fmr_pool *fpo, unsigned long now)
 		return 0;
 	if (fpo->fpo_failed)
 		return 1;
-	return cfs_time_aftereq(now, fpo->fpo_deadline);
+	return time_after_eq(now, fpo->fpo_deadline);
 }
 
 static int
@@ -1552,7 +1552,7 @@ void kiblnd_fmr_pool_unmap(struct kib_fmr *fmr, int status)
 	LIST_HEAD(zombies);
 	struct kib_fmr_pool *fpo = fmr->fmr_pool;
 	struct kib_fmr_poolset *fps;
-	unsigned long now = cfs_time_current();
+	unsigned long now = jiffies;
 	struct kib_fmr_pool *tmp;
 	int rc;
 
@@ -1619,7 +1619,7 @@ int kiblnd_fmr_pool_map(struct kib_fmr_poolset *fps, struct kib_tx *tx,
 	spin_lock(&fps->fps_lock);
 	version = fps->fps_version;
 	list_for_each_entry(fpo, &fps->fps_pool_list, fpo_list) {
-		fpo->fpo_deadline = cfs_time_shift(IBLND_POOL_DEADLINE);
+		fpo->fpo_deadline = jiffies + IBLND_POOL_DEADLINE * HZ;
 		fpo->fpo_map_count++;
 
 		if (fpo->fpo_is_fmr) {
@@ -1702,7 +1702,7 @@ int kiblnd_fmr_pool_map(struct kib_fmr_poolset *fps, struct kib_tx *tx,
 				return 0;
 			}
 			spin_unlock(&fps->fps_lock);
-			rc = -EBUSY;
+			rc = -EAGAIN;
 		}
 
 		spin_lock(&fps->fps_lock);
@@ -1726,7 +1726,7 @@ int kiblnd_fmr_pool_map(struct kib_fmr_poolset *fps, struct kib_tx *tx,
 		goto again;
 	}
 
-	if (time_before(cfs_time_current(), fps->fps_next_retry)) {
+	if (time_before(jiffies, fps->fps_next_retry)) {
 		/* someone failed recently */
 		spin_unlock(&fps->fps_lock);
 		return -EAGAIN;
@@ -1743,7 +1743,7 @@ int kiblnd_fmr_pool_map(struct kib_fmr_poolset *fps, struct kib_tx *tx,
 		fps->fps_version++;
 		list_add_tail(&fpo->fpo_list, &fps->fps_pool_list);
 	} else {
-		fps->fps_next_retry = cfs_time_shift(IBLND_POOL_RETRY);
+		fps->fps_next_retry = jiffies + IBLND_POOL_RETRY * HZ;
 	}
 	spin_unlock(&fps->fps_lock);
 
@@ -1764,7 +1764,7 @@ static void kiblnd_init_pool(struct kib_poolset *ps, struct kib_pool *pool, int 
 
 	memset(pool, 0, sizeof(*pool));
 	INIT_LIST_HEAD(&pool->po_free_list);
-	pool->po_deadline = cfs_time_shift(IBLND_POOL_DEADLINE);
+	pool->po_deadline = jiffies + IBLND_POOL_DEADLINE * HZ;
 	pool->po_owner    = ps;
 	pool->po_size     = size;
 }
@@ -1850,7 +1850,7 @@ static int kiblnd_pool_is_idle(struct kib_pool *pool, unsigned long now)
 		return 0;
 	if (pool->po_failed)
 		return 1;
-	return cfs_time_aftereq(now, pool->po_deadline);
+	return time_after_eq(now, pool->po_deadline);
 }
 
 void kiblnd_pool_free_node(struct kib_pool *pool, struct list_head *node)
@@ -1858,7 +1858,7 @@ void kiblnd_pool_free_node(struct kib_pool *pool, struct list_head *node)
 	LIST_HEAD(zombies);
 	struct kib_poolset *ps = pool->po_owner;
 	struct kib_pool *tmp;
-	unsigned long now = cfs_time_current();
+	unsigned long now = jiffies;
 
 	spin_lock(&ps->ps_lock);
 
@@ -1899,7 +1899,7 @@ struct list_head *kiblnd_pool_alloc_node(struct kib_poolset *ps)
 			continue;
 
 		pool->po_allocated++;
-		pool->po_deadline = cfs_time_shift(IBLND_POOL_DEADLINE);
+		pool->po_deadline = jiffies + IBLND_POOL_DEADLINE * HZ;
 		node = pool->po_free_list.next;
 		list_del(node);
 
@@ -1927,7 +1927,7 @@ struct list_head *kiblnd_pool_alloc_node(struct kib_poolset *ps)
 		goto again;
 	}
 
-	if (time_before(cfs_time_current(), ps->ps_next_retry)) {
+	if (time_before(jiffies, ps->ps_next_retry)) {
 		/* someone failed recently */
 		spin_unlock(&ps->ps_lock);
 		return NULL;
@@ -1937,17 +1937,17 @@ struct list_head *kiblnd_pool_alloc_node(struct kib_poolset *ps)
 	spin_unlock(&ps->ps_lock);
 
 	CDEBUG(D_NET, "%s pool exhausted, allocate new pool\n", ps->ps_name);
-	time_before = cfs_time_current();
+	time_before = jiffies;
 	rc = ps->ps_pool_create(ps, ps->ps_pool_size, &pool);
 	CDEBUG(D_NET, "ps_pool_create took %lu HZ to complete",
-	       cfs_time_current() - time_before);
+	       jiffies - time_before);
 
 	spin_lock(&ps->ps_lock);
 	ps->ps_increasing = 0;
 	if (!rc) {
 		list_add_tail(&pool->po_list, &ps->ps_pool_list);
 	} else {
-		ps->ps_next_retry = cfs_time_shift(IBLND_POOL_RETRY);
+		ps->ps_next_retry = jiffies + IBLND_POOL_RETRY * HZ;
 		CERROR("Can't allocate new %s pool because out of memory\n",
 		       ps->ps_name);
 	}
