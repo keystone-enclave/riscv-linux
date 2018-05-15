@@ -116,7 +116,7 @@ void dump_mm(const struct mm_struct *mm)
 		"ioctx_table %px\n"
 #endif
 #ifdef CONFIG_MEMCG
-		"owner %px "
+		"memcg %px "
 #endif
 		"exe_file %px\n"
 #ifdef CONFIG_MMU_NOTIFIER
@@ -147,7 +147,7 @@ void dump_mm(const struct mm_struct *mm)
 		mm->ioctx_table,
 #endif
 #ifdef CONFIG_MEMCG
-		mm->owner,
+		mm->memcg,
 #endif
 		mm->exe_file,
 #ifdef CONFIG_MMU_NOTIFIER

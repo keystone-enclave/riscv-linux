@@ -15,6 +15,7 @@
 #include <linux/gfp.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <linux/sched/mm.h>
 
 
 /*
@@ -374,6 +375,21 @@ static __always_inline void kfree_bulk(size_t size, void **p)
 	kmem_cache_free_bulk(NULL, size, p);
 }
 
+/*
+ * Calling kmem_cache_alloc_memcg implicitly assumes that the caller
+ * wants a __GFP_ACCOUNT allocation.
+ */
+static __always_inline void *kmem_cache_alloc_memcg(struct kmem_cache *cachep,
+						    gfp_t flags,
+						    struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *old_memcg = memalloc_memcg_save(memcg);
+	void *ptr = kmem_cache_alloc(cachep, flags | __GFP_ACCOUNT);
+
+	memalloc_memcg_restore(old_memcg);
+	return ptr;
+}
+
 #ifdef CONFIG_NUMA
 void *__kmalloc_node(size_t size, gfp_t flags, int node) __assume_kmalloc_alignment __malloc;
 void *kmem_cache_alloc_node(struct kmem_cache *, gfp_t flags, int node) __assume_slab_alignment __malloc;
@@ -388,6 +404,21 @@ static __always_inline void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t f
 	return kmem_cache_alloc(s, flags);
 }
 #endif
+
+/*
+ * Calling kmem_cache_alloc_node_memcg implicitly assumes that the caller
+ * wants a __GFP_ACCOUNT allocation.
+ */
+static __always_inline void *
+kmem_cache_alloc_node_memcg(struct kmem_cache *cachep, gfp_t flags, int node,
+			    struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *old_memcg = memalloc_memcg_save(memcg);
+	void *ptr = kmem_cache_alloc_node(cachep, flags | __GFP_ACCOUNT, node);
+
+	memalloc_memcg_restore(old_memcg);
+	return ptr;
+}
 
 #ifdef CONFIG_TRACING
 extern void *kmem_cache_alloc_trace(struct kmem_cache *, gfp_t, size_t) __assume_slab_alignment __malloc;
@@ -518,6 +549,20 @@ static __always_inline void *kmalloc(size_t size, gfp_t flags)
 }
 
 /*
+ * Calling kmalloc_memcg implicitly assumes that the caller wants a
+ * __GFP_ACCOUNT allocation.
+ */
+static __always_inline void *kmalloc_memcg(size_t size, gfp_t flags,
+					   struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *old_memcg = memalloc_memcg_save(memcg);
+	void *ptr = kmalloc(size, flags | __GFP_ACCOUNT);
+
+	memalloc_memcg_restore(old_memcg);
+	return ptr;
+}
+
+/*
  * Determine size used for the nth kmalloc cache.
  * return size or 0 if a kmalloc cache for that
  * size does not exist
@@ -552,6 +597,20 @@ static __always_inline void *kmalloc_node(size_t size, gfp_t flags, int node)
 	}
 #endif
 	return __kmalloc_node(size, flags, node);
+}
+
+/*
+ * Calling kmalloc_node_memcg implicitly assumes that the caller wants a
+ * __GFP_ACCOUNT allocation.
+ */
+static __always_inline void *
+kmalloc_node_memcg(size_t size, gfp_t flags, int node, struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *old_memcg = memalloc_memcg_save(memcg);
+	void *ptr = kmalloc_node(size, flags | __GFP_ACCOUNT, node);
+
+	memalloc_memcg_restore(old_memcg);
+	return ptr;
 }
 
 struct memcg_cache_array {

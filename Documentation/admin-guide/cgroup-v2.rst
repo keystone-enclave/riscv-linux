@@ -48,6 +48,7 @@ v1 is available under Documentation/cgroup-v1/.
        5-2-1. Memory Interface Files
        5-2-2. Usage Guidelines
        5-2-3. Memory Ownership
+       5-2-4. OOM Killer
      5-3. IO
        5-3-1. IO Interface Files
        5-3-2. Writeback
@@ -1001,14 +1002,44 @@ PAGE_SIZE multiple when read back.
 	The total amount of memory currently being used by the cgroup
 	and its descendants.
 
+  memory.min
+	A read-write single value file which exists on non-root
+	cgroups.  The default is "0".
+
+	Hard memory protection.  If the memory usage of a cgroup
+	is within its effective min boundary, the cgroup's memory
+	won't be reclaimed under any conditions. If there is no
+	unprotected reclaimable memory available, OOM killer
+	is invoked.
+
+       Effective min boundary is limited by memory.min values of
+	all ancestor cgroups. If there is memory.min overcommitment
+	(child cgroup or cgroups are requiring more protected memory
+	than parent will allow), then each child cgroup will get
+	the part of parent's protection proportional to its
+	actual memory usage below memory.min.
+
+	Putting more memory than generally available under this
+	protection is discouraged and may lead to constant OOMs.
+
+	If a memory cgroup is not populated with processes,
+	its memory.min is ignored.
+
   memory.low
 	A read-write single value file which exists on non-root
 	cgroups.  The default is "0".
 
-	Best-effort memory protection.  If the memory usages of a
-	cgroup and all its ancestors are below their low boundaries,
-	the cgroup's memory won't be reclaimed unless memory can be
-	reclaimed from unprotected cgroups.
+	Best-effort memory protection.  If the memory usage of a
+	cgroup is within its effective low boundary, the cgroup's
+	memory won't be reclaimed unless memory can be reclaimed
+	from unprotected cgroups.
+
+	Effective low boundary is limited by memory.low values of
+	all ancestor cgroups. If there is memory.low overcommitment
+	(child cgroup or cgroups are requiring more protected memory
+	than parent will allow), then each child cgroup will get
+	the part of parent's protection proportional to its
+	actual memory usage below memory.low.
 
 	Putting more memory than generally available under this
 	protection is discouraged.
@@ -1038,6 +1069,31 @@ PAGE_SIZE multiple when read back.
 	This is the ultimate protection mechanism.  As long as the
 	high limit is used and monitored properly, this limit's
 	utility is limited to providing the final safety net.
+
+  memory.oom_group
+
+	A read-write single value file which exists on non-root
+	cgroups.  The default is "0".
+
+	If set, OOM killer will consider the memory cgroup as an
+	indivisible memory consumers and compare it with other memory
+	consumers by it's memory footprint.
+	If such memory cgroup is selected as an OOM victim, all
+	processes belonging to it or it's descendants will be killed.
+
+	This applies to system-wide OOM conditions and reaching
+	the hard memory limit of the cgroup and their ancestor.
+	If OOM condition happens in a descendant cgroup with it's own
+	memory limit, the memory cgroup can't be considered
+	as an OOM victim, and OOM killer will not kill all belonging
+	tasks.
+
+	Also, OOM killer respects the /proc/pid/oom_score_adj value -1000,
+	and will never kill the unkillable task, even if memory.oom_group
+	is set.
+
+	If cgroup-aware OOM killer is not enabled, ENOTSUPP error
+	is returned on attempt to access the file.
 
   memory.events
 	A read-only flat-keyed file which exists on non-root cgroups.
@@ -1199,6 +1255,22 @@ PAGE_SIZE multiple when read back.
 	Swap usage hard limit.  If a cgroup's swap usage reaches this
 	limit, anonymous memory of the cgroup will not be swapped out.
 
+  memory.swap.events
+	A read-only flat-keyed file which exists on non-root cgroups.
+	The following entries are defined.  Unless specified
+	otherwise, a value change in this file generates a file
+	modified event.
+
+	  max
+		The number of times the cgroup's swap usage was about
+		to go over the max boundary and swap allocation
+		failed.
+
+	  fail
+		The number of times swap allocation failed either
+		because of running out of swap system-wide or max
+		limit.
+
 
 Usage Guidelines
 ~~~~~~~~~~~~~~~~
@@ -1241,6 +1313,54 @@ If a cgroup sweeps a considerable amount of memory which is expected
 to be accessed repeatedly by other cgroups, it may make sense to use
 POSIX_FADV_DONTNEED to relinquish the ownership of memory areas
 belonging to the affected files to ensure correct memory ownership.
+
+OOM Killer
+~~~~~~~~~~
+
+Cgroup v2 memory controller implements a cgroup-aware OOM killer.
+It means that it treats cgroups as first class OOM entities.
+
+Cgroup-aware OOM logic is turned off by default and requires
+passing the "groupoom" option on mounting cgroupfs. It can also
+by remounting cgroupfs with the following command::
+
+  # mount -o remount,groupoom $MOUNT_POINT
+
+Under OOM conditions the memory controller tries to make the best
+choice of a victim, looking for a memory cgroup with the largest
+memory footprint, considering leaf cgroups and cgroups with the
+memory.oom_group option set, which are considered to be an indivisible
+memory consumers.
+
+By default, OOM killer will kill the biggest task in the selected
+memory cgroup. A user can change this behavior by enabling
+the per-cgroup memory.oom_group option. If set, it causes
+the OOM killer to kill all processes attached to the cgroup,
+except processes with oom_score_adj set to -1000.
+
+This affects both system- and cgroup-wide OOMs. For a cgroup-wide OOM
+the memory controller considers only cgroups belonging to the sub-tree
+of the OOM'ing cgroup.
+
+Leaf cgroups and cgroups with oom_group option set are compared based
+on their cumulative memory usage. The root cgroup is treated as a
+leaf memory cgroup as well, so it is compared with other leaf memory
+cgroups. Due to internal implementation restrictions the size of
+the root cgroup is the cumulative sum of oom_badness of all its tasks
+(in other words oom_score_adj of each task is obeyed). Relying on
+oom_score_adj (apart from OOM_SCORE_ADJ_MIN) can lead to over- or
+underestimation of the root cgroup consumption and it is therefore
+discouraged. This might change in the future, however.
+
+If there are no cgroups with the enabled memory controller,
+the OOM killer is using the "traditional" process-based approach.
+
+Please, note that memory charges are not migrating if tasks
+are moved between different memory cgroups. Moving tasks with
+significant memory footprint may affect OOM victim selection logic.
+If it's a case, please, consider creating a common ancestor for
+the source and destination memory cgroups and enabling oom_group
+on ancestor layer.
 
 
 IO
@@ -1934,17 +2054,8 @@ system performance due to overreclaim, to the point where the feature
 becomes self-defeating.
 
 The memory.low boundary on the other hand is a top-down allocated
-reserve.  A cgroup enjoys reclaim protection when it and all its
-ancestors are below their low boundaries, which makes delegation of
-subtrees possible.  Secondly, new cgroups have no reserve per default
-and in the common case most cgroups are eligible for the preferred
-reclaim pass.  This allows the new low boundary to be efficiently
-implemented with just a minor addition to the generic reclaim code,
-without the need for out-of-band data structures and reclaim passes.
-Because the generic reclaim code considers all cgroups except for the
-ones running low in the preferred first reclaim pass, overreclaim of
-individual groups is eliminated as well, resulting in much better
-overall workload performance.
+reserve.  A cgroup enjoys reclaim protection when it's within its low,
+which makes delegation of subtrees possible.
 
 The original high boundary, the hard limit, is defined as a strict
 limit that can not budge, even if the OOM killer has to be called.

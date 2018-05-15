@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/list_lru.h>
+#include <linux/prefetch.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/memcontrol.h>
@@ -132,6 +133,12 @@ bool list_lru_del(struct list_lru *lru, struct list_head *item)
 	int nid = page_to_nid(virt_to_page(item));
 	struct list_lru_node *nlru = &lru->node[nid];
 	struct list_lru_one *l;
+
+	/*
+	 * Prefetch the neighboring list entries to reduce lock hold time.
+	 */
+	prefetchw(item->prev);
+	prefetchw(item->next);
 
 	spin_lock(&nlru->lock);
 	if (!list_empty(item)) {

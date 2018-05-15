@@ -98,7 +98,7 @@ int inotify_handle_event(struct fsnotify_group *group,
 	i_mark = container_of(inode_mark, struct inotify_inode_mark,
 			      fsn_mark);
 
-	event = kmalloc(alloc_len, GFP_KERNEL);
+	event = kmalloc_memcg(alloc_len, GFP_KERNEL, group->memcg);
 	if (unlikely(!event)) {
 		/*
 		 * Treat lost event due to ENOMEM the same way as queue
