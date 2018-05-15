@@ -216,6 +216,9 @@
 #define SAS_RAS_INTR1			(RAS_BASE + 0x04)
 #define SAS_RAS_INTR0_MASK		(RAS_BASE + 0x08)
 #define SAS_RAS_INTR1_MASK		(RAS_BASE + 0x0c)
+#define CFG_SAS_RAS_INTR_MASK		(RAS_BASE + 0x1c)
+#define SAS_RAS_INTR2			(RAS_BASE + 0x20)
+#define SAS_RAS_INTR2_MASK		(RAS_BASE + 0x24)
 
 /* HW dma structures */
 /* Delivery queue header */
@@ -392,6 +395,7 @@ static u32 hisi_sas_phy_read32(struct hisi_hba *hisi_hba,
 
 static void init_reg_v3_hw(struct hisi_hba *hisi_hba)
 {
+	struct pci_dev *pdev = hisi_hba->pci_dev;
 	int i;
 
 	/* Global registers init */
@@ -409,7 +413,10 @@ static void init_reg_v3_hw(struct hisi_hba *hisi_hba)
 	hisi_sas_write32(hisi_hba, ENT_INT_SRC3, 0xffffffff);
 	hisi_sas_write32(hisi_hba, ENT_INT_SRC_MSK1, 0xfefefefe);
 	hisi_sas_write32(hisi_hba, ENT_INT_SRC_MSK2, 0xfefefefe);
-	hisi_sas_write32(hisi_hba, ENT_INT_SRC_MSK3, 0xfffe20ff);
+	if (pdev->revision >= 0x21)
+		hisi_sas_write32(hisi_hba, ENT_INT_SRC_MSK3, 0xffff7fff);
+	else
+		hisi_sas_write32(hisi_hba, ENT_INT_SRC_MSK3, 0xfffe20ff);
 	hisi_sas_write32(hisi_hba, CHNL_PHYUPDOWN_INT_MSK, 0x0);
 	hisi_sas_write32(hisi_hba, CHNL_ENT_INT_MSK, 0x0);
 	hisi_sas_write32(hisi_hba, HGC_COM_INT_MSK, 0x0);
@@ -428,7 +435,12 @@ static void init_reg_v3_hw(struct hisi_hba *hisi_hba)
 		hisi_sas_phy_write32(hisi_hba, i, CHL_INT1, 0xffffffff);
 		hisi_sas_phy_write32(hisi_hba, i, CHL_INT2, 0xffffffff);
 		hisi_sas_phy_write32(hisi_hba, i, RXOP_CHECK_CFG_H, 0x1000);
-		hisi_sas_phy_write32(hisi_hba, i, CHL_INT1_MSK, 0xff87ffff);
+		if (pdev->revision >= 0x21)
+			hisi_sas_phy_write32(hisi_hba, i, CHL_INT1_MSK,
+					0xffffffff);
+		else
+			hisi_sas_phy_write32(hisi_hba, i, CHL_INT1_MSK,
+					0xff87ffff);
 		hisi_sas_phy_write32(hisi_hba, i, CHL_INT2_MSK, 0xffffbfe);
 		hisi_sas_phy_write32(hisi_hba, i, PHY_CTRL_RDY_MSK, 0x0);
 		hisi_sas_phy_write32(hisi_hba, i, PHYCTRL_NOT_RDY_MSK, 0x0);
@@ -503,6 +515,8 @@ static void init_reg_v3_hw(struct hisi_hba *hisi_hba)
 	/* RAS registers init */
 	hisi_sas_write32(hisi_hba, SAS_RAS_INTR0_MASK, 0x0);
 	hisi_sas_write32(hisi_hba, SAS_RAS_INTR1_MASK, 0x0);
+	hisi_sas_write32(hisi_hba, SAS_RAS_INTR2_MASK, 0x0);
+	hisi_sas_write32(hisi_hba, CFG_SAS_RAS_INTR_MASK, 0x0);
 }
 
 static void config_phy_opt_mode_v3_hw(struct hisi_hba *hisi_hba, int phy_no)
@@ -1319,6 +1333,13 @@ static irqreturn_t int_chnl_int_v3_hw(int irq_no, void *p)
 						     CHL_INT1);
 		u32 irq_value2 = hisi_sas_phy_read32(hisi_hba, phy_no,
 						     CHL_INT2);
+		u32 irq_msk1 = hisi_sas_phy_read32(hisi_hba, phy_no,
+							CHL_INT1_MSK);
+		u32 irq_msk2 = hisi_sas_phy_read32(hisi_hba, phy_no,
+							CHL_INT2_MSK);
+
+		irq_value1 &= ~irq_msk1;
+		irq_value2 &= ~irq_msk2;
 
 		if ((irq_msk & (4 << (phy_no * 4))) &&
 						irq_value1) {
@@ -1448,6 +1469,7 @@ static irqreturn_t fatal_axi_int_v3_hw(int irq_no, void *p)
 	hisi_sas_write32(hisi_hba, ENT_INT_SRC_MSK3, irq_msk | 0x1df00);
 
 	irq_value = hisi_sas_read32(hisi_hba, ENT_INT_SRC3);
+	irq_value &= ~irq_msk;
 
 	for (i = 0; i < ARRAY_SIZE(fatal_axi_error); i++) {
 		const struct hisi_sas_hw_error *error = &fatal_axi_error[i];
@@ -1619,10 +1641,10 @@ slot_complete_v3_hw(struct hisi_hba *hisi_hba, struct hisi_sas_slot *slot)
 
 		slot_err_v3_hw(hisi_hba, task, slot);
 		if (ts->stat != SAS_DATA_UNDERRUN)
-			dev_info(dev, "erroneous completion iptt=%d task=%p "
+			dev_info(dev, "erroneous completion iptt=%d task=%p dev id=%d "
 				"CQ hdr: 0x%x 0x%x 0x%x 0x%x "
 				"Error info: 0x%x 0x%x 0x%x 0x%x\n",
-				slot->idx, task,
+				slot->idx, task, sas_dev->device_id,
 				complete_hdr->dw0, complete_hdr->dw1,
 				complete_hdr->act, complete_hdr->dw3,
 				error_info[0], error_info[1],
@@ -1709,15 +1731,19 @@ static void cq_tasklet_v3_hw(unsigned long val)
 
 	while (rd_point != wr_point) {
 		struct hisi_sas_complete_v3_hdr *complete_hdr;
+		struct device *dev = hisi_hba->dev;
 		int iptt;
 
 		complete_hdr = &complete_queue[rd_point];
 
 		iptt = (complete_hdr->dw1) & CMPLT_HDR_IPTT_MSK;
-		slot = &hisi_hba->slot_info[iptt];
-		slot->cmplt_queue_slot = rd_point;
-		slot->cmplt_queue = queue;
-		slot_complete_v3_hw(hisi_hba, slot);
+		if (likely(iptt < HISI_SAS_COMMAND_ENTRIES_V3_HW)) {
+			slot = &hisi_hba->slot_info[iptt];
+			slot->cmplt_queue_slot = rd_point;
+			slot->cmplt_queue = queue;
+			slot_complete_v3_hw(hisi_hba, slot);
+		} else
+			dev_err(dev, "IPTT %d is invalid, discard it.\n", iptt);
 
 		if (++rd_point >= HISI_SAS_QUEUE_SLOTS)
 			rd_point = 0;
@@ -2108,8 +2134,6 @@ hisi_sas_v3_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		sha->sas_port[i] = &hisi_hba->port[i].sas_port;
 	}
 
-	hisi_sas_init_add(hisi_hba);
-
 	rc = scsi_add_host(shost, dev);
 	if (rc)
 		goto err_out_ha;
@@ -2160,6 +2184,9 @@ static void hisi_sas_v3_remove(struct pci_dev *pdev)
 	struct sas_ha_struct *sha = dev_get_drvdata(dev);
 	struct hisi_hba *hisi_hba = sha->lldd_ha;
 	struct Scsi_Host *shost = sha->core.shost;
+
+	if (timer_pending(&hisi_hba->timer))
+		del_timer(&hisi_hba->timer);
 
 	sas_unregister_ha(sha);
 	sas_remove_host(sha->core.shost);
@@ -2222,6 +2249,29 @@ static const struct hisi_sas_hw_error sas_ras_intr1_nfe[] = {
 	{ .irq_msk = BIT(31), .msg = "DMAC7_RX_POISON" },
 };
 
+static const struct hisi_sas_hw_error sas_ras_intr2_nfe[] = {
+	{ .irq_msk = BIT(0), .msg = "DMAC0_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(1), .msg = "DMAC1_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(2), .msg = "DMAC2_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(3), .msg = "DMAC3_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(4), .msg = "DMAC4_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(5), .msg = "DMAC5_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(6), .msg = "DMAC6_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(7), .msg = "DMAC7_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(8), .msg = "DMAC0_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(9), .msg = "DMAC1_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(10), .msg = "DMAC2_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(11), .msg = "DMAC3_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(12), .msg = "DMAC4_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(13), .msg = "DMAC5_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(14), .msg = "DMAC6_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(15), .msg = "DMAC7_FIFO_OMIT_ERR" },
+	{ .irq_msk = BIT(16), .msg = "HGC_RLSE_SLOT_UNMATCH" },
+	{ .irq_msk = BIT(17), .msg = "HGC_LM_ADD_FCH_LIST_ERR" },
+	{ .irq_msk = BIT(18), .msg = "HGC_AXI_BUS_ERR" },
+	{ .irq_msk = BIT(19), .msg = "HGC_FIFO_OMIT_ERR" },
+};
+
 static bool process_non_fatal_error_v3_hw(struct hisi_hba *hisi_hba)
 {
 	struct device *dev = hisi_hba->dev;
@@ -2251,6 +2301,17 @@ static bool process_non_fatal_error_v3_hw(struct hisi_hba *hisi_hba)
 		}
 	}
 	hisi_sas_write32(hisi_hba, SAS_RAS_INTR1, irq_value);
+
+	irq_value = hisi_sas_read32(hisi_hba, SAS_RAS_INTR2);
+	for (i = 0; i < ARRAY_SIZE(sas_ras_intr2_nfe); i++) {
+		ras_error = &sas_ras_intr2_nfe[i];
+		if (ras_error->irq_msk & irq_value) {
+			dev_warn(dev, "SAS_RAS_INTR2: %s(irq_value=0x%x) found.\n",
+					ras_error->msg, irq_value);
+			need_reset = true;
+		}
+	}
+	hisi_sas_write32(hisi_hba, SAS_RAS_INTR2, irq_value);
 
 	return need_reset;
 }

@@ -78,22 +78,23 @@ u8 hisi_sas_get_ata_protocol(struct host_to_dev_fis *fis, int direction)
 	case ATA_CMD_STANDBYNOW1:
 	case ATA_CMD_ZAC_MGMT_OUT:
 		return HISI_SAS_SATA_PROTOCOL_NONDATA;
+
+	case ATA_CMD_SET_MAX:
+		switch (fis->features) {
+		case ATA_SET_MAX_PASSWD:
+		case ATA_SET_MAX_LOCK:
+			return HISI_SAS_SATA_PROTOCOL_PIO;
+
+		case ATA_SET_MAX_PASSWD_DMA:
+		case ATA_SET_MAX_UNLOCK_DMA:
+			return HISI_SAS_SATA_PROTOCOL_DMA;
+
+		default:
+			return HISI_SAS_SATA_PROTOCOL_NONDATA;
+		}
+
 	default:
 	{
-		if (fis->command == ATA_CMD_SET_MAX) {
-			switch (fis->features) {
-			case ATA_SET_MAX_PASSWD:
-			case ATA_SET_MAX_LOCK:
-				return HISI_SAS_SATA_PROTOCOL_PIO;
-
-			case ATA_SET_MAX_PASSWD_DMA:
-			case ATA_SET_MAX_UNLOCK_DMA:
-				return HISI_SAS_SATA_PROTOCOL_DMA;
-
-			default:
-				return HISI_SAS_SATA_PROTOCOL_NONDATA;
-			}
-		}
 		if (direction == DMA_NONE)
 			return HISI_SAS_SATA_PROTOCOL_NONDATA;
 		return HISI_SAS_SATA_PROTOCOL_PIO;
@@ -576,10 +577,8 @@ static int hisi_sas_dev_found(struct domain_device *device)
 		for (phy_no = 0; phy_no < phy_num; phy_no++) {
 			phy = &parent_dev->ex_dev.ex_phy[phy_no];
 			if (SAS_ADDR(phy->attached_sas_addr) ==
-				SAS_ADDR(device->sas_addr)) {
-				sas_dev->attached_phy = phy_no;
+				SAS_ADDR(device->sas_addr))
 				break;
-			}
 		}
 
 		if (phy_no == phy_num) {
@@ -1822,12 +1821,10 @@ int hisi_sas_alloc(struct hisi_hba *hisi_hba, struct Scsi_Host *shost)
 		goto err_out;
 
 	s = HISI_SAS_MAX_ITCT_ENTRIES * sizeof(struct hisi_sas_itct);
-	hisi_hba->itct = dma_alloc_coherent(dev, s, &hisi_hba->itct_dma,
+	hisi_hba->itct = dma_zalloc_coherent(dev, s, &hisi_hba->itct_dma,
 					    GFP_KERNEL);
 	if (!hisi_hba->itct)
 		goto err_out;
-
-	memset(hisi_hba->itct, 0, s);
 
 	hisi_hba->slot_info = devm_kcalloc(dev, max_command_entries,
 					   sizeof(struct hisi_sas_slot),
@@ -2080,17 +2077,6 @@ err_out:
 	return NULL;
 }
 
-void hisi_sas_init_add(struct hisi_hba *hisi_hba)
-{
-	int i;
-
-	for (i = 0; i < hisi_hba->n_phy; i++)
-		memcpy(&hisi_hba->phy[i].dev_sas_addr,
-		       hisi_hba->sas_addr,
-		       SAS_ADDR_SIZE);
-}
-EXPORT_SYMBOL_GPL(hisi_sas_init_add);
-
 int hisi_sas_probe(struct platform_device *pdev,
 			 const struct hisi_sas_hw *hw)
 {
@@ -2144,8 +2130,6 @@ int hisi_sas_probe(struct platform_device *pdev,
 		sha->sas_port[i] = &hisi_hba->port[i].sas_port;
 	}
 
-	hisi_sas_init_add(hisi_hba);
-
 	rc = scsi_add_host(shost, &pdev->dev);
 	if (rc)
 		goto err_out_ha;
@@ -2176,6 +2160,9 @@ int hisi_sas_remove(struct platform_device *pdev)
 	struct sas_ha_struct *sha = platform_get_drvdata(pdev);
 	struct hisi_hba *hisi_hba = sha->lldd_ha;
 	struct Scsi_Host *shost = sha->core.shost;
+
+	if (timer_pending(&hisi_hba->timer))
+		del_timer(&hisi_hba->timer);
 
 	sas_unregister_ha(sha);
 	sas_remove_host(sha->core.shost);

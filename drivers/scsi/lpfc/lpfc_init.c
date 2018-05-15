@@ -1266,6 +1266,9 @@ lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 	uint64_t tot, data1, data2, data3;
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct lpfc_register reg_data;
+	struct nvme_fc_local_port *localport;
+	struct lpfc_nvme_lport *lport;
+	struct lpfc_nvme_ctrl_stat *cstat;
 	void __iomem *eqdreg = phba->sli4_hba.u.if_type2.EQDregaddr;
 
 	vports = lpfc_create_vport_work_array(phba);
@@ -1299,14 +1302,25 @@ lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 				tot += atomic_read(&tgtp->xmt_fcp_release);
 				tot = atomic_read(&tgtp->rcv_fcp_cmd_in) - tot;
 			} else {
-				tot = atomic_read(&phba->fc4NvmeIoCmpls);
-				data1 = atomic_read(
-					&phba->fc4NvmeInputRequests);
-				data2 = atomic_read(
-					&phba->fc4NvmeOutputRequests);
-				data3 = atomic_read(
-					&phba->fc4NvmeControlRequests);
-				tot =  (data1 + data2 + data3) - tot;
+				localport = phba->pport->localport;
+				if (!localport || !localport->private)
+					goto skip_eqdelay;
+				lport = (struct lpfc_nvme_lport *)
+					localport->private;
+				tot = 0;
+				for (i = 0;
+					i < phba->cfg_nvme_io_channel; i++) {
+					cstat = &lport->cstat[i];
+					data1 = atomic_read(
+						&cstat->fc4NvmeInputRequests);
+					data2 = atomic_read(
+						&cstat->fc4NvmeOutputRequests);
+					data3 = atomic_read(
+						&cstat->fc4NvmeControlRequests);
+					tot += (data1 + data2 + data3);
+					tot -= atomic_read(
+						&cstat->fc4NvmeIoCmpls);
+				}
 			}
 		}
 
@@ -6406,8 +6420,11 @@ lpfc_setup_driver_resource_phase2(struct lpfc_hba *phba)
 		return error;
 	}
 
-	/* workqueue for deferred irq use */
-	phba->wq = alloc_workqueue("lpfc_wq", WQ_MEM_RECLAIM, 0);
+	/* The lpfc_wq workqueue for deferred irq use, is only used for SLI4 */
+	if (phba->sli_rev == LPFC_SLI_REV4)
+		phba->wq = alloc_workqueue("lpfc_wq", WQ_MEM_RECLAIM, 0);
+	else
+		phba->wq = NULL;
 
 	return 0;
 }
@@ -6430,7 +6447,8 @@ lpfc_unset_driver_resource_phase2(struct lpfc_hba *phba)
 	}
 
 	/* Stop kernel worker thread */
-	kthread_stop(phba->worker_thread);
+	if (phba->worker_thread)
+		kthread_stop(phba->worker_thread);
 }
 
 /**
@@ -6895,12 +6913,6 @@ lpfc_create_shost(struct lpfc_hba *phba)
 	atomic_set(&phba->fc4ScsiOutputRequests, 0);
 	atomic_set(&phba->fc4ScsiControlRequests, 0);
 	atomic_set(&phba->fc4ScsiIoCmpls, 0);
-	atomic_set(&phba->fc4NvmeInputRequests, 0);
-	atomic_set(&phba->fc4NvmeOutputRequests, 0);
-	atomic_set(&phba->fc4NvmeControlRequests, 0);
-	atomic_set(&phba->fc4NvmeIoCmpls, 0);
-	atomic_set(&phba->fc4NvmeLsRequests, 0);
-	atomic_set(&phba->fc4NvmeLsCmpls, 0);
 	vport = lpfc_create_port(phba, phba->brd_no, &phba->pcidev->dev);
 	if (!vport)
 		return -ENODEV;
@@ -9502,6 +9514,11 @@ lpfc_sli4_pci_mem_setup(struct lpfc_hba *phba)
 		return error;
 	}
 
+	if (pci_read_config_dword(pdev, LPFC_SLI_ASIC_VER,
+				  &phba->sli4_hba.sli_asic_ver.word0)) {
+		return error;
+	}
+
 	/* There is no SLI3 failback for SLI4 devices. */
 	if (bf_get(lpfc_sli_intf_valid, &phba->sli4_hba.sli_intf) !=
 	    LPFC_SLI_INTF_VALID) {
@@ -10533,6 +10550,7 @@ lpfc_get_sli4_parameters(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 	struct lpfc_pc_sli4_params *sli4_params;
 	uint32_t mbox_tmo;
 	int length;
+	bool exp_wqcq_pages = true;
 	struct lpfc_sli4_parameters *mbx_sli4_parameters;
 
 	/*
@@ -10659,8 +10677,17 @@ lpfc_get_sli4_parameters(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 			phba->nvme_support, phba->nvme_embed_pbde,
 			phba->cfg_nvme_embed_cmd, phba->cfg_suppress_rsp);
 
+	if ((bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) ==
+	    LPFC_SLI_INTF_IF_TYPE_2) &&
+	    (bf_get(lpfc_sli_intf_sli_family, &phba->sli4_hba.sli_intf) ==
+		 LPFC_SLI_INTF_FAMILY_LNCR_A0) &&
+	    (bf_get(lpfc_sli_asic_ver, &phba->sli4_hba.sli_asic_ver) ==
+	    LPFC_SLI_ASIC_VER_A))
+		exp_wqcq_pages = false;
+
 	if ((bf_get(cfg_cqpsize, mbx_sli4_parameters) & LPFC_CQ_16K_PAGE_SZ) &&
 	    (bf_get(cfg_wqpsize, mbx_sli4_parameters) & LPFC_WQ_16K_PAGE_SZ) &&
+	    exp_wqcq_pages &&
 	    (sli4_params->wqsize & LPFC_WQ_SZ128_SUPPORT))
 		phba->enab_exp_wqcq_pages = 1;
 	else
@@ -11719,6 +11746,7 @@ lpfc_pci_remove_one_s4(struct pci_dev *pdev)
 	lpfc_nvme_free(phba);
 	lpfc_free_iocb_list(phba);
 
+	lpfc_unset_driver_resource_phase2(phba);
 	lpfc_sli4_driver_resource_unset(phba);
 
 	/* Unmap adapter Control and Doorbell registers */
