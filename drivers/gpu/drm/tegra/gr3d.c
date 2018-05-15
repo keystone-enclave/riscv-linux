@@ -9,6 +9,7 @@
 
 #include <linux/clk.h>
 #include <linux/host1x.h>
+#include <linux/iommu.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
@@ -20,6 +21,7 @@
 #include "gr3d.h"
 
 struct gr3d {
+	struct iommu_group *group;
 	struct tegra_drm_client client;
 	struct host1x_channel *channel;
 	struct clk *clk_secondary;
@@ -41,6 +43,7 @@ static int gr3d_init(struct host1x_client *client)
 	struct drm_device *dev = dev_get_drvdata(client->parent);
 	unsigned long flags = HOST1X_SYNCPT_HAS_BASE;
 	struct gr3d *gr3d = to_gr3d(drm);
+	int err;
 
 	gr3d->channel = host1x_channel_request(client->dev);
 	if (!gr3d->channel)
@@ -48,11 +51,32 @@ static int gr3d_init(struct host1x_client *client)
 
 	client->syncpts[0] = host1x_syncpt_request(client, flags);
 	if (!client->syncpts[0]) {
-		host1x_channel_put(gr3d->channel);
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto put;
 	}
 
-	return tegra_drm_register_client(dev->dev_private, drm);
+	gr3d->group = host1x_client_iommu_attach(client, false);
+	if (IS_ERR(gr3d->group)) {
+		err = PTR_ERR(gr3d->group);
+		dev_err(client->dev, "failed to attach to domain: %d\n", err);
+		goto free;
+	}
+
+	err = tegra_drm_register_client(dev->dev_private, drm);
+	if (err < 0) {
+		dev_err(client->dev, "failed to register client: %d\n", err);
+		goto detach;
+	}
+
+	return 0;
+
+detach:
+	host1x_client_iommu_detach(client, gr3d->group);
+free:
+	host1x_syncpt_free(client->syncpts[0]);
+put:
+	host1x_channel_put(gr3d->channel);
+	return err;
 }
 
 static int gr3d_exit(struct host1x_client *client)
@@ -66,6 +90,7 @@ static int gr3d_exit(struct host1x_client *client)
 	if (err < 0)
 		return err;
 
+	host1x_client_iommu_detach(client, gr3d->group);
 	host1x_syncpt_free(client->syncpts[0]);
 	host1x_channel_put(gr3d->channel);
 
