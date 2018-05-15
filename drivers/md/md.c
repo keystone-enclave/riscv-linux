@@ -367,6 +367,7 @@ void mddev_suspend(struct mddev *mddev)
 	set_bit(MD_ALLOW_SB_UPDATE, &mddev->flags);
 	smp_mb__after_atomic();
 	wait_event(mddev->sb_wait, atomic_read(&mddev->active_io) == 0);
+	wait_event(mddev->sb_wait, atomic_read(&mddev->flush_io) == 0);
 	mddev->pers->quiesce(mddev, 1);
 	clear_bit_unlock(MD_ALLOW_SB_UPDATE, &mddev->flags);
 	wait_event(mddev->sb_wait, !test_bit(MD_UPDATING_SB, &mddev->flags));
@@ -412,30 +413,77 @@ static int md_congested(void *data, int bits)
 /*
  * Generic flush handling for md
  */
-
-static void md_end_flush(struct bio *bio)
-{
-	struct md_rdev *rdev = bio->bi_private;
-	struct mddev *mddev = rdev->mddev;
-
-	rdev_dec_pending(rdev, mddev);
-
-	if (atomic_dec_and_test(&mddev->flush_pending)) {
-		/* The pre-request flush has finished */
-		queue_work(md_wq, &mddev->flush_work);
-	}
-	bio_put(bio);
-}
-
-static void md_submit_flush_data(struct work_struct *ws);
-
 static void submit_flushes(struct work_struct *ws)
 {
-	struct mddev *mddev = container_of(ws, struct mddev, flush_work);
+	struct flush_info *fi = container_of(ws, struct flush_info, flush_work);
+	struct mddev *mddev = fi->mddev;
+	struct bio *fbio = fi->fbio;
+
+	fi->fbio = NULL;
+	atomic_dec(&mddev->flush_io);
+	wake_up(&fi->flush_queue);
+	wake_up(&mddev->sb_wait);
+
+	fbio->bi_opf &= ~REQ_PREFLUSH;
+	md_handle_request(mddev, fbio);
+}
+
+static void rdev_end_flush(struct bio *bi)
+{
+	struct flush_info *fi = bi->bi_private;
+	struct mddev *mddev = fi->mddev;
+	struct bio *fbio = fi->fbio;
 	struct md_rdev *rdev;
 
-	INIT_WORK(&mddev->flush_work, md_submit_flush_data);
-	atomic_set(&mddev->flush_pending, 1);
+	rcu_read_lock();
+	rdev_for_each_rcu(rdev, mddev)
+		if (fi->bios[rdev->raid_disk] == bi) {
+			fi->bios[rdev->raid_disk] = NULL;
+			rdev_dec_pending(rdev, mddev);
+			break;
+		}
+	rcu_read_unlock();
+
+	if (atomic_dec_and_test(&fi->flush_pending)) {
+		if (fbio->bi_iter.bi_size == 0) {
+			/* an empty barrier - all done */
+			bio_endio(fbio);
+			fi->fbio = NULL;
+			atomic_dec(&mddev->flush_io);
+			wake_up(&fi->flush_queue);
+			wake_up(&mddev->sb_wait);
+		} else {
+			INIT_WORK(&fi->flush_work, submit_flushes);
+			queue_work(md_wq, &fi->flush_work);
+		}
+	}
+
+	bio_put(bi);
+}
+
+void md_flush_request(struct mddev *mddev, struct bio *fbio)
+{
+	struct md_rdev *rdev;
+	struct flush_info *fi;
+	char *p = (char*)mddev->flush_info;
+	int index;
+
+	atomic_inc(&mddev->flush_io);
+
+	index = jhash((void*)fbio, sizeof(fbio), 0) % NR_FLUSHS;
+	fi = (struct flush_info *)(p + index * (sizeof(struct flush_info)
+			+ mddev->raid_disks * sizeof(struct bio*)));
+
+	spin_lock_irq(&fi->flush_lock);
+	wait_event_lock_irq(fi->flush_queue,
+			    !fi->fbio,
+			    fi->flush_lock);
+	fi->fbio = fbio;
+	spin_unlock_irq(&fi->flush_lock);
+
+	fi->mddev = mddev;
+	atomic_set(&fi->flush_pending, 1);
+
 	rcu_read_lock();
 	rdev_for_each_rcu(rdev, mddev)
 		if (rdev->raid_disk >= 0 &&
@@ -448,55 +496,35 @@ static void submit_flushes(struct work_struct *ws)
 			atomic_inc(&rdev->nr_pending);
 			atomic_inc(&rdev->nr_pending);
 			rcu_read_unlock();
+
 			bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
-			bi->bi_end_io = md_end_flush;
-			bi->bi_private = rdev;
+			bi->bi_end_io = rdev_end_flush;
+			bi->bi_private = fi;
 			bio_set_dev(bi, rdev->bdev);
 			bi->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
-			atomic_inc(&mddev->flush_pending);
+
+			fi->bios[rdev->raid_disk] = bi;
+			atomic_inc(&fi->flush_pending);
 			submit_bio(bi);
+
 			rcu_read_lock();
 			rdev_dec_pending(rdev, mddev);
 		}
 	rcu_read_unlock();
-	if (atomic_dec_and_test(&mddev->flush_pending))
-		queue_work(md_wq, &mddev->flush_work);
-}
 
-static void md_submit_flush_data(struct work_struct *ws)
-{
-	struct mddev *mddev = container_of(ws, struct mddev, flush_work);
-	struct bio *bio = mddev->flush_bio;
-
-	/*
-	 * must reset flush_bio before calling into md_handle_request to avoid a
-	 * deadlock, because other bios passed md_handle_request suspend check
-	 * could wait for this and below md_handle_request could wait for those
-	 * bios because of suspend check
-	 */
-	mddev->flush_bio = NULL;
-	wake_up(&mddev->sb_wait);
-
-	if (bio->bi_iter.bi_size == 0)
-		/* an empty barrier - all done */
-		bio_endio(bio);
-	else {
-		bio->bi_opf &= ~REQ_PREFLUSH;
-		md_handle_request(mddev, bio);
+	if (atomic_dec_and_test(&fi->flush_pending)) {
+		if (fbio->bi_iter.bi_size == 0) {
+			/* an empty barrier - all done */
+			bio_endio(fbio);
+			fi->fbio = NULL;
+			atomic_dec(&mddev->flush_io);
+			wake_up(&fi->flush_queue);
+			wake_up(&mddev->sb_wait);
+		} else {
+			INIT_WORK(&fi->flush_work, submit_flushes);
+			queue_work(md_wq, &fi->flush_work);
+		}
 	}
-}
-
-void md_flush_request(struct mddev *mddev, struct bio *bio)
-{
-	spin_lock_irq(&mddev->lock);
-	wait_event_lock_irq(mddev->sb_wait,
-			    !mddev->flush_bio,
-			    mddev->lock);
-	mddev->flush_bio = bio;
-	spin_unlock_irq(&mddev->lock);
-
-	INIT_WORK(&mddev->flush_work, submit_flushes);
-	queue_work(md_wq, &mddev->flush_work);
 }
 EXPORT_SYMBOL(md_flush_request);
 
@@ -555,7 +583,6 @@ void mddev_init(struct mddev *mddev)
 	atomic_set(&mddev->openers, 0);
 	atomic_set(&mddev->active_io, 0);
 	spin_lock_init(&mddev->lock);
-	atomic_set(&mddev->flush_pending, 0);
 	init_waitqueue_head(&mddev->sb_wait);
 	init_waitqueue_head(&mddev->recovery_wait);
 	mddev->reshape_position = MaxSector;
@@ -2853,7 +2880,8 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 			err = 0;
 		}
 	} else if (cmd_match(buf, "re-add")) {
-		if (test_bit(Faulty, &rdev->flags) && (rdev->raid_disk == -1)) {
+		if (test_bit(Faulty, &rdev->flags) && (rdev->raid_disk == -1) &&
+			rdev->saved_raid_disk >= 0) {
 			/* clear_bit is performed _after_ all the devices
 			 * have their local Faulty bit cleared. If any writes
 			 * happen in the meantime in the local node, they
@@ -5509,6 +5537,27 @@ int md_run(struct mddev *mddev)
 			goto abort;
 		}
 	}
+	if (mddev->flush_info == NULL) {
+		int index = 0;
+		char *p;
+		struct flush_info *fi;
+		mddev->flush_info = kzalloc((sizeof(struct flush_info) +
+						sizeof(struct bio*) * mddev->raid_disks) *
+						NR_FLUSHS, GFP_KERNEL);
+		if (!mddev->flush_info) {
+			err = -ENOMEM;
+			goto abort;
+		}
+
+		p = (char*)mddev->flush_info;
+		while (index < NR_FLUSHS) {
+			fi = (struct flush_info *)(p + index * (sizeof(struct flush_info)
+				+ mddev->raid_disks * sizeof(struct bio*)));
+			spin_lock_init(&fi->flush_lock);
+			init_waitqueue_head(&fi->flush_queue);
+			index++;
+		}
+	}
 
 	spin_lock(&pers_lock);
 	pers = find_pers(mddev->level, mddev->clevel);
@@ -5668,6 +5717,9 @@ int md_run(struct mddev *mddev)
 	return 0;
 
 abort:
+	if (mddev->flush_info) {
+		kfree(mddev->flush_info);
+	}
 	if (mddev->bio_set) {
 		bioset_free(mddev->bio_set);
 		mddev->bio_set = NULL;
@@ -5888,6 +5940,10 @@ void md_stop(struct mddev *mddev)
 	 * This is called from dm-raid
 	 */
 	__md_stop(mddev);
+	if (mddev->flush_info) {
+		kfree(mddev->flush_info);
+		mddev->flush_info = NULL;
+	}
 	if (mddev->bio_set) {
 		bioset_free(mddev->bio_set);
 		mddev->bio_set = NULL;
@@ -6854,8 +6910,10 @@ static int update_size(struct mddev *mddev, sector_t num_sectors)
 
 static int update_raid_disks(struct mddev *mddev, int raid_disks)
 {
-	int rv;
+	int rv, index;
 	struct md_rdev *rdev;
+	struct flush_info *new, *fi;
+	char *p;
 	/* change the number of raid disks */
 	if (mddev->pers->check_reshape == NULL)
 		return -EINVAL;
@@ -6884,10 +6942,31 @@ static int update_raid_disks(struct mddev *mddev, int raid_disks)
 	else if (mddev->delta_disks > 0)
 		mddev->reshape_backwards = 0;
 
+	new = kzalloc((sizeof(struct flush_info) + sizeof(struct bio*) *
+				raid_disks) * NR_FLUSHS, GFP_KERNEL);
+	if (!new)
+		return -ENOMEM;
+
+	p = (char*)new;
+	index = 0;
+	while (index < NR_FLUSHS) {
+		fi = (struct flush_info *)(p + index * (sizeof(struct flush_info)
+				+ raid_disks * sizeof(struct bio*)));
+		spin_lock_init(&fi->flush_lock);
+		init_waitqueue_head(&fi->flush_queue);
+		index++;
+	}
+
 	rv = mddev->pers->check_reshape(mddev);
 	if (rv < 0) {
 		mddev->delta_disks = 0;
 		mddev->reshape_backwards = 0;
+		kfree(new);
+	} else {
+		mddev_suspend(mddev);
+		kfree(mddev->flush_info);
+		mddev->flush_info = new;
+		mddev_resume(mddev);
 	}
 	return rv;
 }
@@ -8641,6 +8720,7 @@ static int remove_and_add_spares(struct mddev *mddev,
 			if (mddev->pers->hot_remove_disk(
 				    mddev, rdev) == 0) {
 				sysfs_unlink_rdev(mddev, rdev);
+				rdev->saved_raid_disk = rdev->raid_disk;
 				rdev->raid_disk = -1;
 				removed++;
 			}

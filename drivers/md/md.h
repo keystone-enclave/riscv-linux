@@ -252,6 +252,17 @@ enum mddev_sb_flags {
 	MD_SB_NEED_REWRITE,	/* metadata write needs to be repeated */
 };
 
+#define NR_FLUSHS 16
+struct flush_info {
+	struct mddev			*mddev;
+	struct work_struct		flush_work;
+	atomic_t			flush_pending;
+	spinlock_t			flush_lock;
+	wait_queue_head_t		flush_queue;
+	struct bio			*fbio;
+	struct bio			*bios[0];
+};
+
 struct mddev {
 	void				*private;
 	struct md_personality		*pers;
@@ -399,7 +410,6 @@ struct mddev {
 	struct work_struct del_work;	/* used for delayed sysfs removal */
 
 	/* "lock" protects:
-	 *   flush_bio transition from NULL to !NULL
 	 *   rdev superblocks, events
 	 *   clearing MD_CHANGE_*
 	 *   in_sync - and related safemode and MD_CHANGE changes
@@ -457,13 +467,12 @@ struct mddev {
 						   * metadata and bitmap writes
 						   */
 
-	/* Generic flush handling.
-	 * The last to finish preflush schedules a worker to submit
-	 * the rest of the request (without the REQ_PREFLUSH flag).
+	/*
+	 * Generic flush handling.
 	 */
-	struct bio *flush_bio;
-	atomic_t flush_pending;
-	struct work_struct flush_work;
+	struct flush_info		*flush_info;
+	atomic_t			flush_io;
+
 	struct work_struct event_work;	/* used by dm to report failure event */
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 	struct md_cluster_info		*cluster_info;
