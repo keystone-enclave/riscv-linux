@@ -6,6 +6,7 @@
 
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
+#include <linux/dma/sprd-dma.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -116,57 +117,21 @@
 #define SPRD_DMA_SRC_TRSF_STEP_OFFSET	0
 #define SPRD_DMA_TRSF_STEP_MASK		GENMASK(15, 0)
 
+/* define the DMA transfer step type */
+#define SPRD_DMA_NONE_STEP		0
+#define SPRD_DMA_BYTE_STEP		1
+#define SPRD_DMA_SHORT_STEP		2
+#define SPRD_DMA_WORD_STEP		4
+#define SPRD_DMA_DWORD_STEP		8
+
 #define SPRD_DMA_SOFTWARE_UID		0
 
-/*
- * enum sprd_dma_req_mode: define the DMA request mode
- * @SPRD_DMA_FRAG_REQ: fragment request mode
- * @SPRD_DMA_BLK_REQ: block request mode
- * @SPRD_DMA_TRANS_REQ: transaction request mode
- * @SPRD_DMA_LIST_REQ: link-list request mode
- *
- * We have 4 types request mode: fragment mode, block mode, transaction mode
- * and linklist mode. One transaction can contain several blocks, one block can
- * contain several fragments. Link-list mode means we can save several DMA
- * configuration into one reserved memory, then DMA can fetch each DMA
- * configuration automatically to start transfer.
- */
-enum sprd_dma_req_mode {
-	SPRD_DMA_FRAG_REQ,
-	SPRD_DMA_BLK_REQ,
-	SPRD_DMA_TRANS_REQ,
-	SPRD_DMA_LIST_REQ,
-};
-
-/*
- * enum sprd_dma_int_type: define the DMA interrupt type
- * @SPRD_DMA_NO_INT: do not need generate DMA interrupts.
- * @SPRD_DMA_FRAG_INT: fragment done interrupt when one fragment request
- * is done.
- * @SPRD_DMA_BLK_INT: block done interrupt when one block request is done.
- * @SPRD_DMA_BLK_FRAG_INT: block and fragment interrupt when one fragment
- * or one block request is done.
- * @SPRD_DMA_TRANS_INT: tansaction done interrupt when one transaction
- * request is done.
- * @SPRD_DMA_TRANS_FRAG_INT: transaction and fragment interrupt when one
- * transaction request or fragment request is done.
- * @SPRD_DMA_TRANS_BLK_INT: transaction and block interrupt when one
- * transaction request or block request is done.
- * @SPRD_DMA_LIST_INT: link-list done interrupt when one link-list request
- * is done.
- * @SPRD_DMA_CFGERR_INT: configure error interrupt when configuration is
- * incorrect.
- */
-enum sprd_dma_int_type {
-	SPRD_DMA_NO_INT,
-	SPRD_DMA_FRAG_INT,
-	SPRD_DMA_BLK_INT,
-	SPRD_DMA_BLK_FRAG_INT,
-	SPRD_DMA_TRANS_INT,
-	SPRD_DMA_TRANS_FRAG_INT,
-	SPRD_DMA_TRANS_BLK_INT,
-	SPRD_DMA_LIST_INT,
-	SPRD_DMA_CFGERR_INT,
+/* dma data width values */
+enum sprd_dma_datawidth {
+	SPRD_DMA_DATAWIDTH_1_BYTE,
+	SPRD_DMA_DATAWIDTH_2_BYTES,
+	SPRD_DMA_DATAWIDTH_4_BYTES,
+	SPRD_DMA_DATAWIDTH_8_BYTES,
 };
 
 /* dma channel hardware configuration */
@@ -597,17 +562,17 @@ static int sprd_dma_config(struct dma_chan *chan, struct sprd_dma_desc *sdesc,
 	u32 fix_mode = 0, fix_en = 0;
 
 	if (IS_ALIGNED(len, 4)) {
-		datawidth = 2;
-		src_step = 4;
-		des_step = 4;
+		datawidth = SPRD_DMA_DATAWIDTH_4_BYTES;
+		src_step = SPRD_DMA_WORD_STEP;
+		des_step = SPRD_DMA_WORD_STEP;
 	} else if (IS_ALIGNED(len, 2)) {
-		datawidth = 1;
-		src_step = 2;
-		des_step = 2;
+		datawidth = SPRD_DMA_DATAWIDTH_2_BYTES;
+		src_step = SPRD_DMA_SHORT_STEP;
+		des_step = SPRD_DMA_SHORT_STEP;
 	} else {
-		datawidth = 0;
-		src_step = 1;
-		des_step = 1;
+		datawidth = SPRD_DMA_DATAWIDTH_1_BYTE;
+		src_step = SPRD_DMA_BYTE_STEP;
+		des_step = SPRD_DMA_BYTE_STEP;
 	}
 
 	fragment_len = SPRD_DMA_MEMCPY_MIN_SIZE;
@@ -842,8 +807,7 @@ static int sprd_dma_probe(struct platform_device *pdev)
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	sdev->glb_base = devm_ioremap_nocache(&pdev->dev, res->start,
-					      resource_size(res));
+	sdev->glb_base = devm_ioremap_resource(&pdev->dev, res);
 	if (!sdev->glb_base)
 		return -ENOMEM;
 
