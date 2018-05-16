@@ -51,7 +51,7 @@ config ARCH_PHYS_ADDR_T_64BIT
 
 config ZONE_DMA32
 	bool
-	default y
+	default y if 64BIT
 
 config ARCH_DMA_ADDR_T_64BIT
 	def_bool y
