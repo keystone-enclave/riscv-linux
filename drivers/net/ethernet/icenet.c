@@ -66,6 +66,15 @@ static inline struct sk_buff *sk_buff_cq_pop(struct sk_buff_cq *cq)
 	return skb;
 }
 
+static inline int sk_buff_cq_tail_nsegments(struct sk_buff_cq *cq)
+{
+	struct sk_buff *skb;
+
+	skb = cq->entries[cq->tail].skb;
+
+	return skb_shinfo(skb)->nr_frags + 1;
+}
+
 struct icenet_device {
 	struct device *dev;
 	void __iomem *iomem;
@@ -96,18 +105,44 @@ static inline int recv_comp_avail(struct icenet_device *nic)
 }
 
 
+static inline void post_send_frag(
+		struct icenet_device *nic, skb_frag_t *frag, int last)
+{
+	uintptr_t addr = page_to_phys(frag->page.p) + frag->page_offset;
+	uint64_t len = frag->size, partial = !last, packet;
+
+	packet = (partial << 63) | (len << 48) | (addr & 0xffffffffffffL);
+	iowrite64(packet, nic->iomem + ICENET_SEND_REQ);
+}
+
 static inline void post_send(
 		struct icenet_device *nic, struct sk_buff *skb)
 {
 	uintptr_t addr = virt_to_phys(skb->data);
-	uint64_t len = skb->len, packet;
+	uint64_t len, partial, packet;
+	struct skb_shared_info *shinfo = skb_shinfo(skb);
+	int i;
+
+	if (shinfo->nr_frags > 0) {
+		len = skb_headlen(skb);
+		partial = 1;
+	} else {
+		len = skb->len;
+		partial = 0;
+	}
 
 	addr -= NET_IP_ALIGN;
 	len += NET_IP_ALIGN;
 
-	packet = (len << 48) | (addr & 0xffffffffffffL);
-
+	packet = (partial << 63) | (len << 48) | (addr & 0xffffffffffffL);
 	iowrite64(packet, nic->iomem + ICENET_SEND_REQ);
+
+	for (i = 0; i < shinfo->nr_frags; i++) {
+		skb_frag_t *frag = &shinfo->frags[i];
+		int last = i == (shinfo->nr_frags-1);
+		post_send_frag(nic, frag, last);
+	}
+
 	sk_buff_cq_push(&nic->send_cq, skb);
 
 //	printk(KERN_DEBUG "IceNet: tx addr=%lx len=%llu\n", addr, len);
@@ -126,29 +161,39 @@ static inline void post_recv(
 	sk_buff_cq_push(&nic->recv_cq, skb);
 }
 
-static inline int can_send(struct icenet_device *nic)
+static inline int send_space(struct icenet_device *nic)
 {
 	int avail = send_req_avail(nic);
 	int space = SK_BUFF_CQ_SPACE(nic->send_cq);
 
-	return avail > 0 && space > 0;
+	return (avail < space) ? avail : space;
 }
 
 static void complete_send(struct net_device *ndev)
 {
 	struct icenet_device *nic = netdev_priv(ndev);
 	struct sk_buff *skb;
+	int i, n, nsegs;
 
-	while (send_comp_avail(nic) > 0) {
-		ioread16(nic->iomem + ICENET_SEND_COMP);
+	n = send_comp_avail(nic);
+
+	while (n > 0) {
 		BUG_ON(SK_BUFF_CQ_COUNT(nic->send_cq) == 0);
-		skb = sk_buff_cq_pop(&nic->send_cq);
+		nsegs = sk_buff_cq_tail_nsegments(&nic->send_cq);
 
-		ndev->stats.tx_packets++;
-		ndev->stats.tx_bytes += skb->len;
+		if (nsegs > n)
+			break;
+
+		for (i = 0; i < nsegs; i++)
+			ioread16(nic->iomem + ICENET_SEND_COMP);
+
+		skb = sk_buff_cq_pop(&nic->send_cq);
 		dev_consume_skb_irq(skb);
-		netif_wake_queue(ndev);
+		n -= nsegs;
 	}
+
+	if (send_space(nic) > 0 && netif_queue_stopped(ndev))
+		netif_wake_queue(ndev);
 }
 
 static void complete_recv(struct net_device *ndev)
@@ -287,13 +332,19 @@ static int icenet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct icenet_device *nic = netdev_priv(ndev);
 	unsigned long flags;
+	int space;
 
 	spin_lock_irqsave(&nic->lock, flags);
 
+	space = send_space(nic);
+	BUG_ON(space < skb_shinfo(skb)->nr_frags + 1);
+
 	skb_tx_timestamp(skb);
 	post_send(nic, skb);
+	ndev->stats.tx_packets++;
+	ndev->stats.tx_bytes += skb->len;
 
-	if (unlikely(!can_send(nic)))
+	if (unlikely(send_space(nic) == 0))
 		netif_stop_queue(ndev);
 
 	spin_unlock_irqrestore(&nic->lock, flags);
@@ -341,6 +392,9 @@ static int icenet_probe(struct platform_device *pdev)
 	ether_setup(ndev);
 	ndev->flags &= ~IFF_MULTICAST;
 	ndev->netdev_ops = &icenet_ops;
+	ndev->hw_features = NETIF_F_SG;
+	ndev->features = ndev->hw_features;
+	ndev->vlan_features = ndev->hw_features;
 
 	spin_lock_init(&nic->lock);
 	sk_buff_cq_init(&nic->send_cq);
