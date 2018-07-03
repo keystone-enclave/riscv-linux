@@ -176,6 +176,10 @@ config TUNE_GENERIC
 
 endchoice
 
+config KEYSTONE_ENCLAVE
+  tristate "Keystone Enclave"
+  default y 
+
 config RISCV_ISA_C
 	bool "Emit compressed instructions when building Linux"
 	default y
