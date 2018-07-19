@@ -8,7 +8,7 @@
 //#include <asm/io.h>
 //#include <asm/page.h>
 #include "keystone.h"
-
+#include "keystone_user.h"
 #define   DRV_DESCRIPTION   "keystone enclave"
 #define   DRV_VERSION       "0.1"
 
@@ -24,72 +24,124 @@ static struct miscdevice keystone_dev = {
   .mode = 0666,
 };
 
-long keystone_create_enclave(int __user* eid)
+int keystone_create_enclave(unsigned long arg)
 {
   int ret;
+  struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
   // allocate a page for initial EPM
   unsigned long epm_v = __get_free_page(GFP_HIGHUSER);
   unsigned long epm = __pa(epm_v);
-  //unsigned long epm = __pa(get_zeroed_page(GFP_KERNEL)); 
 
-  pr_info("keystone_create_enclave: epmv = 0x%lx, epm = 0x%lx, &eid = 0x%lx\n", epm_v, epm, (long unsigned) eid);
-  // SM Call
-  ret = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm, PAGE_SIZE);
-  if (ret < 0)
+  pr_info("keystone_create_enclave: epm_v = 0x%lx, epm = 0x%lx\n", epm_v, epm);
+
+  enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm, PAGE_SIZE);
+  if (enclp->eid < 0)
   {
-    goto fail_after_epm_alloc;
+    ret = enclp->eid;
+    goto free_epm;
   }
   
-  pr_info("keystone_create_enclave: eid = %d\n", ret);
-  ret = __copy_to_user(eid, &ret, sizeof(eid));
+  pr_info("keystone_create_enclave: eid = %lld\n", enclp->eid);
   return 0;
 
-fail_after_epm_alloc:
+free_epm:
   free_pages(epm_v, 0);
   return ret;
 }
 
-long keystone_destroy_enclave(int __user eid)
+int keystone_destroy_enclave(unsigned long arg)
 {
   int ret;
-  ret = SBI_CALL_1(SBI_SM_DESTROY_ENCLAVE, eid);
+  struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
+  ret = SBI_CALL_1(SBI_SM_DESTROY_ENCLAVE, enclp->eid);
+  if(ret < 0)
+    return ret;
 
   return 0;
 }
 
-long keystone_sm_call(unsigned int sm_sbi_function_id, unsigned long arg)
+int keystone_copy_to_enclave(unsigned long arg)
 {
-  long ret;
-  switch(sm_sbi_function_id)
-  {
-    case SBI_SM_CREATE_ENCLAVE:
-      ret = keystone_create_enclave((int __user *)arg);
-      break;
-    case SBI_SM_DESTROY_ENCLAVE:
-      ret = keystone_destroy_enclave((int __user)arg);
-      break;
-    default:
-      return -ENOSYS;
+  int ret = 0;
+  struct keystone_ioctl_enclave_data *datap = (struct keystone_ioctl_enclave_data*) arg;
+
+  unsigned long size = datap->size;
+  unsigned long ptr = __get_free_page(GFP_KERNEL);
+
+  if(size > 0x1000) {
+    ret = -EINVAL;
+    goto cleanup_copy_to;
   }
+
+  pr_info("keystone_copy_to_enclave()\n");
+
+  if(copy_from_user((void*) ptr, (void*) datap->ptr, size))
+    return -EFAULT;
+
+  ret = SBI_CALL_2(SBI_SM_COPY_TO_ENCLAVE, __pa(ptr), size);
+  
+cleanup_copy_to:
+  free_pages(ptr, 0);
+  return ret;
+}
+
+int keystone_copy_from_enclave(unsigned long arg)
+{
+  int ret = 0;
+  struct keystone_ioctl_enclave_data *datap = (struct keystone_ioctl_enclave_data*) arg;
+
+  unsigned long size = datap->size;
+  unsigned long ptr = __get_free_page(GFP_KERNEL);
+
+  if(size > 0x1000) {
+    ret = -EINVAL;
+    goto cleanup_copy_from;
+  }
+  pr_info("keystone_copy_from_enclave()\n");
+  ret = SBI_CALL_2(SBI_SM_COPY_FROM_ENCLAVE, __pa(ptr), size);
+  
+  if(copy_to_user((void*) datap->ptr, (void*) ptr, size))
+    return -EFAULT;
+
+cleanup_copy_from:
+  free_pages(ptr, 0);
   return ret;
 }
 
 long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
   long ret;
-  
+  char data[256];
+
   pr_info("keystone_enclave: keystone_ioctl() command = %d\n",cmd);
- 
+
   if(!arg)
-  {
     return -EINVAL;
+  
+  if(copy_from_user(data, (void __user*) arg, _IOC_SIZE(cmd)))
+    return -EFAULT;
+
+  switch(cmd)
+  {
+    case KEYSTONE_IOC_CREATE_ENCLAVE:
+      ret = keystone_create_enclave((unsigned long) data);
+      break;
+    case KEYSTONE_IOC_DESTROY_ENCLAVE:
+      ret = keystone_destroy_enclave((unsigned long) data);
+      break;
+    case KEYSTONE_IOC_COPY_TO_ENCLAVE:
+      ret = keystone_copy_to_enclave((unsigned long) data);
+      break;
+    case KEYSTONE_IOC_COPY_FROM_ENCLAVE:
+      ret = keystone_copy_from_enclave((unsigned long) data);
+      break;
+    default:
+      return -ENOSYS;
   }
 
-  ret = keystone_sm_call(cmd, arg);
-  if(ret)
-  {
-    pr_err("keystone_enclave: sm returns error %ld\n", ret);
-  }
+  if(copy_to_user((void __user*) arg, data, _IOC_SIZE(cmd)))
+    return -EFAULT;
+  
   return ret;
 }
 
