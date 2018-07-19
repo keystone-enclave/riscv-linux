@@ -5,6 +5,8 @@
 
 #define SBI_SM_CREATE_ENCLAVE   101
 #define SBI_SM_DESTROY_ENCLAVE  102
+#define SBI_SM_COPY_TO_ENCLAVE  103
+#define SBI_SM_COPY_FROM_ENCLAVE  104
 
 long keystone_ioctl(struct file* filep, unsigned int cmd, unsigned long arg);
 
@@ -16,7 +18,8 @@ struct keystone_enclave_t
 };
 
 // keystone enclave functions
-long keystone_create_enclave(int* eid); 
-long keystone_destroy_enclave(int eid);
-
+int keystone_create_enclave(unsigned long arg); 
+int keystone_destroy_enclave(unsigned long arg);
+int keystone_copy_to_enclave(unsigned long arg);
+int keystone_copy_from_enclave(unsigned long arg);
 #endif
