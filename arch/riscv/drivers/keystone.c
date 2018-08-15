@@ -1,13 +1,17 @@
 #include <asm/sbi.h>
+#include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
+
 //#include <asm/io.h>
 //#include <asm/page.h>
 #include "keystone.h"
+#include "keystone-page.h"
+
 #include "keystone_user.h"
 #define   DRV_DESCRIPTION   "keystone enclave"
 #define   DRV_VERSION       "0.1"
@@ -27,25 +31,44 @@ static struct miscdevice keystone_dev = {
 int keystone_create_enclave(unsigned long arg)
 {
   int ret;
+  pg_list_t* pglist;
   struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
   // allocate a page for initial EPM
-  unsigned long epm_v = __get_free_page(GFP_HIGHUSER);
+  // minimum # of pages:
+  // 1st-level pg table: 1
+  // 2nd-level pg table: 1
+  // 3rd-level pg table: 1
+  // enclave page: 1
+  // total: 4 pages = order of 2
+  int order = 2;
+  int count = 0x1 << order;
+  unsigned long epm_v = __get_free_pages(GFP_HIGHUSER, order);
   unsigned long epm = __pa(epm_v);
 
   pr_info("keystone_create_enclave: epm_v = 0x%lx, epm = 0x%lx\n", epm_v, epm);
 
-  enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm, PAGE_SIZE);
+  pglist = kmalloc(sizeof(pg_list_t), GFP_KERNEL);
+  
+  init_free_pages(pglist, epm_v, count);
+
+  keystone_rtld_init_runtime(epm_v);
+  
+  enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm, PAGE_SIZE*count);
   if (enclp->eid < 0)
   {
     ret = enclp->eid;
-    goto free_epm;
+    goto error_free_epm;
   }
-  
   pr_info("keystone_create_enclave: eid = %lld\n", enclp->eid);
+
+  kfree(pglist);
   return 0;
 
-free_epm:
-  free_pages(epm_v, 0);
+error_free_pglist:
+  kfree(pglist);
+
+error_free_epm:
+  free_pages(epm_v, order);
   return ret;
 }
 
@@ -65,6 +88,7 @@ int keystone_copy_to_enclave(unsigned long arg)
   int ret = 0;
   struct keystone_ioctl_enclave_data *datap = (struct keystone_ioctl_enclave_data*) arg;
 
+  unsigned long eid = datap->eid;
   unsigned long size = datap->size;
   unsigned long ptr = __get_free_page(GFP_KERNEL);
 
@@ -73,13 +97,13 @@ int keystone_copy_to_enclave(unsigned long arg)
     goto cleanup_copy_to;
   }
 
-  pr_info("keystone_copy_to_enclave()\n");
+  pr_info("keystone_copy_to_enclave() 0x%lx <-- 0x%llx, %ld\n",ptr, datap->ptr, size);
 
   if(copy_from_user((void*) ptr, (void*) datap->ptr, size))
     return -EFAULT;
 
-  ret = SBI_CALL_2(SBI_SM_COPY_TO_ENCLAVE, __pa(ptr), size);
-  
+  ret = SBI_CALL_4(SBI_SM_COPY_TO_ENCLAVE, eid, datap->ptr, __pa(ptr), size);
+
 cleanup_copy_to:
   free_pages(ptr, 0);
   return ret;
@@ -90,6 +114,7 @@ int keystone_copy_from_enclave(unsigned long arg)
   int ret = 0;
   struct keystone_ioctl_enclave_data *datap = (struct keystone_ioctl_enclave_data*) arg;
 
+  unsigned long eid = datap->eid;
   unsigned long size = datap->size;
   unsigned long ptr = __get_free_page(GFP_KERNEL);
 
@@ -98,13 +123,23 @@ int keystone_copy_from_enclave(unsigned long arg)
     goto cleanup_copy_from;
   }
   pr_info("keystone_copy_from_enclave()\n");
-  ret = SBI_CALL_2(SBI_SM_COPY_FROM_ENCLAVE, __pa(ptr), size);
+  ret = SBI_CALL(SBI_SM_COPY_FROM_ENCLAVE, eid, __pa(ptr), size);
   
   if(copy_to_user((void*) datap->ptr, (void*) ptr, size))
     return -EFAULT;
 
 cleanup_copy_from:
   free_pages(ptr, 0);
+  return ret;
+}
+
+
+int keystone_run_enclave(unsigned long arg)
+{
+  int ret = 0;
+  struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
+  ret = SBI_CALL_2(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr);
+  
   return ret;
 }
 
@@ -134,6 +169,9 @@ long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
       break;
     case KEYSTONE_IOC_COPY_FROM_ENCLAVE:
       ret = keystone_copy_from_enclave((unsigned long) data);
+      break;
+    case KEYSTONE_IOC_RUN_ENCLAVE:
+      ret = keystone_run_enclave((unsigned long) data);
       break;
     default:
       return -ENOSYS;
