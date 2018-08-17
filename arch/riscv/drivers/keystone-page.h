@@ -4,13 +4,13 @@
 /* IMPORTANT: This code assumes Sv39 */
 #include "riscv64.h"
 
-typedef uintptr_t paddr_t;
-typedef uintptr_t vaddr_t;
+typedef unsigned long vaddr_t;
+typedef unsigned long paddr_t;
 
 typedef struct pg_list_t
 {
-  paddr_t head;
-  paddr_t tail;
+  vaddr_t head;
+  vaddr_t tail;
   unsigned int count;
 } pg_list_t;
 
@@ -18,20 +18,20 @@ typedef struct pg_list_t
 typedef struct epm_t {
   struct pg_list_t freelist;
   pte_t* root_page_table;
-  paddr_t base;
+  vaddr_t base;
   unsigned int total;
 } epm_t;
 
 static inline uintptr_t  epm_satp(epm_t* epm) {
   return ((uintptr_t)epm->root_page_table >> RISCV_PGSHIFT | SATP_MODE_CHOICE);
 }
-void init_free_pages(pg_list_t* pg_list, paddr_t base, unsigned int count);
-void put_free_page(pg_list_t* pg_list, paddr_t page_addr);
-paddr_t get_free_page(pg_list_t* pg_list);
+void init_free_pages(pg_list_t* pg_list, vaddr_t base, unsigned int count);
+void put_free_page(pg_list_t* pg_list, vaddr_t page_addr);
+vaddr_t get_free_page(pg_list_t* pg_list);
 
-void epm_init(epm_t* epm, paddr_t base, unsigned int count);
+void epm_init(epm_t* epm, vaddr_t base, unsigned int count);
 
-paddr_t epm_alloc_page(epm_t* epm, vaddr_t addr);
+vaddr_t epm_alloc_page(epm_t* epm, vaddr_t addr);
 void epm_free_page(epm_t* epm, vaddr_t addr);
 //pfn_t epm_alloc_pages(epm_t* epm, va_t va, int order);
 
@@ -73,17 +73,17 @@ void epm_free_page(epm_t* epm, vaddr_t addr);
  * |       |
  * +-------+ <-- start_vm (usually 0x0)
  */
-typedef struct mm_t {
+typedef struct encl_mm_t {
   unsigned long start_vm, end_vm;
   unsigned long text, end_text;
   unsigned long data, end_data;
   unsigned long bss, end_bss;
   unsigned long stack_top;
   unsigned long brk, start_brk;
-} mm_t;
+} encl_mm_t;
 
-void mm_init(mm_t* mm);
-int mm_set_stack(mm_t* mm, unsigned int size);
+void encl_mm_init(encl_mm_t* mm);
+int encl_mm_set_stack(encl_mm_t* mm, unsigned int size);
 // int mm_sbrk(mm_t* mm, unsigned int size);
 
 #endif

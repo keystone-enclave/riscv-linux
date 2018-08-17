@@ -2,6 +2,7 @@
 #define _KEYSTONE_H_
 
 #include <linux/file.h>
+#include "keystone-page.h"
 
 #define SBI_SM_CREATE_ENCLAVE   101
 #define SBI_SM_DESTROY_ENCLAVE  102
@@ -46,6 +47,6 @@ int keystone_copy_to_enclave(unsigned long arg);
 int keystone_copy_from_enclave(unsigned long arg);
 
 // runtime loader
-int keystone_rtld_init_runtime(unsigned long paddr);
+int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr);
 
 #endif
