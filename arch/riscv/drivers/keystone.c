@@ -50,13 +50,12 @@ int keystone_create_enclave(unsigned long arg)
   if(!epm)
     return ret;
   
-  pr_info("%s: %d\n", __func__, __LINE__);
   epm_init(epm, epm_vaddr, count);
-  pr_info("%s: %d\n", __func__, __LINE__);
 
   keystone_rtld_init_runtime(epm, epm_vaddr);
-  pr_info("%s: %d\n", __func__, __LINE__);
-  
+ 
+  debug_dump(epm_vaddr, PAGE_SIZE*count);
+
   enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm_paddr, PAGE_SIZE*count);
   if (enclp->eid < 0)
   {
@@ -64,7 +63,7 @@ int keystone_create_enclave(unsigned long arg)
     pr_err("keystone_create_enclave: SBI call failed\n");
     goto error_free_epm;
   }
-  pr_info("keystone_create_enclave: eid = %lld\n", enclp->eid);
+  pr_info("keystone_create_enclave: eid = %ld, epm_v = 0x%lx, epm_p = 0x%lx\n", enclp->eid, epm_vaddr, epm_paddr );
 
   kfree(epm);
   return 0;

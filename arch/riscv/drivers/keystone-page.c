@@ -1,5 +1,6 @@
 #include "riscv64.h"
 #include "keystone-page.h"
+#include <linux/kernel.h>
 
 #define NEXT_PAGE(pa) *((vaddr_t*)pa)
 
@@ -75,26 +76,28 @@ static paddr_t pte_ppn(pte_t pte)
   return pte_val(pte) >> PTE_PPN_SHIFT;
 }
 
-static uintptr_t ppn(vaddr_t addr)
+static paddr_t ppn(vaddr_t addr)
 {
   return __pa(addr) >> RISCV_PGSHIFT;
 }
 
-static size_t pt_idx(uintptr_t addr, int level)
+static size_t pt_idx(vaddr_t addr, int level)
 {
   size_t idx = addr >> (RISCV_PGLEVEL_BITS*level + RISCV_PGSHIFT);
   return idx & ((1 << RISCV_PGLEVEL_BITS) - 1);
 }
 
-static pte_t* __ept_walk_create(epm_t* epm, uintptr_t addr);
+static pte_t* __ept_walk_create(epm_t* epm, vaddr_t addr);
 
-static pte_t* __ept_continue_walk_create(epm_t* epm, uintptr_t addr, pte_t* pte)
+static pte_t* __ept_continue_walk_create(epm_t* epm, vaddr_t addr, pte_t* pte)
 {
-  *pte = ptd_create(ppn(get_free_page(&epm->freelist)));
+  unsigned long free_ppn = ppn(get_free_page(&epm->freelist));
+  *pte = ptd_create(free_ppn);
+  pr_info("ptd_create: ppn = %u, pte = 0x%lx\n", free_ppn,  *pte);
   return __ept_walk_create(epm, addr);
 }
 
-static pte_t* __ept_walk_internal(epm_t* epm, uintptr_t addr, int create)
+static pte_t* __ept_walk_internal(epm_t* epm, vaddr_t addr, int create)
 {
   pte_t* t = epm->root_page_table;
   int i;
@@ -107,36 +110,44 @@ static pte_t* __ept_walk_internal(epm_t* epm, uintptr_t addr, int create)
   return &t[pt_idx(addr, 0)];
 }
 
-static pte_t* __ept_walk(epm_t* epm, uintptr_t addr)
+static pte_t* __ept_walk(epm_t* epm, vaddr_t addr)
 {
   return __ept_walk_internal(epm, addr, 0);
 }
 
-static pte_t* __ept_walk_create(epm_t* epm, uintptr_t addr)
+static pte_t* __ept_walk_create(epm_t* epm, vaddr_t addr)
 {
   //printm("__ept_walk_create: addr = 0x%llx\n", addr);
   return __ept_walk_internal(epm, addr, 1);
 }
 
-static int __ept_va_avail(epm_t* epm, uintptr_t vaddr)
+static int __ept_va_avail(epm_t* epm, vaddr_t vaddr)
 {
   pte_t* pte = __ept_walk(epm, vaddr);
   return pte == 0 || pte_val(*pte) == 0;
 }
 
-vaddr_t epm_alloc_page(epm_t* epm, vaddr_t addr)
+vaddr_t epm_alloc_page(epm_t* epm, vaddr_t addr, unsigned long flags)
 {
   //printm("epm_alloc_page: addr = 0x%llx\n", addr);
   pte_t* pte = __ept_walk_create(epm, addr);
   vaddr_t page_addr = get_free_page(&epm->freelist);
   //printm("epm_alloc_page: page_addr = 0x%llx\n", page_addr);
-  *pte = pte_create(ppn(page_addr), PTE_R | PTE_W | PTE_X | PTE_V | PTE_U);
+  *pte = pte_create(ppn(page_addr), flags | PTE_V);
   return page_addr;
+}
+
+vaddr_t epm_alloc_rt_page(epm_t* epm, vaddr_t addr)
+{
+  return epm_alloc_page(epm, addr, PTE_R | PTE_W | PTE_X);
+}
+
+vaddr_t epm_alloc_user_page(epm_t* epm, vaddr_t addr)
+{
+  return epm_alloc_page(epm, addr, PTE_R | PTE_X | PTE_W | PTE_U);
 }
 
 void epm_free_page(epm_t* epm, vaddr_t addr)
 {
   /* TODO: Must Implement Quickly */
 }
-
-

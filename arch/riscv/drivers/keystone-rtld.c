@@ -26,6 +26,43 @@ void encl_mm_init(encl_mm_t* mm)
   mm->start_brk = 0;
 }
 
+void debug_dump(char* ptr, unsigned long size)
+{
+  pr_info("debug memory dump from virtual address 0x%lx (%lu bytes)\n", ptr, size); 
+  int i, j;
+  char buf[16];
+  int allzeroline = 0;
+  int lineiszero = 1;
+  for (i=0; i<size; i++) {
+    buf[i%16] = ptr[i];
+    if(ptr[i] != '\0') {
+      lineiszero = 0;
+    }
+
+    if(i % 16 == 15) {
+      if(lineiszero) {
+        allzeroline++;
+      }
+      else {
+        if(allzeroline > 0)
+          pr_info("*\n");
+        allzeroline = 0;
+        pr_info("%08x: %04x %04x %04x %04x %04x %04x %04x %04x\n",
+          i-0xf, 
+          *((uint16_t*)&buf[0]), 
+          *((uint16_t*)&buf[2]), 
+          *((uint16_t*)&buf[4]), 
+          *((uint16_t*)&buf[6]), 
+          *((uint16_t*)&buf[8]), 
+          *((uint16_t*)&buf[10]), 
+          *((uint16_t*)&buf[12]), 
+          *((uint16_t*)&buf[14]));
+      }
+      lineiszero = 1;
+    }
+  }
+}
+
 vaddr_t encl_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
    struct file* file, struct elf_phdr* phdr)
 {
@@ -42,15 +79,11 @@ vaddr_t encl_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   {
     int i;
     vaddr_t epm_page;
-    epm_page = epm_alloc_page(epm, va);
+    epm_page = epm_alloc_rt_page(epm, va);
     pr_info("encl_mmap va: 0x%lx, target: 0x%lx\n", va, epm_page);
     retval = kernel_read(file, epm_page, PAGE_SIZE, &pos);
    
-    pr_info("debug dump:\n"); 
-    for(i=0; i<PAGE_SIZE; i++)
-    {
-      //pr_info("%02x ", *((char*) epm_page + i) & 0xff );
-    }
+    //debug_dump(epm_page, PAGE_SIZE);
   }
 } 
 
