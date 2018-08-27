@@ -64,11 +64,8 @@ static void generic_blkdev_process_completions(struct generic_blkdev_port *port)
 
 	ncomplete = ioread8(port->iomem + GENERIC_BLKDEV_NCOMPLETE);
 
-	printk(KERN_DEBUG "Processing %d completions\n", ncomplete);
-
 	for (i = 0; i < ncomplete; i++) {
 		tag = ioread8(port->iomem + GENERIC_BLKDEV_COMPLETE);
-		printk(KERN_DEBUG "Complete request %d\n", tag);
 		BUG_ON(list_empty(&port->reqbuf[tag]));
 		breq = list_entry(port->reqbuf[tag].prev,
 				struct generic_blkdev_request, list);
@@ -123,9 +120,9 @@ static void generic_blkdev_queue_request(struct request *req, int write)
 	breq->req = req;
 	list_add_tail(&breq->list, &port->reqbuf[tag]);
 
-	printk(KERN_DEBUG
-		"generic-blkdev: %s [addr %llx] [off %x] [len %d] [tag: %d]\n",
-		(write) ? "w" : "r", addr, offset, len, tag);
+	//printk(KERN_DEBUG
+	//	"generic-blkdev: %s [addr %llx] [off %x] [len %d] [tag: %d]\n",
+	//	(write) ? "w" : "r", addr, offset, len, tag);
 }
 
 static void generic_blkdev_rq_handler(struct request_queue *rq)
