@@ -40,10 +40,15 @@ int keystone_create_enclave(unsigned long arg)
   // 3rd-level pg table: 1
   // enclave page: 1
   // total: 4 pages = order of 2
-  int order = 2;
+  // TODO: flexible size
+  int order = 5;
   int count = 0x1 << order;
   unsigned long epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
   unsigned long epm_paddr = __pa(epm_vaddr);
+
+  unsigned long size = enclp->size;
+  unsigned long ptr = enclp->ptr;
+  unsigned long encl_page;
 
   ret = -ENOMEM;
   epm = kmalloc(sizeof(epm_t), GFP_KERNEL);
@@ -52,8 +57,24 @@ int keystone_create_enclave(unsigned long arg)
   
   epm_init(epm, epm_vaddr, count);
 
+  /* initialize runtime */
   keystone_rtld_init_runtime(epm, epm_vaddr);
  
+  /* initialize enclave 
+   * TODO: currently, max size of enclave is 4KB */
+  if(size > 0x1000) {
+    ret = -EINVAL;
+    goto error_free_epm;
+  }
+ 
+  encl_page = epm_alloc_user_page(epm, ptr);
+  
+  pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, size);
+  if(copy_from_user((void*) encl_page, (void*) ptr, size)) {
+    ret = -EFAULT;
+    goto error_free_epm;
+  }
+
   debug_dump(epm_vaddr, PAGE_SIZE*count);
 
   enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm_paddr, PAGE_SIZE*count);
@@ -63,7 +84,7 @@ int keystone_create_enclave(unsigned long arg)
     pr_err("keystone_create_enclave: SBI call failed\n");
     goto error_free_epm;
   }
-  pr_info("keystone_create_enclave: eid = %ld, epm_v = 0x%lx, epm_p = 0x%lx\n", enclp->eid, epm_vaddr, epm_paddr );
+  pr_info("keystone_create_enclave: eid = %lld, epm_v = 0x%lx, epm_p = 0x%lx\n", enclp->eid, epm_vaddr, epm_paddr );
 
   kfree(epm);
   return 0;
@@ -142,8 +163,7 @@ int keystone_run_enclave(unsigned long arg)
 {
   int ret = 0;
   struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
-  ret = SBI_CALL_2(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr);
-  
+  run->ret = SBI_CALL_2(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr);
   return ret;
 }
 
