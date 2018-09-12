@@ -33,11 +33,12 @@ int keystone_create_enclave(unsigned long arg)
   int ret;
   epm_t* epm;
   struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
-  unsigned long size = enclp->size;
+  unsigned long code_size = enclp->code_size;
   unsigned long ptr = enclp->ptr;
   unsigned long encl_page;
   unsigned long epm_vaddr, epm_paddr;
-  unsigned long req_pages = 5;
+  // TODO: Do we want to require that requests are page sized?
+  unsigned long req_pages = ((enclp->mem_size + enclp->code_size) / PAGE_SIZE);
   // Must allocate 3 pages for pg tables
   // Plus pages requested
   // rounded up to order of 2
@@ -64,15 +65,15 @@ int keystone_create_enclave(unsigned long arg)
  
   /* initialize enclave 
    * TODO: currently, max size of enclave is 4KB */
-  if(size > 0x1000) {
+  if(code_size > 0x1000) {
     ret = -EINVAL;
     goto error_free_epm;
   }
  
   encl_page = epm_alloc_user_page(epm, ptr);
   
-  pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, size);
-  if(copy_from_user((void*) encl_page, (void*) ptr, size)) {
+  pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, code_size);
+  if(copy_from_user((void*) encl_page, (void*) ptr, code_size)) {
     ret = -EFAULT;
     goto error_free_epm;
   }
