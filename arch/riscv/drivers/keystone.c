@@ -33,23 +33,25 @@ int keystone_create_enclave(unsigned long arg)
   int ret;
   epm_t* epm;
   struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
-  // allocate a page for initial EPM
-  // minimum # of pages:
-  // 1st-level pg table: 1
-  // 2nd-level pg table: 1
-  // 3rd-level pg table: 1
-  // enclave page: 1
-  // total: 4 pages = order of 2
-  // TODO: flexible size
-  int order = 5;
-  int count = 0x1 << order;
-  unsigned long epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
-  unsigned long epm_paddr = __pa(epm_vaddr);
-
   unsigned long size = enclp->size;
   unsigned long ptr = enclp->ptr;
   unsigned long encl_page;
+  unsigned long epm_vaddr, epm_paddr;
+  unsigned long req_pages = 5;
+  // Must allocate 3 pages for pg tables
+  // Plus pages requested
+  // rounded up to order of 2
+  unsigned long min_pages = req_pages + 3;
+  int order = ilog2(min_pages) + 1;
+  int count = 0x1 << order;
+  epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
 
+  if(epm_vaddr == NULL){
+    ret = -ENOMEM;
+    pr_err("keystone_create_enclave: Cannot get contiguous memory for enclave. (Tried order %ul)\n", order);
+    return ret;
+  }
+  epm_paddr = __pa(epm_vaddr);
   ret = -ENOMEM;
   epm = kmalloc(sizeof(epm_t), GFP_KERNEL);
   if(!epm)
@@ -84,7 +86,7 @@ int keystone_create_enclave(unsigned long arg)
     pr_err("keystone_create_enclave: SBI call failed\n");
     goto error_free_epm;
   }
-  pr_info("keystone_create_enclave: eid = %lld, epm_v = 0x%lx, epm_p = 0x%lx\n", enclp->eid, epm_vaddr, epm_paddr );
+  pr_info("keystone_create_enclave: eid = %lld, page order = %lu, epm_v = 0x%lx,  epm_p = 0x%lx\n", enclp->eid, order, epm_vaddr, epm_paddr );
 
   kfree(epm);
   return 0;
@@ -124,8 +126,10 @@ int keystone_copy_to_enclave(unsigned long arg)
 
   pr_info("keystone_copy_to_enclave() 0x%lx <-- 0x%llx, %ld\n",ptr, datap->ptr, size);
 
-  if(copy_from_user((void*) ptr, (void*) datap->ptr, size))
-    return -EFAULT;
+  if(copy_from_user((void*) ptr, (void*) datap->ptr, size)){
+    ret = -EFAULT;
+    goto cleanup_copy_to;
+  }
 
   ret = SBI_CALL_4(SBI_SM_COPY_TO_ENCLAVE, eid, datap->ptr, __pa(ptr), size);
 
@@ -150,8 +154,10 @@ int keystone_copy_from_enclave(unsigned long arg)
   pr_info("keystone_copy_from_enclave()\n");
   ret = SBI_CALL(SBI_SM_COPY_FROM_ENCLAVE, eid, __pa(ptr), size);
   
-  if(copy_to_user((void*) datap->ptr, (void*) ptr, size))
-    return -EFAULT;
+  if(copy_to_user((void*) datap->ptr, (void*) ptr, size)){
+    ret = -EFAULT;
+    goto cleanup_copy_from;
+  }
 
 cleanup_copy_from:
   free_pages(ptr, 0);
