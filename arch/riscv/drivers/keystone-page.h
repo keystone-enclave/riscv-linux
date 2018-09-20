@@ -32,7 +32,9 @@ vaddr_t get_free_page(pg_list_t* pg_list);
 void epm_init(epm_t* epm, vaddr_t base, unsigned int count);
 
 vaddr_t epm_alloc_rt_page(epm_t* epm, vaddr_t addr);
+vaddr_t epm_alloc_rt_page_noexec(epm_t* epm, vaddr_t addr);
 vaddr_t epm_alloc_user_page(epm_t* epm, vaddr_t addr);
+vaddr_t epm_alloc_user_page_noexec(epm_t* epm, vaddr_t addr);
 void epm_free_page(epm_t* epm, vaddr_t addr);
 //pfn_t epm_alloc_pages(epm_t* epm, va_t va, int order);
 
