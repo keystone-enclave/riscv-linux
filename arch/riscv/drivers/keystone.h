@@ -49,6 +49,6 @@ int keystone_destroy_enclave(unsigned long arg);
 int keystone_copy_to_enclave(unsigned long arg);
 int keystone_copy_from_enclave(unsigned long arg);
 // runtime loader
-int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr);
+int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, unsigned long*  rt_offset);
 
 #endif
