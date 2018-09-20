@@ -35,16 +35,20 @@ int keystone_create_enclave(unsigned long arg)
   struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
   unsigned long code_size = enclp->code_size;
   unsigned long ptr = enclp->ptr;
+  unsigned long rt_offset;
   unsigned long encl_page;
   unsigned long epm_vaddr, epm_paddr;
+  unsigned long encl_stack_size = PAGE_UP(enclp->mem_size);
   // TODO: Do we want to require that requests are page sized?
   unsigned long req_pages = ((enclp->mem_size + enclp->code_size) / PAGE_SIZE);
-  // Must allocate 3 pages for pg tables
+  // Must allocate 3(enclave) + 2(runtime) pages for pg tables
   // Plus pages requested
   // rounded up to order of 2
-  unsigned long min_pages = req_pages + 3;
+  unsigned long min_pages = req_pages + 16;
   int order = ilog2(min_pages) + 1;
   int count = 0x1 << order;
+  
+  //pr_info("EPM pages allocated: %d\n", count);
   epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
 
   if(epm_vaddr == NULL){
@@ -61,24 +65,32 @@ int keystone_create_enclave(unsigned long arg)
   epm_init(epm, epm_vaddr, count);
 
   /* initialize runtime */
-  keystone_rtld_init_runtime(epm, epm_vaddr);
- 
+  keystone_rtld_init_runtime(epm, epm_vaddr, &rt_offset);
+
   /* initialize enclave 
    * TODO: currently, max size of enclave is 4KB */
   if(code_size > 0x1000) {
     ret = -EINVAL;
     goto error_free_epm;
   }
- 
+
+  /* setup enclave's stack */
+  unsigned long vaddr;
+  for(vaddr = rt_offset - encl_stack_size; vaddr < rt_offset; vaddr+= PAGE_SIZE)
+  {
+    epm_alloc_user_page_noexec(epm, vaddr);
+  }
+  //pr_info("keystone enclave stack size: %d\n",encl_stack_size);
+
   encl_page = epm_alloc_user_page(epm, ptr);
   
-  pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, code_size);
+  //pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, code_size);
   if(copy_from_user((void*) encl_page, (void*) ptr, code_size)) {
     ret = -EFAULT;
     goto error_free_epm;
   }
 
-  debug_dump(epm_vaddr, PAGE_SIZE*count);
+  //debug_dump(epm_vaddr, PAGE_SIZE*count);
 
   enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm_paddr, PAGE_SIZE*count);
   if (enclp->eid < 0)
@@ -87,7 +99,7 @@ int keystone_create_enclave(unsigned long arg)
     pr_err("keystone_create_enclave: SBI call failed\n");
     goto error_free_epm;
   }
-  pr_info("keystone_create_enclave: eid = %lld, page order = %lu, epm_v = 0x%lx,  epm_p = 0x%lx\n", enclp->eid, order, epm_vaddr, epm_paddr );
+  //pr_info("keystone_create_enclave: eid = %lld, page order = %lu, epm_v = 0x%lx,  epm_p = 0x%lx\n", enclp->eid, order, epm_vaddr, epm_paddr );
 
   kfree(epm);
   return 0;
@@ -125,7 +137,7 @@ int keystone_copy_to_enclave(unsigned long arg)
     goto cleanup_copy_to;
   }
 
-  pr_info("keystone_copy_to_enclave() 0x%lx <-- 0x%llx, %ld\n",ptr, datap->ptr, size);
+  //pr_info("keystone_copy_to_enclave() 0x%lx <-- 0x%llx, %ld\n",ptr, datap->ptr, size);
 
   if(copy_from_user((void*) ptr, (void*) datap->ptr, size)){
     ret = -EFAULT;
@@ -152,7 +164,7 @@ int keystone_copy_from_enclave(unsigned long arg)
     ret = -EINVAL;
     goto cleanup_copy_from;
   }
-  pr_info("keystone_copy_from_enclave()\n");
+  //pr_info("keystone_copy_from_enclave()\n");
   ret = SBI_CALL(SBI_SM_COPY_FROM_ENCLAVE, eid, __pa(ptr), size);
   
   if(copy_to_user((void*) datap->ptr, (void*) ptr, size)){
@@ -179,7 +191,7 @@ long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
   long ret;
   char data[256];
 
-  pr_info("keystone_enclave: keystone_ioctl() command = %d\n",cmd);
+  //pr_info("keystone_enclave: keystone_ioctl() command = %d\n",cmd);
 
   if(!arg)
     return -EINVAL;
