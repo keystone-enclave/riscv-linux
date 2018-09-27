@@ -68,11 +68,6 @@ int keystone_create_enclave(unsigned long arg)
   keystone_rtld_init_runtime(epm, epm_vaddr, &rt_offset);
 
   /* initialize enclave 
-   * TODO: currently, max size of enclave is 4KB */
-  if(code_size > 0x1000) {
-    ret = -EINVAL;
-    goto error_free_epm;
-  }
 
   /* setup enclave's stack */
   unsigned long vaddr;
@@ -81,13 +76,22 @@ int keystone_create_enclave(unsigned long arg)
     epm_alloc_user_page_noexec(epm, vaddr);
   }
   //pr_info("keystone enclave stack size: %d\n",encl_stack_size);
+  vaddr_t va;
+  unsigned int k;
 
-  encl_page = epm_alloc_user_page(epm, ptr);
+  // Create some code pages
+  for(va=ptr, k=0; va < ptr+code_size; va += PAGE_SIZE, k++){
   
-  //pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, code_size);
-  if(copy_from_user((void*) encl_page, (void*) ptr, code_size)) {
-    ret = -EFAULT;
-    goto error_free_epm;
+    encl_page = epm_alloc_user_page(epm, va);
+  
+    //pr_info("keystone_copy_to_enclave() 0x%llx <-- 0x%llx, %ld\n", encl_page, ptr, code_size);
+    
+    if(copy_from_user((void*) encl_page,
+		      (void*) va,
+		      k*PAGE_SIZE > code_size?code_size%PAGE_SIZE:PAGE_SIZE)) {
+      ret = -EFAULT;
+      goto error_free_epm;
+    }
   }
 
   //debug_dump(epm_vaddr, PAGE_SIZE*count);
