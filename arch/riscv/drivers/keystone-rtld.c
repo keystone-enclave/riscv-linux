@@ -9,7 +9,7 @@
 #include <linux/fs.h>
 #include "keystone-page.h"
 
-#define KEYSTONE_RUNTIME_FILEPATH "/lib/keystone-rt"
+#define KEYSTONE_RUNTIME_FILEPATH "/lib/eyrie-rt"
 
 #define RT_STACK_SIZE 1024*4
 
