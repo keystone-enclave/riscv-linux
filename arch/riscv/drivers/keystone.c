@@ -113,8 +113,8 @@ int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void*
     encl_page = epm_alloc_user_page(epm, va);
 
     copy_size = (k+1)*PAGE_SIZE > len ? len%PAGE_SIZE : PAGE_SIZE;
-    pr_info("Copy elf page to:%x, from: %x, sz:%i\n",
-	    encl_page, elf_usr_region + (k * PAGE_SIZE), copy_size);
+    //pr_info("Copy elf page to:%x, from: %x, sz:%i\n",
+    //	    encl_page, elf_usr_region + (k * PAGE_SIZE), copy_size);
     // TODO zero out the other part of the last page
     if(copy_from_user((void*) encl_page,
 		      (void*) elf_usr_region + (k * PAGE_SIZE),
@@ -158,8 +158,6 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
   next_usr_phoff = (void*)elf_usr_ptr + elf_ex.e_phoff;
   for(i=0; i<elf_ex.e_phnum; i++, next_usr_phoff++) {
 
-    pr_info("loading ph %i\n",i);
-    
     // Copy next phdr
     if(copy_from_user(&eppnt, (void*)next_usr_phoff, sizeof(struct elf_phdr)) != 0){
       //bad
@@ -174,7 +172,7 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
     vaddr = eppnt.p_vaddr;
     //vaddr sanity check?
     size = eppnt.p_filesz;
-    pr_info("loading vaddr: %x, sz:%i\n",vaddr,size);
+    //pr_info("loading vaddr: %x, sz:%i\n",vaddr,size);
 
 
     retval = keystone_app_load_elf_region(epm,
