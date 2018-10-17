@@ -263,7 +263,7 @@ int keystone_run_enclave(unsigned long arg)
 {
   int ret = 0;
   struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
-  run->ret = SBI_CALL_2(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr);
+  ret = SBI_CALL_3(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr, __pa(&run->ret));
   return ret;
 }
 
