@@ -86,10 +86,9 @@ int keystone_create_enclave(unsigned long arg)
   }
   //  debug_dump(epm_vaddr, PAGE_SIZE*count);
 
-  enclp->eid = SBI_CALL_2(SBI_SM_CREATE_ENCLAVE, epm_paddr, PAGE_SIZE*count);
-  if (enclp->eid < 0)
+  ret = SBI_CALL_3(SBI_SM_CREATE_ENCLAVE, epm_paddr, PAGE_SIZE*count, __pa(&enclp->eid));
+  if (ret)
   {
-    ret = enclp->eid;
     pr_err("keystone_create_enclave: SBI call failed\n");
     goto error_free_epm;
   }
@@ -199,72 +198,21 @@ int keystone_destroy_enclave(unsigned long arg)
   int ret;
   struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
   ret = SBI_CALL_1(SBI_SM_DESTROY_ENCLAVE, enclp->eid);
-  if(ret < 0)
+  if(ret)
     return ret;
 
   return 0;
 }
-
-int keystone_copy_to_enclave(unsigned long arg)
-{
-  int ret = 0;
-  struct keystone_ioctl_enclave_data *datap = (struct keystone_ioctl_enclave_data*) arg;
-
-  unsigned long eid = datap->eid;
-  unsigned long size = datap->size;
-  unsigned long ptr = __get_free_page(GFP_KERNEL);
-
-  if(size > 0x1000) {
-    ret = -EINVAL;
-    goto cleanup_copy_to;
-  }
-
-  //pr_info("keystone_copy_to_enclave() 0x%lx <-- 0x%llx, %ld\n",ptr, datap->ptr, size);
-
-  if(copy_from_user((void*) ptr, (void*) datap->ptr, size)){
-    ret = -EFAULT;
-    goto cleanup_copy_to;
-  }
-
-  ret = SBI_CALL_4(SBI_SM_COPY_TO_ENCLAVE, eid, datap->ptr, __pa(ptr), size);
-
-cleanup_copy_to:
-  free_pages(ptr, 0);
-  return ret;
-}
-
-int keystone_copy_from_enclave(unsigned long arg)
-{
-  int ret = 0;
-  struct keystone_ioctl_enclave_data *datap = (struct keystone_ioctl_enclave_data*) arg;
-
-  unsigned long eid = datap->eid;
-  unsigned long size = datap->size;
-  unsigned long ptr = __get_free_page(GFP_KERNEL);
-
-  if(size > 0x1000) {
-    ret = -EINVAL;
-    goto cleanup_copy_from;
-  }
-  //pr_info("keystone_copy_from_enclave()\n");
-  ret = SBI_CALL(SBI_SM_COPY_FROM_ENCLAVE, eid, __pa(ptr), size);
-  
-  if(copy_to_user((void*) datap->ptr, (void*) ptr, size)){
-    ret = -EFAULT;
-    goto cleanup_copy_from;
-  }
-
-cleanup_copy_from:
-  free_pages(ptr, 0);
-  return ret;
-}
-
 
 int keystone_run_enclave(unsigned long arg)
 {
   int ret = 0;
   struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
   ret = SBI_CALL_3(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr, __pa(&run->ret));
+  while(ret == 2)
+  {
+    ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, run->eid);
+  }
   return ret;
 }
 
@@ -288,12 +236,6 @@ long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
       break;
     case KEYSTONE_IOC_DESTROY_ENCLAVE:
       ret = keystone_destroy_enclave((unsigned long) data);
-      break;
-    case KEYSTONE_IOC_COPY_TO_ENCLAVE:
-      ret = keystone_copy_to_enclave((unsigned long) data);
-      break;
-    case KEYSTONE_IOC_COPY_FROM_ENCLAVE:
-      ret = keystone_copy_from_enclave((unsigned long) data);
       break;
     case KEYSTONE_IOC_RUN_ENCLAVE:
       ret = keystone_run_enclave((unsigned long) data);
