@@ -6,9 +6,9 @@
 
 #define SBI_SM_CREATE_ENCLAVE   101
 #define SBI_SM_DESTROY_ENCLAVE  102
-#define SBI_SM_COPY_TO_ENCLAVE  103
-#define SBI_SM_COPY_FROM_ENCLAVE  104
 #define SBI_SM_RUN_ENCLAVE      105
+#define SBI_SM_STOP_ENCLAVE     106
+#define SBI_SM_RESUME_ENCLAVE   107
 
 /* don't want to taint asm/sbi.h, so just copied SBI_CALL and increased # args */
 #define _SBI_CALL(which, arg0, arg1, arg2, arg3, arg4, arg5) ({			\
