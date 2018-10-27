@@ -56,6 +56,7 @@ int keystone_create_enclave(unsigned long arg)
     pr_err("keystone_create_enclave: Cannot get contiguous memory for enclave. (Tried order %ul)\n", order);
     return ret;
   }
+  memset(epm_vaddr, 0, PAGE_SIZE*count);
   epm_paddr = __pa(epm_vaddr);
   ret = -ENOMEM;
   epm = kmalloc(sizeof(epm_t), GFP_KERNEL);
