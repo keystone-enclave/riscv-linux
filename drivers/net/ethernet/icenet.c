@@ -374,15 +374,20 @@ static int icenet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	spin_lock_irqsave(&nic->tx_lock, flags);
 
 	space = send_space(nic);
-	BUG_ON(space < skb_shinfo(skb)->nr_frags + 1);
+
+	if (unlikely(space < skb_shinfo(skb)->nr_frags + 1)) {
+		printk(KERN_WARNING "Not enough space in TX ring\n");
+		netif_stop_queue(ndev);
+		dev_kfree_skb_any(skb);
+		ndev->stats.tx_dropped++;
+		spin_unlock_irqrestore(&nic->tx_lock, flags);
+		return NETDEV_TX_BUSY;
+	}
 
 	skb_tx_timestamp(skb);
 	post_send(nic, skb);
 	ndev->stats.tx_packets++;
 	ndev->stats.tx_bytes += skb->len;
-
-	if (unlikely(send_space(nic) == 0))
-		netif_stop_queue(ndev);
 
 	spin_unlock_irqrestore(&nic->tx_lock, flags);
 
