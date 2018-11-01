@@ -10,6 +10,7 @@
 //#include <asm/io.h>
 //#include <asm/page.h>
 #include "keystone.h"
+#include "keystone-sbi-arg.h"
 #include "keystone-page.h"
 
 #include "keystone_user.h"
@@ -86,7 +87,14 @@ int keystone_create_enclave(unsigned long arg)
   }
   //  debug_dump(epm_vaddr, PAGE_SIZE*count);
 
-  ret = SBI_CALL_3(SBI_SM_CREATE_ENCLAVE, epm_paddr, PAGE_SIZE*count, __pa(&enclp->eid));
+  struct keystone_sbi_create_t create_args;
+  create_args.epm_region.paddr = epm_paddr;
+  create_args.epm_region.size = PAGE_SIZE*count;
+  create_args.copy_region.paddr = 0;
+  create_args.copy_region.size = 0;
+  create_args.eid_pptr =  __pa(&enclp->eid);
+
+  ret = SBI_CALL_1(SBI_SM_CREATE_ENCLAVE, __pa(&create_args));
   if (ret)
   {
     pr_err("keystone_create_enclave: SBI call failed\n");
@@ -208,7 +216,13 @@ int keystone_run_enclave(unsigned long arg)
 {
   int ret = 0;
   struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
-  ret = SBI_CALL_3(SBI_SM_RUN_ENCLAVE, run->eid, run->ptr, __pa(&run->ret));
+
+  struct keystone_sbi_run_t run_args;
+  run_args.eid = run->eid;
+  run_args.entry_ptr = run->ptr;
+  run_args.ret_ptr = __pa(&run->ret);
+  
+  ret = SBI_CALL_1(SBI_SM_RUN_ENCLAVE, __pa(&run_args));
   while(ret == 2)
   {
     ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, run->eid);
