@@ -1,6 +1,16 @@
 #ifndef _KEYSTONE_H_
 #define _KEYSTONE_H_
 
+#include <asm/sbi.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/fs.h>
+#include <linux/miscdevice.h>
+
+
 #include <linux/file.h>
 #include "keystone-page.h"
 
@@ -46,12 +56,16 @@ void debug_dump(char* ptr, unsigned long size);
 // keystone enclave functions
 int keystone_create_enclave(unsigned long arg); 
 int keystone_destroy_enclave(unsigned long arg);
-int keystone_copy_to_enclave(unsigned long arg);
-int keystone_copy_from_enclave(unsigned long arg);
+
 // runtime loader
-int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, unsigned long*  rt_offset);
+int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long* rt_offset);
 
 // elf loading
 int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len);
 int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len);
+
+#define keystone_err(fmt, ...) \
+  pr_err("keystone_enclave: " fmt, ##__VA_ARGS__)
+#define keystone_warn(fmt, ...) \
+  pr_warn("keystone_enclave: " fmt, ##__VA_ARGS__)
 #endif
