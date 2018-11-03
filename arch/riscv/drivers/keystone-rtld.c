@@ -11,8 +11,6 @@
 #include "keystone.h"
 #include "keystone-page.h"
 
-#define RT_STACK_SIZE 1024*4
-
 void debug_dump(char* ptr, unsigned long size)
 {
   pr_info("debug memory dump from virtual address 0x%lx (%lu bytes)\n", ptr, size); 
@@ -94,7 +92,7 @@ vaddr_t rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   }
 } 
 
-int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long* rt_offset)
+int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset)
 {
   int retval, error, i, j;
   int total_size;
@@ -156,7 +154,7 @@ int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user
     rtld_vm_mmap(epm, vaddr, size, rt_ptr, eppnt);
   }
 
-  rtld_setup_stack(epm, -1UL, RT_STACK_SIZE);
+  rtld_setup_stack(epm, -1UL, rt_stack_sz);
 
   error = 0;
 out_free_ph:

@@ -20,18 +20,19 @@ int keystone_create_enclave(unsigned long arg)
   unsigned long epm_vaddr, epm_paddr;
 
   unsigned long req_pages = ((enclp->eapp_stack_sz + enclp->eapp_sz + PAGE_SIZE - 1) / PAGE_SIZE);
-  // FIXME: calculate the required number of pages!
+  unsigned long rt_pages = (PAGE_UP(rt_sz) + rt_stack_sz) / PAGE_SIZE;
+  // FIXME: calculate the required number of pages
   // For now, we must allocate at least 1 (top) + 2 (enclave) + 2 (runtime) pages for pg tables
   // Plus pages requested for the stack
   // rounded up to order of 2
-  unsigned long min_pages = req_pages + 15; // TODO: calculate req_pages + # page tables + runtime size
+  unsigned long min_pages = req_pages + rt_pages + 15; // TODO: calculate req_pages + # page tables + runtime size
   int order = ilog2(min_pages) + 1;
   int count = 0x1 << order;
   unsigned long vaddr;
  
   /* allocate contiguous memory */
   epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
-  if(!epm_vaddr){
+  if(!epm_vaddr) {
     ret = -ENOMEM;
     keystone_err("keystone_create_enclave(): failed to allocate %d page(s)\n", count);
     return ret;
@@ -49,7 +50,7 @@ int keystone_create_enclave(unsigned long arg)
   epm_init(epm, epm_vaddr, count);
 
   /* initialize runtime */
-  if(keystone_rtld_init_runtime(epm, epm_vaddr, rt_ptr, rt_sz, &rt_offset)) {
+  if(keystone_rtld_init_runtime(epm, epm_vaddr, rt_ptr, rt_sz, rt_stack_sz, &rt_offset)) {
     keystone_err("failed to initialize runtime");
   }
 

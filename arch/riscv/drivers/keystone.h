@@ -58,7 +58,7 @@ int keystone_create_enclave(unsigned long arg);
 int keystone_destroy_enclave(unsigned long arg);
 
 // runtime loader
-int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long* rt_offset);
+int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset);
 
 // elf loading
 int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len);
