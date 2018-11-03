@@ -1,12 +1,3 @@
-#include <asm/sbi.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/fs.h>
-#include <linux/miscdevice.h>
-
 //#include <asm/io.h>
 //#include <asm/page.h>
 #include "keystone.h"
@@ -28,89 +19,6 @@ static struct miscdevice keystone_dev = {
   .fops = &keystone_fops,
   .mode = 0666,
 };
-
-int keystone_create_enclave(unsigned long arg)
-{
-  int ret;
-  epm_t* epm;
-  struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
-  unsigned long code_size = enclp->code_size;
-  unsigned long ptr = enclp->ptr;
-  unsigned long rt_offset;
-  unsigned long epm_vaddr, epm_paddr;
-  unsigned long encl_stack_size = PAGE_UP(enclp->mem_size);
-  // TODO: Do we want to require that requests are page sized?
-  unsigned long req_pages = ((enclp->mem_size + enclp->code_size) / PAGE_SIZE);
-  // Must allocate 3(enclave) + 2(runtime) pages for pg tables
-  // Plus pages requested
-  // rounded up to order of 2
-  unsigned long min_pages = req_pages + 16;
-  int order = ilog2(min_pages) + 1;
-  int count = 0x1 << order;
-  unsigned long vaddr;
-  
-  //pr_info("EPM pages allocated: %d\n", count);
-  epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
-
-  if(!epm_vaddr){
-    ret = -ENOMEM;
-    pr_err("keystone_create_enclave: Cannot get contiguous memory for enclave. (Tried order %ul)\n", order);
-    return ret;
-  }
-  memset(epm_vaddr, 0, PAGE_SIZE*count);
-  epm_paddr = __pa(epm_vaddr);
-  ret = -ENOMEM;
-  epm = kmalloc(sizeof(epm_t), GFP_KERNEL);
-  if(!epm)
-    return ret;
-  
-  epm_init(epm, epm_vaddr, count);
-
-  /* initialize runtime */
-  keystone_rtld_init_runtime(epm, epm_vaddr, &rt_offset);
-
-  /* initialize enclave */
-
-  /* setup enclave's stack */
-
-  for(vaddr = rt_offset - encl_stack_size; vaddr < rt_offset; vaddr+= PAGE_SIZE)
-  {
-    epm_alloc_user_page_noexec(epm, vaddr);
-  }
-  //pr_info("keystone enclave stack size: %d\n",encl_stack_size);
-
-  // TODO fix code_size so that its smaller, more accurate. right now its the whole elf
-  
-  ret = keystone_app_load_elf(epm, ptr, code_size);
-  if( ret != 0){
-    goto error_free_epm;
-  }
-  //  debug_dump(epm_vaddr, PAGE_SIZE*count);
-
-  struct keystone_sbi_create_t create_args;
-  create_args.epm_region.paddr = epm_paddr;
-  create_args.epm_region.size = PAGE_SIZE*count;
-  create_args.copy_region.paddr = 0;
-  create_args.copy_region.size = 0;
-  create_args.eid_pptr =  __pa(&enclp->eid);
-
-  ret = SBI_CALL_1(SBI_SM_CREATE_ENCLAVE, __pa(&create_args));
-  if (ret)
-  {
-    pr_err("keystone_create_enclave: SBI call failed\n");
-    goto error_free_epm;
-  }
-  //pr_info("keystone_create_enclave: eid = %lld, page order = %lu, epm_v = 0x%lx,  epm_p = 0x%lx\n", enclp->eid, order, epm_vaddr, epm_paddr );
-
-  kfree(epm);
-  return 0;
-
-error_free_epm:
-  kfree(epm);
-  free_pages(epm_vaddr, order);
-  return ret;
-}
-
 int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len){ 
   unsigned long va;
   unsigned long encl_page;
@@ -146,24 +54,20 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
   error = -EFAULT;
   
   // TODO safety checks based on len
-
   if(copy_from_user(&elf_ex, (void*)elf_usr_ptr, sizeof(struct elfhdr)) != 0){
     goto out;
   }
-
 
   // check ELF header
   if(memcmp(elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
     goto out;
 
-  
   // Sanity check on elf type that its been linked as EXEC
   if(elf_ex.e_type != ET_EXEC || !elf_check_arch(&elf_ex))
     goto out;
 
-
   // Get each elf_phdr in order and deal with it
-  next_usr_phoff = (void*)elf_usr_ptr + elf_ex.e_phoff;
+  next_usr_phoff = (void*) elf_usr_ptr + elf_ex.e_phoff;
   for(i=0; i<elf_ex.e_phnum; i++, next_usr_phoff++) {
 
     // Copy next phdr
@@ -182,7 +86,6 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
     size = eppnt.p_filesz;
     //pr_info("loading vaddr: %x, sz:%i\n",vaddr,size);
 
-
     retval = keystone_app_load_elf_region(epm,
 					  elf_usr_ptr + eppnt.p_offset,
 					  (void*)vaddr,
@@ -191,7 +94,6 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
       error = retval;
       break;
     }
-
   }
 
   error = 0;
@@ -200,70 +102,6 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
     return error;
   
 }
-
-int keystone_destroy_enclave(unsigned long arg)
-{
-  int ret;
-  struct keystone_ioctl_enclave_id *enclp = (struct keystone_ioctl_enclave_id*) arg;
-  ret = SBI_CALL_1(SBI_SM_DESTROY_ENCLAVE, enclp->eid);
-  if(ret)
-    return ret;
-
-  return 0;
-}
-
-int keystone_run_enclave(unsigned long arg)
-{
-  int ret = 0;
-  struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
-
-  struct keystone_sbi_run_t run_args;
-  run_args.eid = run->eid;
-  run_args.entry_ptr = run->ptr;
-  run_args.ret_ptr = __pa(&run->ret);
-  
-  ret = SBI_CALL_1(SBI_SM_RUN_ENCLAVE, __pa(&run_args));
-  while(ret == 2)
-  {
-    ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, run->eid);
-  }
-  return ret;
-}
-
-long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
-{
-  long ret;
-  char data[256];
-
-  //pr_info("keystone_enclave: keystone_ioctl() command = %d\n",cmd);
-
-  if(!arg)
-    return -EINVAL;
-  
-  if(copy_from_user(data, (void __user*) arg, _IOC_SIZE(cmd)))
-    return -EFAULT;
-
-  switch(cmd)
-  {
-    case KEYSTONE_IOC_CREATE_ENCLAVE:
-      ret = keystone_create_enclave((unsigned long) data);
-      break;
-    case KEYSTONE_IOC_DESTROY_ENCLAVE:
-      ret = keystone_destroy_enclave((unsigned long) data);
-      break;
-    case KEYSTONE_IOC_RUN_ENCLAVE:
-      ret = keystone_run_enclave((unsigned long) data);
-      break;
-    default:
-      return -ENOSYS;
-  }
-
-  if(copy_to_user((void __user*) arg, data, _IOC_SIZE(cmd)))
-    return -EFAULT;
-  
-  return ret;
-}
-
 static int __init keystone_dev_init(void)
 {
   int  ret;
