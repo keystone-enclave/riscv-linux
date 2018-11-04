@@ -9,7 +9,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
-
+#include <linux/idr.h>
 
 #include <linux/file.h>
 #include "keystone-page.h"
@@ -43,12 +43,11 @@
 
 long keystone_ioctl(struct file* filep, unsigned int cmd, unsigned long arg);
 
-struct keystone_enclave_t 
+typedef struct keystone_enclave_t 
 {
-  int eid;
-  uintptr_t epm_ptr;
-  uintptr_t epm_sz;
-};
+  unsigned int eid;
+  struct epm_t* epm;
+} enclave_t;
 
 // global debug functions
 void debug_dump(char* ptr, unsigned long size);
@@ -58,12 +57,29 @@ int keystone_create_enclave(unsigned long arg);
 int keystone_destroy_enclave(unsigned long arg);
 
 // runtime loader
-int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset);
+int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset);
 
+int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset);
 // elf loading
 int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len);
 int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len);
 
+enclave_t* get_enclave_by_id(unsigned int ueid);
+enclave_t* create_enclave(unsigned long min_pages);
+int destroy_enclave(enclave_t* enclave);
+
+unsigned int enclave_idr_alloc(enclave_t* enclave);
+enclave_t* enclave_idr_remove(unsigned int ueid);
+enclave_t* get_enclave_by_id(unsigned int ueid);
+
+unsigned long calculate_required_pages(
+    unsigned long eapp_sz,
+    unsigned long eapp_stack_sz,
+    unsigned long rt_sz,
+    unsigned long rt_stack_sz);
+
+#define keystone_info(fmt, ...) \
+  pr_info("keystone_enclave: " fmt, ##__VA_ARGS__)
 #define keystone_err(fmt, ...) \
   pr_err("keystone_enclave: " fmt, ##__VA_ARGS__)
 #define keystone_warn(fmt, ...) \

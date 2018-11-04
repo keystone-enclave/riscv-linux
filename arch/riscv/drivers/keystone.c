@@ -105,12 +105,13 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
 static int __init keystone_dev_init(void)
 {
   int  ret;
-  pr_info("keystone_enclave: " DRV_DESCRIPTION " v" DRV_VERSION "\n"); 
+
   ret = misc_register(&keystone_dev);
   if (ret < 0)
   {
     pr_err("keystone_enclave: misc_register() failed\n"); 
   }
+  pr_info("keystone_enclave: " DRV_DESCRIPTION " v" DRV_VERSION "\n"); 
   return ret;
 }
 
