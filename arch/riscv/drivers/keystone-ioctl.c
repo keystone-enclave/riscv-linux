@@ -96,8 +96,6 @@ int keystone_run_enclave(unsigned long arg)
   run_args.eid = enclave->eid;
   run_args.entry_ptr = run->entry;
   run_args.ret_ptr = __pa(&run->ret);
-
-  keystone_info("enclave_ptr: 0x%lx, eid: %d, ueid: %d\n", enclave, enclave->eid, run->eid);
   
   ret = SBI_CALL_1(SBI_SM_RUN_ENCLAVE, __pa(&run_args));
   while(ret == 2)
