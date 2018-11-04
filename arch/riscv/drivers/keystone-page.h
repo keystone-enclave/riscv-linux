@@ -19,6 +19,8 @@ typedef struct epm_t {
   struct pg_list_t freelist;
   pte_t* root_page_table;
   vaddr_t base;
+  paddr_t pa;
+  unsigned long order;
   unsigned int total;
 } epm_t;
 
@@ -36,57 +38,5 @@ vaddr_t epm_alloc_rt_page_noexec(epm_t* epm, vaddr_t addr);
 vaddr_t epm_alloc_user_page(epm_t* epm, vaddr_t addr);
 vaddr_t epm_alloc_user_page_noexec(epm_t* epm, vaddr_t addr);
 void epm_free_page(epm_t* epm, vaddr_t addr);
-//pfn_t epm_alloc_pages(epm_t* epm, va_t va, int order);
-
-//// TODO: put below code to a separate file e.g., mm.h
-
-#define MAX_STACK_SIZE  8192 // 8KB
-/* - start_vm and end_vm are for validating enclave vm.
- * U-mode enclave cannot access beyond these pointers.
- * - hooks are copied below .text section
- * - the stack cannot grow larger than MAX_STACK_SIZE
- * - brk can grow as large as possible, but cannot grow beyond stack_top
- * - each segment is aligned with RISCV_PGSIZE
- * - user permissions
- *   .text: RX
- *   .data: R
- *   .bss : RW
- *   brk: RW
- *   stack: RW
- *   hooks: RX
- * +-------+
- * | hooks |
- * +-------+ 
- * |       |
- *    ...    <-- somewhere in the middle: PAGE_OFFSET
- * |       |
- * +-------+ <-- end_vm (0x
- * | Stack |
- * +-------+ <-- stack_top
- * |       |
- * +-------+ <-- brk
- * | Heap  |
- * +-------+ <-- start_brk
- * | .bss  |
- * +-------+ <-- bss
- * | .data |
- * +-------+ <-- data
- * | .text |
- * +-------+ <-- text (usually entry point)
- * |       |
- * +-------+ <-- start_vm (usually 0x0)
- */
-typedef struct encl_mm_t {
-  unsigned long start_vm, end_vm;
-  unsigned long text, end_text;
-  unsigned long data, end_data;
-  unsigned long bss, end_bss;
-  unsigned long stack_top;
-  unsigned long brk, start_brk;
-} encl_mm_t;
-
-void encl_mm_init(encl_mm_t* mm);
-int encl_mm_set_stack(encl_mm_t* mm, unsigned int size);
-// int mm_sbrk(mm_t* mm, unsigned int size);
 
 #endif
