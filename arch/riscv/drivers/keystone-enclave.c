@@ -90,8 +90,6 @@ unsigned int enclave_idr_alloc(enclave_t* enclave)
   ueid = idr_alloc(&idr_enclave, enclave, ENCLAVE_IDR_MIN, ENCLAVE_IDR_MAX, GFP_KERNEL);
   spin_unlock_bh(&idr_enclave_lock);
   
-  keystone_info("enclave_ptr: 0x%lx, eid: %d, ueid: %d\n", enclave, enclave->eid, ueid);
- 
   if (ueid < ENCLAVE_IDR_MIN || ueid >= ENCLAVE_IDR_MAX) {
     keystone_err("failed to allocate UID\n");
     return 0;
