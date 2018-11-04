@@ -63,7 +63,7 @@ void epm_init(epm_t* epm, vaddr_t base, unsigned int count)
   //pr_info("epm_init\n");
   init_free_pages(&epm->freelist, base, count); 
   epm->base = base;
-  epm->total = count; 
+  epm->total = count * PAGE_SIZE; 
 
   t = (pte_t*) get_free_page(&epm->freelist);
   epm->root_page_table = t;

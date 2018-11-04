@@ -92,14 +92,37 @@ vaddr_t rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   }
 } 
 
-int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset)
+int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset)
 {
+  unsigned long vaddr;
+  int ret;
+  epm_t* epm;
+  epm = enclave->epm;
+
+  /* setup enclave stack */
+  for (vaddr = stack_offset - PAGE_UP(app_stack_sz); 
+      vaddr < stack_offset; 
+      vaddr += PAGE_SIZE) {
+    epm_alloc_user_page_noexec(epm, vaddr);
+  }
+
+  // TODO fix eapp_sz so that its smaller, more accurate. right now its the whole elf
+  if (ret = keystone_app_load_elf(epm, app_ptr, app_sz)) {
+    return ret;
+  }
+}
+
+int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset)
+{
+  epm_t* epm;
   int retval, error, i, j;
   int total_size;
   struct elf_phdr *elf_phdata;
   struct elf_phdr *eppnt;
   struct elfhdr elf_ex;
   *rt_offset = -1UL;
+
+  epm = enclave->epm;
 
   error = -ENOEXEC;
   if(copy_from_user(&elf_ex, rt_ptr, sizeof(struct elfhdr)) != 0){
@@ -154,7 +177,7 @@ int keystone_rtld_init_runtime(epm_t* epm, unsigned long epm_vaddr, void* __user
     rtld_vm_mmap(epm, vaddr, size, rt_ptr, eppnt);
   }
 
-  rtld_setup_stack(epm, -1UL, rt_stack_sz);
+  rtld_setup_stack(epm, -1UL, PAGE_UP(rt_stack_sz));
 
   error = 0;
 out_free_ph:
