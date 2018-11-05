@@ -13,7 +13,7 @@ struct free_page_t {
   struct list_head freelist;
 };
 
-//enclave private memory;
+/* enclave private memory */
 typedef struct epm_t {
   struct list_head epm_free_list;
   pte_t* root_page_table;

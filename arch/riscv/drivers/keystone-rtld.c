@@ -92,6 +92,91 @@ vaddr_t rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   }
 } 
 
+int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len){ 
+  unsigned long va;
+  unsigned long encl_page;
+  int k, ret = 0;
+  size_t copy_size;
+  for(va=target_vaddr, k=0; va < target_vaddr+len; va += PAGE_SIZE, k++){
+
+    encl_page = epm_alloc_user_page(epm, va);
+
+    copy_size = (k+1)*PAGE_SIZE > len ? len%PAGE_SIZE : PAGE_SIZE;
+    //pr_info("Copy elf page to:%x, from: %x, sz:%i\n",
+    //	    encl_page, elf_usr_region + (k * PAGE_SIZE), copy_size);
+    // TODO zero out the other part of the last page
+    if(copy_from_user((void*) encl_page,
+		      (void*) elf_usr_region + (k * PAGE_SIZE),
+		      copy_size )){;
+      ret = -EFAULT;
+      break;
+    }
+  }
+ 
+  return ret;
+}
+
+int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
+  int retval, error, i;
+  struct elf_phdr eppnt;
+  struct elfhdr elf_ex;
+  struct elf_phdr* next_usr_phoff;
+  unsigned long vaddr;
+  unsigned long size = 0;
+  
+  error = -EFAULT;
+  
+  // TODO safety checks based on len
+  if(copy_from_user(&elf_ex, (void*)elf_usr_ptr, sizeof(struct elfhdr)) != 0){
+    goto out;
+  }
+
+  // check ELF header
+  if(memcmp(elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
+    goto out;
+
+  // Sanity check on elf type that its been linked as EXEC
+  if(elf_ex.e_type != ET_EXEC || !elf_check_arch(&elf_ex))
+    goto out;
+
+  // Get each elf_phdr in order and deal with it
+  next_usr_phoff = (void*) elf_usr_ptr + elf_ex.e_phoff;
+  for(i=0; i<elf_ex.e_phnum; i++, next_usr_phoff++) {
+
+    // Copy next phdr
+    if(copy_from_user(&eppnt, (void*)next_usr_phoff, sizeof(struct elf_phdr)) != 0){
+      //bad
+      continue;
+    }
+
+    // Create and copy
+    if(eppnt.p_type != PT_LOAD) {
+      pr_warn("keystone runtime includes an inconsistent program header\n");
+      continue;
+    }
+    vaddr = eppnt.p_vaddr;
+    //vaddr sanity check?
+    size = eppnt.p_filesz;
+    //pr_info("loading vaddr: %x, sz:%i\n",vaddr,size);
+
+    retval = keystone_app_load_elf_region(epm,
+					  elf_usr_ptr + eppnt.p_offset,
+					  (void*)vaddr,
+					  size);
+    if(retval != 0){
+      error = retval;
+      break;
+    }
+  }
+
+  error = 0;
+
+  out:
+    return error;
+  
+}
+
+
 int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset)
 {
   unsigned long vaddr;
@@ -184,4 +269,9 @@ out_free_ph:
   kfree(elf_phdata);
 out:
   return error;
+}
+
+int keystone_rtld_init_untrusted(enclave_t* enclave, struct ut_mmap_info* utm) 
+{
+
 }
