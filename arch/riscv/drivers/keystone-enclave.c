@@ -71,6 +71,7 @@ enclave_t* create_enclave(unsigned long min_pages)
     goto error_free_enclave;
   }
  
+  INIT_LIST_HEAD(&epm->epm_free_list);
   epm->pa = __pa(epm_vaddr);
   epm->order = order;
   epm_init(epm, epm_vaddr, count);
