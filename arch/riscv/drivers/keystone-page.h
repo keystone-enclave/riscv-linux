@@ -3,20 +3,19 @@
 
 /* IMPORTANT: This code assumes Sv39 */
 #include "riscv64.h"
+#include <linux/fs.h>
 
 typedef unsigned long vaddr_t;
 typedef unsigned long paddr_t;
 
-typedef struct pg_list_t
-{
-  vaddr_t head;
-  vaddr_t tail;
-  unsigned int count;
-} pg_list_t;
+struct free_page_t {
+  vaddr_t vaddr;
+  struct list_head freelist;
+};
 
 //enclave private memory;
 typedef struct epm_t {
-  struct pg_list_t freelist;
+  struct list_head epm_free_list;
   pte_t* root_page_table;
   vaddr_t base;
   paddr_t pa;
@@ -27,9 +26,9 @@ typedef struct epm_t {
 static inline uintptr_t  epm_satp(epm_t* epm) {
   return ((uintptr_t)epm->root_page_table >> RISCV_PGSHIFT | SATP_MODE_CHOICE);
 }
-void init_free_pages(pg_list_t* pg_list, vaddr_t base, unsigned int count);
-void put_free_page(pg_list_t* pg_list, vaddr_t page_addr);
-vaddr_t get_free_page(pg_list_t* pg_list);
+void init_free_pages(struct list_head* pg_list, vaddr_t base, unsigned int count);
+void put_free_page(struct list_head* pg_list, vaddr_t page_addr);
+vaddr_t get_free_page(struct list_head* pg_list);
 
 void epm_init(epm_t* epm, vaddr_t base, unsigned int count);
 
