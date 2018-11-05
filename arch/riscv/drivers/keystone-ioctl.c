@@ -4,7 +4,7 @@
 #include "keystone_user.h"
 #include <linux/uaccess.h>
 
-int keystone_create_enclave(unsigned long arg)
+int keystone_create_enclave(struct file* filp, unsigned long arg)
 {
   int ret;
   
@@ -16,18 +16,21 @@ int keystone_create_enclave(unsigned long arg)
   unsigned long rt_ptr = enclp->runtime_ptr;
   unsigned long rt_sz = enclp->runtime_sz;
   unsigned long rt_stack_sz = enclp->runtime_stack_sz;
-
+  unsigned long ut_sz = enclp->untrusted_sz;
+  struct keystone_sbi_create_t create_args;
   /* enclave data*/
   enclave_t* enclave;
 
   /* local variables */
   unsigned long rt_offset;
   unsigned long min_pages = calculate_required_pages(eapp_sz, eapp_stack_sz, rt_sz, rt_stack_sz);
-
+  struct utm_t* utm;
+  
   enclave = create_enclave(min_pages);
   if(enclave == NULL)
     return -ENOMEM;
 
+  ret = -EFAULT;
   /* initialize runtime */
   if (keystone_rtld_init_runtime(enclave, rt_ptr, rt_sz, rt_stack_sz, &rt_offset)) {
     keystone_err("failed to initialize runtime\n");
@@ -39,19 +42,44 @@ int keystone_create_enclave(unsigned long arg)
     goto error_free_enclave;
   }
 
-  struct keystone_sbi_create_t create_args;
+
+   if (ut_sz == 0)
+    return 0;
+
+  /* Untrusted Memory */
+  // TODO support larger size than PAGE_SIZE
+  if (ut_sz > PAGE_SIZE) {
+    keystone_info("untrusted memory larger than 4KB not implemented. truncating to 4KB\n");
+    ut_sz = PAGE_SIZE; 
+  }
+  utm = kmalloc(sizeof(struct utm_t), GFP_KERNEL);
+  if (!utm) {
+    ret = -ENOMEM;
+    goto error_free_enclave;
+  }
+
+  utm->ptr = get_zeroed_page(GFP_HIGHUSER);
+  if(!utm->ptr) {
+    ret = -ENOMEM;
+    goto error_free_utm;
+  }
+
+  utm->size = PAGE_SIZE;
+  filp->private_data = utm;
+  enclave->utm = utm; 
+
+  /* SBI Call */
   create_args.epm_region.paddr = enclave->epm->pa;
   create_args.epm_region.size = enclave->epm->total;
-  create_args.copy_region.paddr = 0;
-  create_args.copy_region.size = 0;
+  create_args.copy_region.paddr = __pa(utm->ptr);
+  create_args.copy_region.size = utm->size;
   // SM will write the eid to enclave_t.eid
   create_args.eid_pptr =  __pa(&enclave->eid);
-
   ret = SBI_CALL_1(SBI_SM_CREATE_ENCLAVE, __pa(&create_args));
   if (ret)
   {
     keystone_err("keystone_create_enclave: SBI call failed\n");
-    goto error_free_enclave;
+    goto error_free_utm;
   }
 
   /* allocate UID */
@@ -59,12 +87,15 @@ int keystone_create_enclave(unsigned long arg)
   
   return 0;
 
+error_free_utm:
+  kfree(utm);
+
 error_free_enclave:
   destroy_enclave(enclave);
   return -EFAULT;
 }
 
-int keystone_destroy_enclave(unsigned long arg)
+int keystone_destroy_enclave(struct file* filp, unsigned long arg)
 {
   int ret;
   struct keystone_ioctl_create_enclave *enclp = (struct keystone_ioctl_create_enclave*) arg;
@@ -84,15 +115,15 @@ int keystone_destroy_enclave(unsigned long arg)
   return 0;
 }
 
-int keystone_run_enclave(unsigned long arg)
+int keystone_run_enclave(struct file* filp, unsigned long arg)
 {
   int ret = 0;
   struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
   unsigned long ueid = run->eid;
+  struct keystone_sbi_run_t run_args;
   enclave_t* enclave;
   enclave = get_enclave_by_id(ueid);
 
-  struct keystone_sbi_run_t run_args;
   run_args.eid = enclave->eid;
   run_args.entry_ptr = run->entry;
   run_args.ret_ptr = __pa(&run->ret);
@@ -121,13 +152,13 @@ long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
   switch(cmd)
   {
     case KEYSTONE_IOC_CREATE_ENCLAVE:
-      ret = keystone_create_enclave((unsigned long) data);
+      ret = keystone_create_enclave(filep, (unsigned long) data);
       break;
     case KEYSTONE_IOC_DESTROY_ENCLAVE:
-      ret = keystone_destroy_enclave((unsigned long) data);
+      ret = keystone_destroy_enclave(filep, (unsigned long) data);
       break;
     case KEYSTONE_IOC_RUN_ENCLAVE:
-      ret = keystone_run_enclave((unsigned long) data);
+      ret = keystone_run_enclave(filep, (unsigned long) data);
       break;
     default:
       return -ENOSYS;

@@ -42,27 +42,28 @@
 #define SBI_CALL_6(which, arg0, arg1, arg2, arg3, arg4, arg5) _SBI_CALL(which, arg0, arg1, arg2, arg3, arg4, arg5)
 
 long keystone_ioctl(struct file* filep, unsigned int cmd, unsigned long arg);
+int keystone_mmap(struct file *filp, struct vm_area_struct *vma);
 
 typedef struct keystone_enclave_t 
 {
   unsigned int eid;
+  struct utm_t* utm;
   struct epm_t* epm;
 } enclave_t;
+
+struct utm_t {
+  void* ptr;
+  size_t size;
+};
+
 
 // global debug functions
 void debug_dump(char* ptr, unsigned long size);
 
-// keystone enclave functions
-int keystone_create_enclave(unsigned long arg); 
-int keystone_destroy_enclave(unsigned long arg);
-
-// runtime loader
+// runtime/app loader
 int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset);
 
 int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset);
-// elf loading
-int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len);
-int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len);
 
 enclave_t* get_enclave_by_id(unsigned int ueid);
 enclave_t* create_enclave(unsigned long min_pages);
