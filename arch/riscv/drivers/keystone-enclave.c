@@ -21,7 +21,7 @@ unsigned long calculate_required_pages(
 
   // FIXME: calculate the required number of pages for the page table.
   // For now, we must allocate at least 1 (top) + 2 (enclave) + 2 (runtime) pages for pg tables
-  req_pages += 5;
+  req_pages += 15;
   return req_pages;
 }
 

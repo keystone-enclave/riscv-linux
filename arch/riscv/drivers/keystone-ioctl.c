@@ -43,7 +43,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   }
 
 
-   if (ut_sz == 0)
+  o if (ut_sz == 0)
     return 0;
 
   /* Untrusted Memory */
@@ -65,8 +65,14 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   }
 
   utm->size = PAGE_SIZE;
+  utm_init(utm);
   filp->private_data = utm;
   enclave->utm = utm; 
+
+  if (keystone_rtld_init_untrusted(enclave)) {
+    keystone_err("failed to initialize untrusted memory\n");
+    goto error_free_utm;
+  }
 
   /* SBI Call */
   create_args.epm_region.paddr = enclave->epm->pa;
