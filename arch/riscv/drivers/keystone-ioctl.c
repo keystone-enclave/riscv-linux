@@ -129,10 +129,19 @@ int keystone_run_enclave(struct file* filp, unsigned long arg)
   run_args.ret_ptr = __pa(&run->ret);
   
   ret = SBI_CALL_1(SBI_SM_RUN_ENCLAVE, __pa(&run_args));
-  while(ret == 2)
-  {
-    ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, run_args.eid);
-  }
+
+  return ret;
+}
+
+int keystone_resume_enclave(struct file* filp, unsigned long arg)
+{
+  int ret = 0;
+  struct keystone_ioctl_run_enclave *resume = (struct keystone_ioctl_run_enclave*) arg;
+  unsigned long ueid = resume->eid;
+  enclave_t* enclave;
+  enclave = get_enclave_by_id(ueid);
+  ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, enclave->eid);
+  
   return ret;
 }
 
@@ -159,6 +168,9 @@ long keystone_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
       break;
     case KEYSTONE_IOC_RUN_ENCLAVE:
       ret = keystone_run_enclave(filep, (unsigned long) data);
+      break;
+    case KEYSTONE_IOC_RESUME_ENCLAVE:
+      ret = keystone_resume_enclave(filep, (unsigned long) data);
       break;
     default:
       return -ENOSYS;
