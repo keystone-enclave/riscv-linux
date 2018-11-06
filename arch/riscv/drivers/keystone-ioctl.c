@@ -43,7 +43,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   }
 
 
-  o if (ut_sz == 0)
+  if (ut_sz == 0)
     return 0;
 
   /* Untrusted Memory */
