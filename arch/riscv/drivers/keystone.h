@@ -20,6 +20,9 @@
 #define SBI_SM_STOP_ENCLAVE     106
 #define SBI_SM_RESUME_ENCLAVE   107
 
+/* error codes: need to add more */
+#define ENCLAVE_INTERRUPTED     2
+
 /* don't want to taint asm/sbi.h, so just copied SBI_CALL and increased # args */
 #define _SBI_CALL(which, arg0, arg1, arg2, arg3, arg4, arg5) ({			\
 	register uintptr_t a0 asm ("a0") = (uintptr_t)(arg0);	\

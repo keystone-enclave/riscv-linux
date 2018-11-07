@@ -77,8 +77,11 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   /* SBI Call */
   create_args.epm_region.paddr = enclave->epm->pa;
   create_args.epm_region.size = enclave->epm->total;
-  create_args.copy_region.paddr = __pa(utm->ptr);
-  create_args.copy_region.size = utm->size;
+  create_args.utm_region.paddr = __pa(utm->ptr);
+  create_args.utm_region.size = utm->size;
+  create_args.enclave_entry = enclp->eapp_entry;
+  create_args.runtime_entry = enclp->runtime_entry;
+
   // SM will write the eid to enclave_t.eid
   create_args.eid_pptr =  __pa(&enclave->eid);
   ret = SBI_CALL_1(SBI_SM_CREATE_ENCLAVE, __pa(&create_args));
@@ -126,15 +129,15 @@ int keystone_run_enclave(struct file* filp, unsigned long arg)
   int ret = 0;
   struct keystone_ioctl_run_enclave *run = (struct keystone_ioctl_run_enclave*) arg;
   unsigned long ueid = run->eid;
-  struct keystone_sbi_run_t run_args;
   enclave_t* enclave;
   enclave = get_enclave_by_id(ueid);
-
-  run_args.eid = enclave->eid;
-  run_args.entry_ptr = run->entry;
-  run_args.ret_ptr = __pa(&run->ret);
   
-  ret = SBI_CALL_1(SBI_SM_RUN_ENCLAVE, __pa(&run_args));
+  ret = SBI_CALL_1(SBI_SM_RUN_ENCLAVE, enclave->eid);
+  /* if the enclave is timer-interrupted, just resume the enclave */
+  while(ret == ENCLAVE_INTERRUPTED)
+  {
+    ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, enclave->eid);
+  }
 
   return ret;
 }
@@ -146,8 +149,13 @@ int keystone_resume_enclave(struct file* filp, unsigned long arg)
   unsigned long ueid = resume->eid;
   enclave_t* enclave;
   enclave = get_enclave_by_id(ueid);
-  ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, enclave->eid);
   
+  ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, enclave->eid);
+  while(ret == ENCLAVE_INTERRUPTED)
+  {
+    ret = SBI_CALL_1(SBI_SM_RESUME_ENCLAVE, enclave->eid);
+  }
+
   return ret;
 }
 
