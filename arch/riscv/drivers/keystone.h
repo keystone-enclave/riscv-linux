@@ -20,6 +20,9 @@
 #define SBI_SM_STOP_ENCLAVE     106
 #define SBI_SM_RESUME_ENCLAVE   107
 
+/* error codes: need to add more */
+#define ENCLAVE_INTERRUPTED     2
+
 /* don't want to taint asm/sbi.h, so just copied SBI_CALL and increased # args */
 #define _SBI_CALL(which, arg0, arg1, arg2, arg3, arg4, arg5) ({			\
 	register uintptr_t a0 asm ("a0") = (uintptr_t)(arg0);	\
@@ -51,11 +54,6 @@ typedef struct keystone_enclave_t
   struct epm_t* epm;
 } enclave_t;
 
-struct utm_t {
-  void* ptr;
-  size_t size;
-};
-
 
 // global debug functions
 void debug_dump(char* ptr, unsigned long size);
@@ -64,6 +62,9 @@ void debug_dump(char* ptr, unsigned long size);
 int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset);
 
 int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset);
+
+// untrusted memory mapper
+int keystone_rtld_init_untrusted(enclave_t* enclave);
 
 enclave_t* get_enclave_by_id(unsigned int ueid);
 enclave_t* create_enclave(unsigned long min_pages);
