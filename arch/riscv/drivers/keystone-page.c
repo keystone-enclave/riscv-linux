@@ -54,6 +54,12 @@ void epm_init(epm_t* epm, vaddr_t base, unsigned int count)
   return;
 }
 
+void utm_init(utm_t* utm)
+{
+  INIT_LIST_HEAD(&utm->utm_free_list);
+  init_free_pages(&utm->utm_free_list, utm->ptr, utm->size/PAGE_SIZE);
+}
+
 static paddr_t pte_ppn(pte_t pte)
 {
   return pte_val(pte) >> PTE_PPN_SHIFT;
@@ -112,6 +118,14 @@ static int __ept_va_avail(epm_t* epm, vaddr_t vaddr)
   return pte == 0 || pte_val(*pte) == 0;
 }
 */
+
+vaddr_t utm_alloc_page(utm_t* utm, epm_t* epm, vaddr_t addr, unsigned long flags)
+{
+  pte_t* pte = __ept_walk_create(&epm->epm_free_list, epm->root_page_table, addr);
+  vaddr_t page_addr = get_free_page(&utm->utm_free_list);
+  *pte = pte_create(ppn(page_addr), flags | PTE_V);
+  return page_addr;
+}
 
 vaddr_t epm_alloc_page(epm_t* epm, vaddr_t addr, unsigned long flags)
 {
