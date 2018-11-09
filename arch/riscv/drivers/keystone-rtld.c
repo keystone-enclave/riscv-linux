@@ -275,6 +275,6 @@ int keystone_rtld_init_untrusted(enclave_t* enclave)
 {
   /* FIXME: statically determined pointer */
   vaddr_t vaddr = 0x0dead000;
-  utm_alloc_page(enclave->utm, enclave->epm, vaddr, PTE_U | PTE_D | PTE_A | PTE_R | PTE_W);
+  utm_alloc_page(enclave->utm, enclave->epm, vaddr, PTE_D | PTE_A | PTE_R | PTE_W);
   return 0;
 }
