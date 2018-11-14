@@ -26,9 +26,10 @@ static struct miscdevice keystone_dev = {
 int keystone_mmap(struct file* filp, struct vm_area_struct *vma)
 {
   struct utm_t* utm;
+  unsigned long vsize, psize;
   utm = filp->private_data;
-  unsigned long vsize = vma->vm_end - vma->vm_start;
-  unsigned long psize = utm->size;
+  vsize = vma->vm_end - vma->vm_start;
+  psize = utm->size;
   if (vsize > psize)
     return -EINVAL;
 
