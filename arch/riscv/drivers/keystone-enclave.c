@@ -45,7 +45,7 @@ int destroy_enclave(enclave_t* enclave)
 
 enclave_t* create_enclave(unsigned long min_pages)
 {
-  unsigned long epm_vaddr, epm_paddr;
+  vaddr_t epm_vaddr;
   unsigned long order = ilog2(min_pages) + 1;
   unsigned long count = 0x1 << order;
   epm_t* epm;
@@ -58,12 +58,12 @@ enclave_t* create_enclave(unsigned long min_pages)
   /* allocate contiguous memory */
   epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
   if(!epm_vaddr) {
-    keystone_err("keystone_create_enclave(): failed to allocate %d page(s)\n", count);
+    keystone_err("keystone_create_enclave(): failed to allocate %lu page(s)\n", count);
     goto error_free_enclave;
   }
 
   /* initialize */
-  memset(epm_vaddr, 0, PAGE_SIZE*count);
+  memset((void*)epm_vaddr, 0, PAGE_SIZE*count);
 
   epm = kmalloc(sizeof(epm_t), GFP_KERNEL);
   if (!epm)

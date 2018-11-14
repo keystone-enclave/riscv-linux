@@ -57,7 +57,7 @@ void epm_init(epm_t* epm, vaddr_t base, unsigned int count)
 void utm_init(utm_t* utm)
 {
   INIT_LIST_HEAD(&utm->utm_free_list);
-  init_free_pages(&utm->utm_free_list, utm->ptr, utm->size/PAGE_SIZE);
+  init_free_pages(&utm->utm_free_list, (vaddr_t)utm->ptr, utm->size/PAGE_SIZE);
 }
 
 static paddr_t pte_ppn(pte_t pte)

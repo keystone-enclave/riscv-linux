@@ -11,13 +11,16 @@
 #include "keystone.h"
 #include "keystone-page.h"
 
+
 void debug_dump(char* ptr, unsigned long size)
 {
-  pr_info("debug memory dump from virtual address 0x%lx (%lu bytes)\n", ptr, size); 
-  int i, j;
+  int i;
   char buf[16];
   int allzeroline = 0;
   int lineiszero = 1;
+
+  pr_info("debug memory dump from virtual address %p (%lu bytes)\n", ptr, size);
+  
   for (i=0; i<size; i++) {
     buf[i%16] = ptr[i];
     if(ptr[i] != '\0') {
@@ -48,10 +51,10 @@ void debug_dump(char* ptr, unsigned long size)
   }
 }
 
-vaddr_t rtld_setup_stack(epm_t* epm, vaddr_t stack_addr, unsigned long size)
+void rtld_setup_stack(epm_t* epm, vaddr_t stack_addr, unsigned long size)
 {
   vaddr_t va_start = PAGE_DOWN(stack_addr - (size - 1));
-  vaddr_t va_end = PAGE_UP(stack_addr - 1);
+  //vaddr_t va_end = PAGE_UP(stack_addr - 1);
   vaddr_t va;
   int i;
 
@@ -66,10 +69,10 @@ vaddr_t rtld_setup_stack(epm_t* epm, vaddr_t stack_addr, unsigned long size)
 }
 
 
-vaddr_t rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
+void rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
    void* __user rt_ptr, struct elf_phdr* phdr)
 {
-  unsigned int k, retval;
+  unsigned int k;
   vaddr_t va_start = PAGE_DOWN(encl_addr);
   vaddr_t va_end = PAGE_UP(encl_addr + size);
   vaddr_t va;
@@ -79,11 +82,10 @@ vaddr_t rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   unsigned long pos = phdr->p_offset;
   for(va=va_start, k=0; va < va_end; va += PAGE_SIZE, k++)
   {
-    int i;
     vaddr_t epm_page;
     epm_page = epm_alloc_rt_page(epm, va);
     //pr_info("encl_mmap va: 0x%lx, target: 0x%lx\n", va, epm_page);
-    if(copy_from_user(epm_page, rt_ptr + pos, PAGE_SIZE)){
+    if(copy_from_user((void*)epm_page, rt_ptr + pos, PAGE_SIZE)){
       keystone_err("failed to copy runtime\n");
     }
     pos += PAGE_SIZE;
@@ -92,12 +94,13 @@ vaddr_t rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   }
 } 
 
-int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void* target_vaddr, size_t len){ 
-  unsigned long va;
-  unsigned long encl_page;
+int keystone_app_load_elf_region(epm_t* epm, void* __user elf_usr_region,
+				 void* target_vaddr, size_t len){ 
+  vaddr_t va;
+  vaddr_t encl_page;
   int k, ret = 0;
   size_t copy_size;
-  for(va=target_vaddr, k=0; va < target_vaddr+len; va += PAGE_SIZE, k++){
+  for(va=(uintptr_t)target_vaddr, k=0; va < (uintptr_t)target_vaddr+len; va += PAGE_SIZE, k++){
 
     encl_page = epm_alloc_user_page(epm, va);
 
@@ -106,7 +109,7 @@ int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void*
     //	    encl_page, elf_usr_region + (k * PAGE_SIZE), copy_size);
     // TODO zero out the other part of the last page
     if(copy_from_user((void*) encl_page,
-		      (void*) elf_usr_region + (k * PAGE_SIZE),
+		      elf_usr_region + (k * PAGE_SIZE),
 		      copy_size )){;
       ret = -EFAULT;
       break;
@@ -116,18 +119,18 @@ int keystone_app_load_elf_region(epm_t* epm, unsigned long elf_usr_region, void*
   return ret;
 }
 
-int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
+int keystone_app_load_elf(epm_t* epm, void* __user elf_usr_ptr, size_t len){
   int retval, error, i;
   struct elf_phdr eppnt;
   struct elfhdr elf_ex;
-  struct elf_phdr* next_usr_phoff;
+  struct elf_phdr* __user next_usr_phoff;
   unsigned long vaddr;
   unsigned long size = 0;
   
   error = -EFAULT;
   
   // TODO safety checks based on len
-  if(copy_from_user(&elf_ex, (void*)elf_usr_ptr, sizeof(struct elfhdr)) != 0){
+  if(copy_from_user(&elf_ex, elf_usr_ptr, sizeof(struct elfhdr)) != 0){
     goto out;
   }
 
@@ -140,7 +143,7 @@ int keystone_app_load_elf(epm_t* epm, unsigned long elf_usr_ptr, size_t len){
     goto out;
 
   // Get each elf_phdr in order and deal with it
-  next_usr_phoff = (void*) elf_usr_ptr + elf_ex.e_phoff;
+  next_usr_phoff = (struct elf_phdr* __user)((uintptr_t)elf_usr_ptr + elf_ex.e_phoff);
   for(i=0; i<elf_ex.e_phnum; i++, next_usr_phoff++) {
 
     // Copy next phdr
@@ -192,16 +195,14 @@ int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_
   }
 
   // TODO fix eapp_sz so that its smaller, more accurate. right now its the whole elf
-  if (ret = keystone_app_load_elf(epm, app_ptr, app_sz)) {
-    return ret;
-  }
+  ret = keystone_app_load_elf(epm, app_ptr, app_sz);
+  return ret;
 }
 
 int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset)
 {
   epm_t* epm;
   int retval, error, i, j;
-  int total_size;
   struct elf_phdr *elf_phdata;
   struct elf_phdr *eppnt;
   struct elfhdr elf_ex;
@@ -257,7 +258,7 @@ int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t r
     }
     size = eppnt->p_filesz;
     if(size > eppnt->p_memsz) {
-      pr_info("unexpected mismatch in elf program header: filesz %ld, memsz %ld\n", size, eppnt->p_memsz);
+      pr_info("unexpected mismatch in elf program header: filesz %ld, memsz %llu\n", size, eppnt->p_memsz);
     }
     rtld_vm_mmap(epm, vaddr, size, rt_ptr, eppnt);
   }
