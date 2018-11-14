@@ -4,6 +4,7 @@
 #include "keystone_user.h"
 #include <linux/uaccess.h>
 
+
 int keystone_create_enclave(struct file* filp, unsigned long arg)
 {
   int ret;
@@ -11,12 +12,12 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   /* create parameters */
   struct keystone_ioctl_create_enclave *enclp = (struct keystone_ioctl_create_enclave*) arg;
   unsigned long eapp_sz = enclp->eapp_sz;
-  unsigned long eapp_ptr = enclp->eapp_ptr;
-  unsigned long eapp_stack_sz = enclp->eapp_stack_sz;
-  unsigned long rt_ptr = enclp->runtime_ptr;
-  unsigned long rt_sz = enclp->runtime_sz;
-  unsigned long rt_stack_sz = enclp->runtime_stack_sz;
-  unsigned long ut_sz = enclp->untrusted_sz;
+  void* __user eapp_ptr = (void*)enclp->eapp_ptr;
+  size_t eapp_stack_sz = enclp->eapp_stack_sz;
+  void* __user rt_ptr = (void*)enclp->runtime_ptr;
+  size_t rt_sz = enclp->runtime_sz;
+  size_t rt_stack_sz = enclp->runtime_stack_sz;
+  size_t ut_sz = enclp->untrusted_sz;
   struct keystone_sbi_create_t create_args;
   /* enclave data*/
   enclave_t* enclave;
@@ -58,7 +59,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
     goto error_free_enclave;
   }
 
-  utm->ptr = get_zeroed_page(GFP_HIGHUSER);
+  utm->ptr = (void*)get_zeroed_page(GFP_HIGHUSER);
   if(!utm->ptr) {
     ret = -ENOMEM;
     goto error_free_utm;
@@ -83,7 +84,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   create_args.runtime_entry = enclp->runtime_entry;
 
   // SM will write the eid to enclave_t.eid
-  create_args.eid_pptr =  __pa(&enclave->eid);
+  create_args.eid_pptr =  (unsigned int*)__pa(&enclave->eid);
   ret = SBI_CALL_1(SBI_SM_CREATE_ENCLAVE, __pa(&create_args));
   if (ret)
   {

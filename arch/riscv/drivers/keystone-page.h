@@ -5,8 +5,8 @@
 #include "riscv64.h"
 #include <linux/fs.h>
 
-typedef unsigned long vaddr_t;
-typedef unsigned long paddr_t;
+typedef uintptr_t vaddr_t;
+typedef uintptr_t paddr_t;
 
 struct free_page_t {
   vaddr_t vaddr;
