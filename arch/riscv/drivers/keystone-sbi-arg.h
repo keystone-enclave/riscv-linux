@@ -1,6 +1,8 @@
 #ifndef _KEYSTONE_SBI_ARG_H_
 #define _KEYSTONE_SBI_ARG_H_
 
+#include "keystone_user.h"
+
 struct keystone_sbi_pregion_t
 {
   uintptr_t paddr;
@@ -13,9 +15,8 @@ struct keystone_sbi_create_t
   struct keystone_sbi_pregion_t epm_region;
   struct keystone_sbi_pregion_t utm_region;
 
-  // Configurations
-  uintptr_t enclave_entry;
-  uintptr_t runtime_entry;
+  // Parameters
+  struct runtime_params_t params;
 
   // Outputs from the creation process
   unsigned int* eid_pptr;

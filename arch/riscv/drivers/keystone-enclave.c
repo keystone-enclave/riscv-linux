@@ -25,7 +25,7 @@ unsigned long calculate_required_pages(
   return req_pages;
 }
 
-int destroy_enclave(enclave_t* enclave)
+int destroy_epm(enclave_t* enclave)
 {
   epm_t* epm;
   if (enclave == NULL)
@@ -43,7 +43,7 @@ int destroy_enclave(enclave_t* enclave)
   return 0;
 }
 
-enclave_t* create_enclave(unsigned long min_pages)
+enclave_t* create_epm(unsigned long min_pages)
 {
   vaddr_t epm_vaddr;
   unsigned long order = ilog2(min_pages) + 1;
@@ -58,7 +58,7 @@ enclave_t* create_enclave(unsigned long min_pages)
   /* allocate contiguous memory */
   epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
   if(!epm_vaddr) {
-    keystone_err("keystone_create_enclave(): failed to allocate %lu page(s)\n", count);
+    keystone_err("keystone_create_epm(): failed to allocate %lu page(s)\n", count);
     goto error_free_enclave;
   }
 

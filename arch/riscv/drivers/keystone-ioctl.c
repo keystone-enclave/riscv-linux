@@ -11,47 +11,59 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   
   /* create parameters */
   struct keystone_ioctl_create_enclave *enclp = (struct keystone_ioctl_create_enclave*) arg;
-  unsigned long eapp_sz = enclp->eapp_sz;
-  void* __user eapp_ptr = (void*)enclp->eapp_ptr;
-  size_t eapp_stack_sz = enclp->eapp_stack_sz;
-  void* __user rt_ptr = (void*)enclp->runtime_ptr;
-  size_t rt_sz = enclp->runtime_sz;
-  size_t rt_stack_sz = enclp->runtime_stack_sz;
-  size_t ut_sz = enclp->untrusted_sz;
+  
+  // User ELF
+  void* __user user_elf_ptr = (void*)enclp->user_elf_ptr;
+  size_t user_elf_size = enclp->user_elf_size;
+  size_t  user_stack_size = enclp->user_stack_size;
+
+  // Runtime ELF
+  void* __user runtime_elf_ptr = (void*)enclp->runtime_elf_ptr;
+  size_t  runtime_elf_size = enclp->runtime_elf_size;
+  size_t  runtime_stack_size = enclp->runtime_stack_size;
+
+  // Untrusted mmap size
+  size_t untrusted_size = enclp->params.untrusted_size;
+  
+  // runtime parameters
   struct keystone_sbi_create_t create_args;
-  /* enclave data*/
+
   enclave_t* enclave;
 
   /* local variables */
   unsigned long rt_offset;
-  unsigned long min_pages = calculate_required_pages(eapp_sz, eapp_stack_sz, rt_sz, rt_stack_sz);
+  unsigned long min_pages = calculate_required_pages(user_elf_size, user_stack_size, runtime_elf_size, runtime_stack_size);
   struct utm_t* utm;
   
-  enclave = create_enclave(min_pages);
+  /* argument validity */
+  if (untrusted_size < PAGE_SIZE)
+    return -EINVAL; // at least 1 page is required for passing runtime arguments
+
+  if (!user_elf_ptr || !runtime_elf_ptr || !user_elf_size || !runtime_elf_size)
+    return -EINVAL;
+
+  enclave = create_epm(min_pages);
   if(enclave == NULL)
     return -ENOMEM;
 
-  ret = -EFAULT;
   /* initialize runtime */
-  if (keystone_rtld_init_runtime(enclave, rt_ptr, rt_sz, rt_stack_sz, &rt_offset)) {
+  ret = -EFAULT;
+  if (keystone_rtld_init_runtime(enclave, runtime_elf_ptr, runtime_elf_size, runtime_stack_size, &rt_offset)) {
     keystone_err("failed to initialize runtime\n");
     goto error_free_enclave;
   }
 
-  if (keystone_rtld_init_app(enclave, eapp_ptr, eapp_sz, eapp_stack_sz, rt_offset)) {
+  /* initialize user app */
+  if (keystone_rtld_init_app(enclave, user_elf_ptr, user_elf_size, user_stack_size, rt_offset)) {
     keystone_err("failed to initialize app\n");
     goto error_free_enclave;
   }
 
-
-  if (ut_sz == 0)
-    return 0;
-
   /* Untrusted Memory */
   // TODO support larger size than PAGE_SIZE
-  if (ut_sz > PAGE_SIZE) {
+  if (untrusted_size > PAGE_SIZE) {
     keystone_info("untrusted memory larger than 4KB not implemented. truncating to 4KB\n");
-    ut_sz = PAGE_SIZE; 
+    untrusted_size = PAGE_SIZE; 
   }
   utm = kmalloc(sizeof(struct utm_t), GFP_KERNEL);
   if (!utm) {
@@ -80,8 +92,8 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   create_args.epm_region.size = enclave->epm->total;
   create_args.utm_region.paddr = __pa(utm->ptr);
   create_args.utm_region.size = utm->size;
-  create_args.enclave_entry = enclp->eapp_entry;
-  create_args.runtime_entry = enclp->runtime_entry;
+
+  create_args.params = enclp->params;
 
   // SM will write the eid to enclave_t.eid
   create_args.eid_pptr =  (unsigned int*)__pa(&enclave->eid);
@@ -101,7 +113,7 @@ error_free_utm:
   kfree(utm);
 
 error_free_enclave:
-  destroy_enclave(enclave);
+  destroy_epm(enclave);
   return -EFAULT;
 }
 
@@ -119,7 +131,7 @@ int keystone_destroy_enclave(struct file* filp, unsigned long arg)
     return ret;
   }
 
-  destroy_enclave(enclave);
+  destroy_epm(enclave);
   enclave_idr_remove(ueid);
 
   return 0;
