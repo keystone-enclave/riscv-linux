@@ -38,7 +38,7 @@ void put_free_page(struct list_head* pg_list, vaddr_t page_addr);
 vaddr_t get_free_page(struct list_head* pg_list);
 
 void epm_init(epm_t* epm, vaddr_t base, unsigned int count);
-void utm_init(utm_t* utm);
+int utm_init(utm_t* utm, size_t untrusted_size);
 
 vaddr_t utm_alloc_page(utm_t* utm, epm_t* epm, vaddr_t addr, unsigned long flags);
 vaddr_t epm_alloc_rt_page(epm_t* epm, vaddr_t addr);
