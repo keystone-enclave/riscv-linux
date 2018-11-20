@@ -64,7 +64,8 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
     goto error_free_enclave;
   }
 
-  if (ret = utm_init(utm, untrusted_size))
+  ret = utm_init(utm, untrusted_size);
+  if (ret)
     goto error_free_utm;
 
   filp->private_data = utm;
