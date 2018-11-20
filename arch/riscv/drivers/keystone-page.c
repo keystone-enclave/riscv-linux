@@ -54,10 +54,28 @@ void epm_init(epm_t* epm, vaddr_t base, unsigned int count)
   return;
 }
 
-void utm_init(utm_t* utm)
+int utm_init(utm_t* utm, size_t untrusted_size)
 {
+  unsigned long req_pages = 0;
+  unsigned long order = 0;
+  unsigned long count;
+  req_pages += PAGE_UP(untrusted_size)/PAGE_SIZE;
+  order = ilog2(req_pages - 1) + 1;
+  count = 0x1 << order;
+
+  utm->ptr = (void*) __get_free_pages(GFP_HIGHUSER, order);
+  if (!utm->ptr) {
+    return -ENOMEM;
+  }
+
+  utm->size = count * PAGE_SIZE;
+  if (utm->size != untrusted_size) {
+    keystone_warn("shared buffer size is not multiple of PAGE_SIZE\n");
+  }
+
   INIT_LIST_HEAD(&utm->utm_free_list);
   init_free_pages(&utm->utm_free_list, (vaddr_t)utm->ptr, utm->size/PAGE_SIZE);
+  return 0;
 }
 
 static paddr_t pte_ppn(pte_t pte)
@@ -100,11 +118,12 @@ static pte_t* __ept_walk_internal(struct list_head* pg_list, pte_t* root_page_ta
   }
   return &t[pt_idx(addr, 0)];
 }
-
+/*
 static pte_t* __ept_walk(struct list_head* pg_list, pte_t* root_page_table, vaddr_t addr)
 {
   return __ept_walk_internal(pg_list, root_page_table, addr, 0);
 }
+*/
 
 static pte_t* __ept_walk_create(struct list_head* pg_list, pte_t* root_page_table, vaddr_t addr)
 {

@@ -272,10 +272,20 @@ out:
   return error;
 }
 
-int keystone_rtld_init_untrusted(enclave_t* enclave) 
+int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_va, size_t untrusted_size) 
 {
-  /* FIXME: statically determined pointer */
-  vaddr_t vaddr = 0x0dead000;
-  utm_alloc_page(enclave->utm, enclave->epm, vaddr, PTE_D | PTE_A | PTE_R | PTE_W);
+  vaddr_t va;
+  vaddr_t va_start = PAGE_DOWN((vaddr_t) untrusted_va);
+  vaddr_t va_end = PAGE_UP((vaddr_t)untrusted_va + untrusted_size);
+
+  if (va_start != (vaddr_t) untrusted_va)
+    keystone_warn("shared buffer address is not aligned to PAGE_SIZE\n");
+
+  keystone_info("size: %d\n", untrusted_size);
+  for (va = va_start; va < va_end; va += PAGE_SIZE) 
+  {
+    keystone_info("mapping untrusted va: 0x%lx\n", va);
+    utm_alloc_page(enclave->utm, enclave->epm, va, PTE_D | PTE_A | PTE_R | PTE_W );
+  }
   return 0;
 }

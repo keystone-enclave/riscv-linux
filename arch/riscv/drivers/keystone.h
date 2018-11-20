@@ -64,7 +64,7 @@ int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t r
 int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset);
 
 // untrusted memory mapper
-int keystone_rtld_init_untrusted(enclave_t* enclave);
+int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_ptr, size_t untrusted_size);
 
 enclave_t* get_enclave_by_id(unsigned int ueid);
 enclave_t* create_epm(unsigned long min_pages);

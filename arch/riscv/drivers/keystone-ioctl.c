@@ -13,18 +13,19 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   struct keystone_ioctl_create_enclave *enclp = (struct keystone_ioctl_create_enclave*) arg;
   
   // User ELF
-  void* __user user_elf_ptr = (void*)enclp->user_elf_ptr;
+  void* __user user_elf_ptr = (void*) enclp->user_elf_ptr;
   size_t user_elf_size = enclp->user_elf_size;
   size_t  user_stack_size = enclp->user_stack_size;
 
   // Runtime ELF
-  void* __user runtime_elf_ptr = (void*)enclp->runtime_elf_ptr;
+  void* __user runtime_elf_ptr = (void*) enclp->runtime_elf_ptr;
   size_t  runtime_elf_size = enclp->runtime_elf_size;
   size_t  runtime_stack_size = enclp->runtime_stack_size;
 
   // Untrusted mmap size
+  void* untrusted_ptr = (void*) enclp->params.untrusted_ptr;
   size_t untrusted_size = enclp->params.untrusted_size;
-  
+ 
   // runtime parameters
   struct keystone_sbi_create_t create_args;
 
@@ -36,9 +37,6 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   struct utm_t* utm;
   
   /* argument validity */
-  if (untrusted_size < PAGE_SIZE)
-    return -EINVAL; // at least 1 page is required for passing runtime arguments
-
   if (!user_elf_ptr || !runtime_elf_ptr || !user_elf_size || !runtime_elf_size)
     return -EINVAL;
 
@@ -60,29 +58,19 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   }
 
   /* Untrusted Memory */
-  // TODO support larger size than PAGE_SIZE
-  if (untrusted_size > PAGE_SIZE) {
-    keystone_info("untrusted memory larger than 4KB not implemented. truncating to 4KB\n");
-    untrusted_size = PAGE_SIZE; 
-  }
   utm = kmalloc(sizeof(struct utm_t), GFP_KERNEL);
   if (!utm) {
     ret = -ENOMEM;
     goto error_free_enclave;
   }
 
-  utm->ptr = (void*)get_zeroed_page(GFP_HIGHUSER);
-  if(!utm->ptr) {
-    ret = -ENOMEM;
+  if (ret = utm_init(utm, untrusted_size))
     goto error_free_utm;
-  }
 
-  utm->size = PAGE_SIZE;
-  utm_init(utm);
   filp->private_data = utm;
   enclave->utm = utm; 
 
-  if (keystone_rtld_init_untrusted(enclave)) {
+  if (keystone_rtld_init_untrusted(enclave, untrusted_ptr, untrusted_size)) {
     keystone_err("failed to initialize untrusted memory\n");
     goto error_free_utm;
   }

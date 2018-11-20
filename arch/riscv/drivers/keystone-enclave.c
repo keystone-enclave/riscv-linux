@@ -46,7 +46,7 @@ int destroy_epm(enclave_t* enclave)
 enclave_t* create_epm(unsigned long min_pages)
 {
   vaddr_t epm_vaddr;
-  unsigned long order = ilog2(min_pages) + 1;
+  unsigned long order = ilog2(min_pages - 1) + 1;
   unsigned long count = 0x1 << order;
   epm_t* epm;
   enclave_t* enclave;
