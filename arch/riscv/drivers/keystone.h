@@ -67,8 +67,8 @@ int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_
 int keystone_rtld_init_untrusted(enclave_t* enclave);
 
 enclave_t* get_enclave_by_id(unsigned int ueid);
-enclave_t* create_enclave(unsigned long min_pages);
-int destroy_enclave(enclave_t* enclave);
+enclave_t* create_epm(unsigned long min_pages);
+int destroy_epm(enclave_t* enclave);
 
 unsigned int enclave_idr_alloc(enclave_t* enclave);
 enclave_t* enclave_idr_remove(unsigned int ueid);
