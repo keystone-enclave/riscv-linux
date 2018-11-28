@@ -1,5 +1,4 @@
 #include "riscv64.h"
-#include "keystone-page.h"
 #include <linux/kernel.h>
 #include "keystone.h"
 
@@ -52,6 +51,34 @@ void epm_init(epm_t* epm, vaddr_t base, unsigned int count)
   epm->root_page_table = t;
   
   return;
+}
+
+int epm_clean_free_list(epm_t* epm)
+{
+  struct free_page_t* page;
+  struct list_head* pg_list;
+  pg_list = &epm->epm_free_list;
+  while (!list_empty(&epm->epm_free_list))
+  {
+    page = list_first_entry(pg_list, struct free_page_t, freelist);
+    list_del(&page->freelist);
+    kfree(page);
+  }
+  return 0;
+}
+
+int utm_clean_free_list(utm_t* utm)
+{
+  struct free_page_t* page;
+  struct list_head* pg_list;
+  pg_list = &utm->utm_free_list;
+  while (!list_empty(&utm->utm_free_list))
+  {
+    page = list_first_entry(pg_list, struct free_page_t, freelist);
+    list_del(&page->freelist);
+    kfree(page);
+  }
+  return 0;
 }
 
 int utm_init(utm_t* utm, size_t untrusted_size)
