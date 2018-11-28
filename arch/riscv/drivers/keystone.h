@@ -12,7 +12,12 @@
 #include <linux/idr.h>
 
 #include <linux/file.h>
-#include "keystone-page.h"
+
+/* IMPORTANT: This code assumes Sv39 */
+#include "riscv64.h"
+
+typedef uintptr_t vaddr_t;
+typedef uintptr_t paddr_t;
 
 #define SBI_SM_CREATE_ENCLAVE   101
 #define SBI_SM_DESTROY_ENCLAVE  102
@@ -47,6 +52,29 @@
 long keystone_ioctl(struct file* filep, unsigned int cmd, unsigned long arg);
 int keystone_mmap(struct file *filp, struct vm_area_struct *vma);
 
+struct free_page_t {
+  vaddr_t vaddr;
+  struct list_head freelist;
+};
+
+/* enclave private memory */
+typedef struct epm_t {
+  struct list_head epm_free_list;
+  pte_t* root_page_table;
+  vaddr_t base;
+  paddr_t pa;
+  unsigned long order;
+  unsigned int total;
+} epm_t;
+
+typedef struct utm_t {
+  struct list_head utm_free_list;
+  pte_t* root_page_table;
+  void* ptr;
+  size_t size;
+} utm_t;
+
+
 typedef struct keystone_enclave_t 
 {
   unsigned int eid;
@@ -67,12 +95,32 @@ int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_
 int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_ptr, size_t untrusted_size);
 
 enclave_t* get_enclave_by_id(unsigned int ueid);
-enclave_t* create_epm(unsigned long min_pages);
-int destroy_epm(enclave_t* enclave);
+enclave_t* create_enclave(unsigned long min_pages);
+int destroy_enclave(enclave_t* enclave);
 
 unsigned int enclave_idr_alloc(enclave_t* enclave);
 enclave_t* enclave_idr_remove(unsigned int ueid);
 enclave_t* get_enclave_by_id(unsigned int ueid);
+
+static inline uintptr_t  epm_satp(epm_t* epm) {
+  return ((uintptr_t)epm->root_page_table >> RISCV_PGSHIFT | SATP_MODE_CHOICE);
+}
+void init_free_pages(struct list_head* pg_list, vaddr_t base, unsigned int count);
+void put_free_page(struct list_head* pg_list, vaddr_t page_addr);
+vaddr_t get_free_page(struct list_head* pg_list);
+
+void epm_init(epm_t* epm, vaddr_t base, unsigned int count);
+int utm_init(utm_t* utm, size_t untrusted_size);
+int epm_clean_free_list(epm_t* epm);
+int utm_clean_free_list(utm_t* utm);
+
+vaddr_t utm_alloc_page(utm_t* utm, epm_t* epm, vaddr_t addr, unsigned long flags);
+vaddr_t epm_alloc_rt_page(epm_t* epm, vaddr_t addr);
+vaddr_t epm_alloc_rt_page_noexec(epm_t* epm, vaddr_t addr);
+vaddr_t epm_alloc_user_page(epm_t* epm, vaddr_t addr);
+vaddr_t epm_alloc_user_page_noexec(epm_t* epm, vaddr_t addr);
+void epm_free_page(epm_t* epm, vaddr_t addr);
+
 
 unsigned long calculate_required_pages(
     unsigned long eapp_sz,

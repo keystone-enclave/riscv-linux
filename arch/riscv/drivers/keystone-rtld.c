@@ -9,7 +9,6 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include "keystone.h"
-#include "keystone-page.h"
 
 
 void debug_dump(char* ptr, unsigned long size)

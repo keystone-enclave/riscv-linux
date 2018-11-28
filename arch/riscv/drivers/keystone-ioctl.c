@@ -1,6 +1,5 @@
 #include "keystone.h"
 #include "keystone-sbi-arg.h"
-#include "keystone-page.h"
 #include "keystone_user.h"
 #include <linux/uaccess.h>
 
@@ -40,7 +39,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   if (!user_elf_ptr || !runtime_elf_ptr || !user_elf_size || !runtime_elf_size)
     return -EINVAL;
 
-  enclave = create_epm(min_pages);
+  enclave = create_enclave(min_pages);
   if(enclave == NULL)
     return -ENOMEM;
 
@@ -95,14 +94,18 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
 
   /* allocate UID */
   enclp->eid = enclave_idr_alloc(enclave);
+  utm_clean_free_list(utm);
+  epm_clean_free_list(enclave->epm);
   
   return 0;
 
 error_free_utm:
+  utm_clean_free_list(utm);
   kfree(utm);
 
 error_free_enclave:
-  destroy_epm(enclave);
+  epm_clean_free_list(enclave->epm);
+  destroy_enclave(enclave);
   return -EFAULT;
 }
 
@@ -120,7 +123,7 @@ int keystone_destroy_enclave(struct file* filp, unsigned long arg)
     return ret;
   }
 
-  destroy_epm(enclave);
+  destroy_enclave(enclave);
   enclave_idr_remove(ueid);
 
   return 0;

@@ -25,7 +25,7 @@ unsigned long calculate_required_pages(
   return req_pages;
 }
 
-int destroy_epm(enclave_t* enclave)
+int destroy_enclave(enclave_t* enclave)
 {
   epm_t* epm;
   if (enclave == NULL)
@@ -38,12 +38,15 @@ int destroy_epm(enclave_t* enclave)
     free_pages(epm->base, epm->order);
     kfree(enclave->epm);
   }
-
+  if (enclave->utm)
+  {
+    kfree(enclave->utm);
+  }
   kfree(enclave);
   return 0;
 }
 
-enclave_t* create_epm(unsigned long min_pages)
+enclave_t* create_enclave(unsigned long min_pages)
 {
   vaddr_t epm_vaddr;
   unsigned long order = ilog2(min_pages - 1) + 1;
