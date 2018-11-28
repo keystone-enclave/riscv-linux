@@ -59,10 +59,11 @@ enclave_t* create_enclave(unsigned long min_pages)
     return NULL;
 
   /* allocate contiguous memory */
+
   epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
   if(!epm_vaddr) {
     keystone_err("keystone_create_epm(): failed to allocate %lu page(s)\n", count);
-    goto error_free_enclave;
+    goto error_free_pages;
   }
 
   /* initialize */
@@ -80,8 +81,10 @@ enclave_t* create_enclave(unsigned long min_pages)
   epm_init(epm, epm_vaddr, count);
   enclave->epm = epm;
   return enclave;
-
-error_free_enclave:
+  
+ error_free_pages:
+  free_pages(epm_vaddr, order);
+ error_free_enclave:
   kfree(enclave);
   return NULL;
 }
