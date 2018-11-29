@@ -1,3 +1,7 @@
+//******************************************************************************
+// Copyright (c) 2018, The Regents of the University of California (Regents).
+// All Rights Reserved. See LICENSE for license details.
+//------------------------------------------------------------------------------
 #include "keystone.h" 
 /* idr for enclave UID to enclave_t */
 DEFINE_IDR(idr_enclave);
