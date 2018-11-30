@@ -43,6 +43,18 @@ void put_free_page(struct list_head* pg_list, vaddr_t page_addr)
   return;
 }
 
+int epm_destroy(epm_t* epm){
+
+  /* Clean anything in the free list */
+  epm_clean_free_list(epm);
+
+  if(epm->base != NULL){
+    free_pages((void*)(epm->base), epm->order);
+  }
+  
+  return 0;
+}
+
 void epm_init(epm_t* epm, vaddr_t base, unsigned int count)
 {
   pte_t* t;
@@ -71,6 +83,18 @@ int epm_clean_free_list(epm_t* epm)
   return 0;
 }
 
+int utm_destroy(utm_t* utm){
+
+  /* Clean anything in the free list */
+  utm_clean_free_list(utm);
+
+  if(utm->ptr != NULL){
+    free_pages(utm->ptr, utm->order);
+  }
+  
+  return 0;
+}
+
 int utm_clean_free_list(utm_t* utm)
 {
   struct free_page_t* page;
@@ -94,6 +118,8 @@ int utm_init(utm_t* utm, size_t untrusted_size)
   order = ilog2(req_pages - 1) + 1;
   count = 0x1 << order;
 
+  utm->order = order;
+  
   utm->ptr = (void*) __get_free_pages(GFP_HIGHUSER, order);
   if (!utm->ptr) {
     return -ENOMEM;

@@ -29,22 +29,26 @@ unsigned long calculate_required_pages(
   return req_pages;
 }
 
+/* Smart destroy, handles partial initialization of epm and utm etc */
 int destroy_enclave(enclave_t* enclave)
 {
   epm_t* epm;
+  utm_t* utm;
   if (enclave == NULL)
     return -ENOSYS;
 
   epm = enclave->epm;
+  utm = enclave->utm;
 
   if (epm)
   {
-    free_pages(epm->base, epm->order);
-    kfree(enclave->epm);
+    epm_destroy(epm);
+    kfree(epm);
   }
-  if (enclave->utm)
+  if (utm)
   {
-    kfree(enclave->utm);
+    utm_destroy(utm);
+    kfree(utm);
   }
   kfree(enclave);
   return 0;
@@ -59,15 +63,20 @@ enclave_t* create_enclave(unsigned long min_pages)
   enclave_t* enclave;
 
   enclave = kmalloc(sizeof(enclave_t), GFP_KERNEL);
-  if (!enclave)
-    return NULL;
+  if (!enclave){
+    keystone_err("keystone_create_epm(): failed to allocate enclave struct\n");
+    goto error_no_free;
+  }
+
+  enclave->utm = NULL;
+  enclave->epm = NULL;
 
   /* allocate contiguous memory */
 
   epm_vaddr = __get_free_pages(GFP_HIGHUSER, order);
   if(!epm_vaddr) {
     keystone_err("keystone_create_epm(): failed to allocate %lu page(s)\n", count);
-    goto error_free_pages;
+    goto error_destroy_enclave;
   }
 
   /* initialize */
@@ -76,7 +85,8 @@ enclave_t* create_enclave(unsigned long min_pages)
   epm = kmalloc(sizeof(epm_t), GFP_KERNEL);
   if (!epm)
   {
-    goto error_free_enclave;
+    keystone_err("keystone_create_epm(): failed to allocate epm\n");
+    goto error_destroy_enclave;
   }
  
   INIT_LIST_HEAD(&epm->epm_free_list);
@@ -85,11 +95,10 @@ enclave_t* create_enclave(unsigned long min_pages)
   epm_init(epm, epm_vaddr, count);
   enclave->epm = epm;
   return enclave;
-  
- error_free_pages:
-  free_pages(epm_vaddr, order);
- error_free_enclave:
-  kfree(enclave);
+
+ error_destroy_enclave:
+  destroy_enclave(enclave);
+ error_no_free:
   return NULL;
 }
 

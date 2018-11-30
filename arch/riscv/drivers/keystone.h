@@ -76,6 +76,7 @@ typedef struct utm_t {
   pte_t* root_page_table;
   void* ptr;
   size_t size;
+  unsigned long order;
 } utm_t;
 
 
@@ -113,7 +114,9 @@ void init_free_pages(struct list_head* pg_list, vaddr_t base, unsigned int count
 void put_free_page(struct list_head* pg_list, vaddr_t page_addr);
 vaddr_t get_free_page(struct list_head* pg_list);
 
+int epm_destroy(epm_t* epm);
 void epm_init(epm_t* epm, vaddr_t base, unsigned int count);
+int utm_destroy(utm_t* utm);
 int utm_init(utm_t* utm, size_t untrusted_size);
 int epm_clean_free_list(epm_t* epm);
 int utm_clean_free_list(utm_t* utm);
