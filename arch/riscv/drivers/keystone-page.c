@@ -48,8 +48,8 @@ int epm_destroy(epm_t* epm){
   /* Clean anything in the free list */
   epm_clean_free_list(epm);
 
-  if(epm->base != NULL){
-    free_pages((void*)(epm->base), epm->order);
+  if(epm->base != 0){
+    free_pages(epm->base, epm->order);
   }
   
   return 0;
@@ -89,7 +89,7 @@ int utm_destroy(utm_t* utm){
   utm_clean_free_list(utm);
 
   if(utm->ptr != NULL){
-    free_pages(utm->ptr, utm->order);
+    free_pages((vaddr_t)utm->ptr, utm->order);
   }
   
   return 0;
