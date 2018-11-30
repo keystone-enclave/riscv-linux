@@ -40,43 +40,48 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   struct utm_t* utm;
   
   /* argument validity */
-  if (!user_elf_ptr || !runtime_elf_ptr || !user_elf_size || !runtime_elf_size)
-    return -EINVAL;
+  if (!user_elf_ptr || !runtime_elf_ptr || !user_elf_size || !runtime_elf_size){
+    ret = -EINVAL;
+    goto error_no_free;
+  }
+
 
   enclave = create_enclave(min_pages);
-  if(enclave == NULL)
-    return -ENOMEM;
-
+  if(enclave == NULL){
+    ret = -ENOMEM;
+    goto error_no_free;
+  }
+  
   /* initialize runtime */
   ret = -EFAULT;
   if (keystone_rtld_init_runtime(enclave, runtime_elf_ptr, runtime_elf_size, runtime_stack_size, &rt_offset)) {
     keystone_err("failed to initialize runtime\n");
-    goto error_free_enclave;
+    goto error_destroy_enclave;
   }
 
   /* initialize user app */
   if (keystone_rtld_init_app(enclave, user_elf_ptr, user_elf_size, user_stack_size, rt_offset)) {
     keystone_err("failed to initialize app\n");
-    goto error_free_enclave;
+    goto error_destroy_enclave;
   }
 
   /* Untrusted Memory */
   utm = kmalloc(sizeof(struct utm_t), GFP_KERNEL);
   if (!utm) {
     ret = -ENOMEM;
-    goto error_free_enclave;
+    goto error_destroy_enclave;
   }
 
   ret = utm_init(utm, untrusted_size);
-  if (ret)
-    goto error_free_utm;
+  if (ret != 0)
+    goto error_destroy_enclave;
 
   filp->private_data = utm;
   enclave->utm = utm; 
 
   if (keystone_rtld_init_untrusted(enclave, untrusted_ptr, untrusted_size)) {
     keystone_err("failed to initialize untrusted memory\n");
-    goto error_free_utm;
+    goto error_destroy_enclave;
   }
 
   /* SBI Call */
@@ -93,24 +98,25 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   if (ret)
   {
     keystone_err("keystone_create_enclave: SBI call failed\n");
-    goto error_free_utm;
+    goto error_destroy_enclave;
   }
 
   /* allocate UID */
   enclp->eid = enclave_idr_alloc(enclave);
+
+  /* We cleanup the free lists here since the kernel will no longer be
+     managing them, they are part of the enclave now. */
   utm_clean_free_list(utm);
   epm_clean_free_list(enclave->epm);
   
   return 0;
 
-error_free_utm:
-  utm_clean_free_list(utm);
-  kfree(utm);
-
-error_free_enclave:
-  epm_clean_free_list(enclave->epm);
+ error_destroy_enclave:
+  /* This can handle partial initialization failure */
   destroy_enclave(enclave);
-  return -EFAULT;
+  
+ error_no_free:
+  return ret;
 }
 
 int keystone_destroy_enclave(struct file* filp, unsigned long arg)
