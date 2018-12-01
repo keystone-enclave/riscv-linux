@@ -252,7 +252,7 @@ int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t r
     unsigned long size = 0;
 
     if(eppnt->p_type != PT_LOAD) {
-      keystone_warn("keystone runtime includes an inconsistent program header\n");
+      //keystone_debug("keystone runtime includes an inconsistent program header\n");
       continue;
     }
     vaddr = eppnt->p_vaddr;

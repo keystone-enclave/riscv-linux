@@ -192,7 +192,7 @@ vaddr_t epm_alloc_rt_page_noexec(epm_t* epm, vaddr_t addr)
 
 vaddr_t epm_alloc_rt_page(epm_t* epm, vaddr_t addr)
 {
-  return epm_alloc_page(epm, addr, PTE_A | PTE_R | PTE_W | PTE_X);
+  return epm_alloc_page(epm, addr, PTE_D | PTE_A | PTE_R | PTE_W | PTE_X);
 }
 
 vaddr_t epm_alloc_user_page_noexec(epm_t* epm, vaddr_t addr)
