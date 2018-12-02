@@ -228,7 +228,7 @@ vaddr_t epm_alloc_user_page_noexec(epm_t* epm, vaddr_t addr)
 
 vaddr_t epm_alloc_user_page(epm_t* epm, vaddr_t addr)
 {
-  return epm_alloc_page(epm, addr, PTE_A | PTE_R | PTE_X | PTE_W | PTE_U);
+  return epm_alloc_page(epm, addr, PTE_A | PTE_R | PTE_X | PTE_W | PTE_U | PTE_D);
 }
 
 void epm_free_page(epm_t* epm, vaddr_t addr)
